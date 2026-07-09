@@ -1,0 +1,8 @@
+{
+  "n_units": 650,
+  "n_ground_truth_spikes": 64428,
+  "n_sorted_spikes": 46397,
+  "session_duration_s": 30.0,
+  "n_channels": 384,
+  "seed": 1
+}
