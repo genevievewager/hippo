@@ -1,6 +1,7 @@
 [1/7] Simulating behavior (RatInABox)...
 [2/7] Building anatomy and unit assignments...
 [3/7] Computing features and integrating rates (650 units)...
+Integrating rates:   0%|          | 0/12000 [00:00<?, ?step/s]Integrating rates:   9%|▉         | 1118/12000 [00:00<00:00, 11177.75step/s]Integrating rates:  19%|█▉        | 2281/12000 [00:00<00:00, 11442.48step/s]Integrating rates:  29%|██▊       | 3441/12000 [00:00<00:00, 11514.32step/s]Integrating rates:  38%|███▊      | 4603/12000 [00:00<00:00, 11555.90step/s]Integrating rates:  48%|████▊     | 5765/12000 [00:00<00:00, 11576.49step/s]Integrating rates:  58%|█████▊    | 6929/12000 [00:00<00:00, 11597.26step/s]Integrating rates:  67%|██████▋   | 8094/12000 [00:00<00:00, 11613.09step/s]Integrating rates:  77%|███████▋  | 9256/12000 [00:00<00:00, 11610.25step/s]Integrating rates:  87%|████████▋ | 10418/12000 [00:00<00:00, 11610.10step/s]Integrating rates:  96%|█████████▋| 11580/12000 [00:01<00:00, 11611.89step/s]Integrating rates: 100%|██████████| 12000/12000 [00:01<00:00, 11574.79step/s]
 [4/7] Generating ground-truth spike trains...
 [5/7] Building templates and simulating Neuropixels recording...
 [6/7] Kilosort-like re-extraction...
@@ -8,8 +9,8 @@
 Done.
 {
   "n_units": 650,
-  "n_ground_truth_spikes": 1065233,
-  "n_sorted_spikes": 715103,
+  "n_ground_truth_spikes": 1497167,
+  "n_sorted_spikes": 1013622,
   "session_duration_s": 600.0,
   "n_channels": 384,
   "seed": 42

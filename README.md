@@ -22,7 +22,7 @@ tail -f outputs/run_001/simulation.log
 
 ## Pipeline
 
-1. **Behavior** — RatInABox square open field (thigmotaxis, stalls, smooth turns)
+1. **Behavior** — RatInABox square open field (thigmotaxis, stalls, smooth turns) at **20 Hz** (50 ms steps)
 2. **Features** — place, head direction, speed, acceleration, boundary, theta phase, ripple
 3. **Rate equations** — CA1, CA2, CA3 pyramidal + DG granule with drift
 4. **Spikes** — ground-truth Poisson spike times
@@ -94,6 +94,7 @@ tail -f outputs/run_001/simulation.log
 
 | Drift parameter | Value | Units |
 |-----------------|-------|-------|
+| Behavior / rate update rate | 20 | Hz |
 | Place drift σ | 0.8 | cm/min |
 | Place update interval | 30 | s |
 | State drift τ | 120 | s |
@@ -139,3 +140,52 @@ Adapted from:
 ## License
 
 Research / educational use.
+
+## Visualization Suite
+
+The simulation includes a visualization suite for inspecting behavior, neural driver features, ground-truth Poisson spike trains, sorted-spike degradation, and hippocampal probe geometry.
+
+Run:
+
+```bash
+python run_visualizations.py \
+    --input outputs/run_001 \
+    --output outputs/run_001/figures
+```
+
+Main outputs include:
+
+* behavioral trajectory and occupancy maps
+* behavioral feature traces over time
+* neural driver feature traces
+* ground-truth spike rasters sorted by cell class and rate equation
+* population activity by cell class
+* sorted versus ground-truth spike comparisons
+* simulated Neuropixels probe geometry
+* a combined report summary figure
+
+## Real-Time Closed-Loop Decoding
+
+This module simulates online decoding from hippocampal Neuropixels spike activity. The decoder updates every 25 ms and uses a causal 250 ms spike-history window. At each time point, it estimates the animal's position, spatial context, movement state, and speed from sorted spikes only. The estimated state can be used to trigger a simulated closed-loop event.
+
+The decoder is causal: it only uses spikes from the current and past window, never future spikes.
+
+Example:
+
+```bash
+python run_realtime_decoding.py \
+    --input outputs/run_001 \
+    --output outputs/run_001/realtime_decoding \
+    --spike-source sorted \
+    --update-dt 0.025 \
+    --decode-window 0.250
+```
+
+To compare ideal ground-truth spike decoding against sorted-spike decoding:
+
+```bash
+python run_realtime_decoding.py \
+    --input outputs/run_001 \
+    --output outputs/run_001/realtime_decoding \
+    --compare-sources
+```
