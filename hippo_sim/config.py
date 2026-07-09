@@ -9,7 +9,7 @@ from typing import Dict, List
 import numpy as np
 
 SESSION_DURATION_S = 600.0
-BEHAVIOR_DT = 0.01
+BEHAVIOR_DT = 0.05  # 20 Hz rate updates
 SAMPLE_RATE_HZ = 30_000
 WAVEFORM_PRE_SAMPLES = 20
 WAVEFORM_POST_SAMPLES = 60
@@ -104,7 +104,7 @@ RATE_PARAMS: Dict[str, Dict] = {
 }
 
 DRIFT_PARAMS = {
-    "place_drift_sd_cm_per_min": 0.8,
+    "place_drift_sd_cm_per_min": 0.1,
     "place_drift_update_s": 30.0,
     "state_drift_tau_s": 120.0,
     "state_drift_sigma": 0.15,

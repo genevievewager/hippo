@@ -42,4 +42,4 @@ class DriftState:
             self.place_centers += self.rng.normal(0, sd, self.place_centers.shape)
             self.place_centers = np.clip(self.place_centers, 5, self.config.arena_size_cm - 5)
 
-        return self.place_centers.copy(), state_mod, self.gains.copy()
+        return self.place_centers, state_mod, self.gains
