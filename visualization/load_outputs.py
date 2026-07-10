@@ -55,6 +55,8 @@ def resolve_unit_columns(df: pd.DataFrame) -> dict[str, str]:
     }
     for optional, cands in [
         ("rate_equation", ["rate_equation", "rate_model", "equation_class"]),
+        ("rate_model", ["rate_model", "rate_equation", "equation_class"]),
+        ("ratinabox_class", ["ratinabox_class"]),
         ("depth_um", ["depth_um", "depth", "probe_depth_um"]),
         ("channel", ["channel", "channel_id", "electrode"]),
         ("place_x", ["place_x_cm", "place_x", "field_x"]),
@@ -107,10 +109,18 @@ def normalize_units(df: pd.DataFrame) -> pd.DataFrame:
         "cell_type": df[cols["cell_type"]].astype(str),
         "region": df[cols["region"]].astype(str),
     })
+    if "rate_model" in cols:
+        out["rate_model"] = df[cols["rate_model"]].astype(str)
+    elif "rate_equation" in cols:
+        out["rate_model"] = df[cols["rate_equation"]].astype(str)
+    else:
+        out["rate_model"] = out["cell_type"]
     if "rate_equation" in cols:
         out["rate_equation"] = df[cols["rate_equation"]].astype(str)
     else:
-        out["rate_equation"] = out["cell_type"]
+        out["rate_equation"] = out["rate_model"]
+    if "ratinabox_class" in cols:
+        out["ratinabox_class"] = df[cols["ratinabox_class"]].astype(str)
     if "depth_um" in cols:
         out["depth_um"] = df[cols["depth_um"]].astype(float)
     elif "channel" in cols:
@@ -267,6 +277,8 @@ def sort_units_by_rate_equation(
     units: pd.DataFrame,
     mean_rates: pd.Series,
 ) -> pd.DataFrame:
+    """Sort units by rate_model (or rate_equation) then mean firing rate."""
     units = units.copy()
     units["mean_rate_hz"] = units["unit_id"].map(mean_rates).fillna(0.0)
-    return units.sort_values(["rate_equation", "mean_rate_hz"], ascending=[True, False])
+    sort_col = "rate_model" if "rate_model" in units.columns else "rate_equation"
+    return units.sort_values([sort_col, "mean_rate_hz"], ascending=[True, False])

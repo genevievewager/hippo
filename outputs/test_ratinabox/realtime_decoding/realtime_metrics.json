@@ -1,0 +1,16 @@
+{
+  "mean_position_error_cm": 15.734759765368656,
+  "median_position_error_cm": 16.726271769366434,
+  "spatial_context_accuracy": 0.3813559322033898,
+  "movement_state_accuracy": 0.5338983050847458,
+  "speed_r2": -1.4769031588358899,
+  "speed_correlation": 0.3771306142842853,
+  "n_decoder_updates": 118,
+  "n_closed_loop_events": 3,
+  "closed_loop_precision": 1.0,
+  "closed_loop_false_positive_rate": 0.0,
+  "update_dt": 0.025,
+  "decode_window": 0.25,
+  "spike_source": "sorted",
+  "n_units": 200
+}

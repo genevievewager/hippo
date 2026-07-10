@@ -1,0 +1,4 @@
+time,event_type,decoded_spatial_context,spatial_context_confidence,decoded_movement_state,movement_state_confidence,true_spatial_context,true_movement_state,correct_trigger
+7.075000000000006,context_wall,corner,0.88,fast,0.86,corner,fast,True
+7.100000000000006,context_wall,corner,0.8,fast,0.64,corner,fast,True
+7.125000000000006,context_wall,corner,0.8,fast,0.65,corner,fast,True

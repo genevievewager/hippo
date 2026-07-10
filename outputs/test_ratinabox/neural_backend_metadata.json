@@ -1,0 +1,13 @@
+{
+  "neural_backend": "ratinabox_neurons",
+  "ratinabox_cell_groups": {
+    "PlaceCells": 80,
+    "HeadDirectionCells": 40,
+    "BoundaryVectorCells": 40,
+    "SpeedCells_fallback": 40
+  },
+  "n_units": 200,
+  "rate_units": "Hz",
+  "poisson_spike_method": "poisson_count_per_bin",
+  "rate_scale_hz": 15.0
+}

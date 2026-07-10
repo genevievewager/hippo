@@ -1,0 +1,2 @@
+session_duration_s,mean_speed_cm_s,median_speed_cm_s,max_speed_cm_s,mean_distance_to_wall_cm,arena_x_min,arena_x_max,arena_y_min,arena_y_max
+10.0,7.850698163176886,7.0766990110947585,22.382641576863826,22.993864115675755,0.0,100.0,0.0,100.0

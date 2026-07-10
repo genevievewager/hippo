@@ -1,0 +1,16 @@
+{
+  "neural_backend": "custom_rate_equations",
+  "n_units": 650,
+  "n_behavior_steps": 200,
+  "behavior_dt": 0.05,
+  "rates_shape": [
+    650,
+    200
+  ],
+  "n_ground_truth_spikes": 15746,
+  "n_sorted_spikes": 11192,
+  "session_duration_s": 10.0,
+  "n_channels": 384,
+  "seed": 1,
+  "arena_size_cm": 100.0
+}

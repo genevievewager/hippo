@@ -1,0 +1,52 @@
+{
+  "mean_position_error_cm": 15.734759765368658,
+  "median_position_error_cm": 16.726271769366427,
+  "spatial_context_accuracy": 0.3813559322033898,
+  "spatial_context_confusion_matrix": [
+    [
+      0,
+      0,
+      0
+    ],
+    [
+      0,
+      0,
+      0
+    ],
+    [
+      73,
+      0,
+      45
+    ]
+  ],
+  "spatial_context_labels": [
+    "center",
+    "wall",
+    "corner"
+  ],
+  "movement_state_accuracy": 0.5338983050847458,
+  "movement_state_confusion_matrix": [
+    [
+      0,
+      2,
+      6
+    ],
+    [
+      0,
+      54,
+      44
+    ],
+    [
+      0,
+      3,
+      9
+    ]
+  ],
+  "movement_state_labels": [
+    "still",
+    "slow",
+    "fast"
+  ],
+  "speed_r2": -1.4769031588358899,
+  "speed_correlation": 0.37713061428428546
+}

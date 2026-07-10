@@ -19,20 +19,31 @@ def generate_spike_trains(
     rates: np.ndarray,
     config: SimConfig,
     rng: np.random.Generator,
+    time_axis: np.ndarray | None = None,
 ) -> list[SpikeTrain]:
     """
     Generate ground-truth spike times from rate matrix (n_units, n_steps).
-    Uses inhomogeneous Poisson with sub-bin jitter for continuous times.
+
+    Uses Poisson spike counts per behavior bin so multiple spikes per bin
+    are allowed when rates are high.
     """
     n_units, n_steps = rates.shape
     dt = config.behavior_dt
+    if time_axis is None:
+        time_axis = config.time_axis
     trains: list[SpikeTrain] = []
 
     for u in range(n_units):
-        prob = rates[u] * dt
-        prob = np.clip(prob, 0, 1)
-        spike_bins = np.where(rng.random(n_steps) < prob)[0]
-        times = spike_bins * dt + rng.uniform(0, dt, size=len(spike_bins))
-        trains.append(SpikeTrain(unit_id=u, spike_times_s=np.sort(times)))
+        spike_times: list[float] = []
+        for t in range(n_steps):
+            lam = float(rates[u, t]) * dt
+            n_spikes = int(rng.poisson(lam))
+            if n_spikes > 0:
+                offsets = rng.uniform(0.0, dt, size=n_spikes)
+                spike_times.extend((time_axis[t] + offsets).tolist())
+        trains.append(SpikeTrain(
+            unit_id=u,
+            spike_times_s=np.sort(np.asarray(spike_times, dtype=float)),
+        ))
 
     return trains

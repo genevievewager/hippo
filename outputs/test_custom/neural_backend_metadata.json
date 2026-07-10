@@ -1,0 +1,6 @@
+{
+  "neural_backend": "custom_rate_equations",
+  "n_units": 650,
+  "rate_units": "Hz",
+  "poisson_spike_method": "poisson_count_per_bin"
+}
