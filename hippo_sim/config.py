@@ -32,6 +32,23 @@ REGION_SEGMENTS: List[Dict] = [
 
 CELL_TYPES = ["CA1_pyr", "CA2_pyr", "CA3_pyr", "DG_granule"]
 
+NEURAL_BACKENDS = ("custom_rate_equations", "ratinabox_neurons")
+
+RATINABOX_PARAMS: Dict = {
+    "n_place_cells": 80,
+    "n_head_direction_cells": 40,
+    "n_boundary_vector_cells": 40,
+    "n_speed_cells": 40,
+    "n_grid_cells": 0,
+    "dt": BEHAVIOR_DT,
+    "poisson_spikes": True,
+    "rate_scale_hz": 15.0,
+    "speed_baseline_hz": 0.5,
+    "speed_amplitude_hz": 12.0,
+    "speed_threshold_cm_s": 2.0,
+    "speed_scale_cm_s": 28.0,
+}
+
 REGION_TO_CELL_TYPE = {
     ("CA1", "oriens"): "CA1_pyr",
     ("CA1", "pyramidal"): "CA1_pyr",
@@ -150,12 +167,21 @@ class SimConfig:
     n_channels: int = N_CHANNELS
     arena_size_cm: float = ARENA_SIZE_CM
     thigmotaxis: float = THIGMOTAXIS
+    neural_backend: str = "custom_rate_equations"
     region_segments: List[Dict] = field(default_factory=lambda: list(REGION_SEGMENTS))
     rate_params: Dict[str, Dict] = field(default_factory=lambda: dict(RATE_PARAMS))
     drift_params: Dict = field(default_factory=lambda: dict(DRIFT_PARAMS))
     ripple_params: Dict = field(default_factory=lambda: dict(RIPPLE_PARAMS))
     recording_params: Dict = field(default_factory=lambda: dict(RECORDING_PARAMS))
     sorting_params: Dict = field(default_factory=lambda: dict(SORTING_PARAMS))
+    ratinabox_params: Dict = field(default_factory=lambda: dict(RATINABOX_PARAMS))
+
+    def __post_init__(self) -> None:
+        if self.neural_backend not in NEURAL_BACKENDS:
+            raise ValueError(
+                f"Invalid neural_backend {self.neural_backend!r}. "
+                f"Allowed values: {list(NEURAL_BACKENDS)}"
+            )
 
     @property
     def n_behavior_steps(self) -> int:

@@ -222,7 +222,7 @@ def plot_ground_truth_rasters(data: SimulationOutputs, output_dir: Path) -> None
     sorted_eq.attrs["session_duration"] = data.session_duration_s
     _plot_raster(
         data.spikes_gt, sorted_eq,
-        "Ground-truth spike raster sorted by rate equation",
+        "Ground-truth Poisson spike trains by rate model",
         output_dir / "ground_truth_spike_raster_by_rate_equation.png",
         class_boundaries=False,
     )

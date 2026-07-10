@@ -7,7 +7,7 @@ Simulates realistic hippocampal single-unit activity during 10-minute open-field
 ```bash
 source .hippo/bin/activate
 pip install -r requirements.txt
-python run_simulation.py --output outputs/run_001
+python run_simulation.py --output outputs/run_001 --seed 1
 ```
 
 ### Detached run (survives terminal close)
@@ -136,6 +136,38 @@ Channel counts are approximate; exact mapping is written to `anatomy_regions.csv
 Adapted from:
 - `previous_models/CA1.m` — Gaussian place fields, ensemble drift, Poisson spikes
 - `previous_models/hw2simulationmethodinneuroscience.ipynb` — rate equation notation, drift parameters
+
+## Neural activity backends
+
+The simulator supports two neural activity backends.
+
+### 1. Custom hippocampal rate equations
+
+This backend uses explicit CA1, CA2, CA3, and DG rate equations driven by behavioral features including position, head direction, speed, acceleration, boundary distance, theta phase, ripple state, and drift.
+
+Run:
+
+```bash
+python run_simulation.py \
+    --output outputs/run_custom_001 \
+    --seed 1 \
+    --neural-backend custom_rate_equations
+```
+
+### 2. RatInABox neurons
+
+This backend uses RatInABox neural classes to generate spatially and/or velocity-modulated firing rates from the same RatInABox trajectory. The rates are converted into ground-truth Poisson spike trains so that the rest of the Neuropixels recording, sorting, visualization, and decoding pipeline remains unchanged.
+
+Run:
+
+```bash
+python run_simulation.py \
+    --output outputs/run_ratinabox_001 \
+    --seed 1 \
+    --neural-backend ratinabox_neurons
+```
+
+The RatInABox backend saves `rate_model` and `ratinabox_class` columns in `units.csv` and `spikes_ground_truth.csv`, allowing spike rasters to be sorted by the neural model that generated each unit.
 
 ## License
 
