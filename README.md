@@ -162,7 +162,7 @@ Run:
 
 ```bash
 python run_simulation.py \
-    --output outputs/run_ratinabox_001 \
+    --output outputs/ratinabox_002 \
     --seed 1 \
     --neural-backend ratinabox_neurons
 ```
@@ -181,8 +181,8 @@ Run:
 
 ```bash
 python run_visualizations.py \
-    --input outputs/run_001 \
-    --output outputs/run_001/figures
+    --input outputs/ratinabox_002 \
+    --output outputs/ratinabox_002/figures
 ```
 
 Main outputs include:
@@ -196,28 +196,189 @@ Main outputs include:
 * simulated Neuropixels probe geometry
 * a combined report summary figure
 
-## Real-Time Closed-Loop Decoding
+## Real-Time Decoding Workflow
 
-This module simulates online decoding from hippocampal Neuropixels spike activity. The decoder updates every 25 ms and uses a causal 250 ms spike-history window. At each time point, it estimates the animal's position, spatial context, movement state, and speed from sorted spikes only. The estimated state can be used to trigger a simulated closed-loop event.
+The decoder pipeline turns hippocampal spike activity into latent behavioral state estimates using **causal population spike-count features**. It has two computation modes and one plotting mode.
 
-The decoder is causal: it only uses spikes from the current and past window, never future spikes.
+```text
+Simulation output
+      ↓
+causal spike-count features
+      ↓
+decoder model(s)
+      ↓
+decoded latent behavioral state
+      ↓
+closed-loop trigger and/or evaluation
+      ↓
+visualization
+```
 
-Example:
+At each decoder update time `t`, the decoder constructs a causal population spike-count vector:
+
+`X(t) = spike counts from [t - decode_window, t)`
+
+The decoder never uses future spikes. The default `update_dt` is 25 ms. The default causal history `decode_window` is 250 ms.
+
+Short windows reduce latency but contain fewer spikes. Long windows improve spike-count reliability but increase effective decoding latency. The decoder comparison module tests this tradeoff directly.
+
+**Scientific framing:** The simulator knows the true behavior. The decoder only sees hippocampal spike counts. `spike_source=ground_truth` represents ideal neural information; `spike_source=sorted` represents information available after Neuropixels degradation and spike sorting. Comparing causal windows tells us how much recent neural history is needed to decode behavioral, exteroceptive, and proprioceptive variables. Comparing decoder models tells us which model class best extracts those latent variables from population activity. Closed-loop replay tests whether decoded state estimates are accurate enough to trigger interventions in real time.
+
+### Step 1: Choose whether to optimize or replay
+
+If you do not know the best decoder model and `decode_window` yet, run **decoder comparison** first.
+
+If you already know the settings and want to simulate **closed-loop replay**, run **single-run realtime decoding**.
+
+### Step 2A: Decoder comparison and causal window optimization
+
+**Script:** `run_decoder_comparison.py`
+
+Use this before closed-loop replay when you want to determine which decoder and causal history window work best. It tests multiple decoder models and multiple `decode_window` values, evaluates latent behavioral / exteroceptive / proprioceptive targets, reports the best model/window per target, and reports the shortest near-optimal causal window. Use `--compare-sources` to compare ground-truth versus sorted spikes.
+
+```bash
+python run_decoder_comparison.py \
+    --input outputs/ratinabox_002 \
+    --output outputs/ratinabox_002/decoder_comparison \
+    --compare-sources \
+    --decode-windows 0.025 0.050 0.100 0.250 0.500 1.000
+```
+
+Single spike source only:
+
+```bash
+python run_decoder_comparison.py \
+    --input outputs/ratinabox_002 \
+    --output outputs/ratinabox_002/decoder_comparison \
+    --spike-source sorted \
+    --decode-windows 0.025 0.050 0.100 0.250 0.500 1.000
+```
+
+### Step 2B: Single realtime closed-loop replay
+
+**Script:** `run_realtime_decoding.py`
+
+Use this when you already know the decoder settings you want to test. It uses one `spike_source` (or compares ground-truth versus sorted with `--compare-sources`), one causal `decode_window`, trains/evaluates the selected decoder setup, replays the session causally, optionally generates closed-loop events, and saves decoded state estimates.
 
 ```bash
 python run_realtime_decoding.py \
-    --input outputs/run_001 \
-    --output outputs/run_001/realtime_decoding \
+    --input outputs/ratinabox_002 \
+    --output outputs/ratinabox_002/realtime_decoding \
     --spike-source sorted \
     --update-dt 0.025 \
     --decode-window 0.250
 ```
 
-To compare ideal ground-truth spike decoding against sorted-spike decoding:
+Compare ground-truth versus sorted spikes at one window (no closed-loop trigger comparison across many models):
 
 ```bash
 python run_realtime_decoding.py \
-    --input outputs/run_001 \
-    --output outputs/run_001/realtime_decoding \
-    --compare-sources
+    --input outputs/ratinabox_002 \
+    --output outputs/ratinabox_002/realtime_decoding \
+    --compare-sources \
+    --update-dt 0.025 \
+    --decode-window 0.250
+```
+
+### Step 3: Decoder visualization
+
+**Script:** `run_decoder_visualization.py`
+
+Use this only after computation. It reads saved CSV/JSON/prediction outputs, makes figures, and does not retrain decoders or recompute comparisons.
+
+```bash
+python run_decoder_visualization.py \
+    --realtime-dir outputs/ratinabox_002/realtime_decoding \
+    --comparison-dir outputs/ratinabox_002/decoder_comparison
+```
+
+Either `--realtime-dir` or `--comparison-dir` (or both) must be provided.
+
+### Recommended order
+
+1. Run the simulation.
+2. Run decoder comparison to identify the best model and causal spike-history window.
+3. Run single-run realtime closed-loop decoding using the chosen settings.
+4. Run decoder visualization to generate report figures.
+
+```bash
+python run_simulation.py \
+    --output outputs/ratinabox_002 \
+    --seed 2 \
+    --neural-backend ratinabox_neurons
+```
+
+```bash
+python run_decoder_comparison.py \
+    --input outputs/ratinabox_002 \
+    --output outputs/ratinabox_002/decoder_comparison \
+    --compare-sources \
+    --decode-windows 0.025 0.050 0.100 0.250 0.500 1.000
+```
+
+```bash
+python run_realtime_decoding.py \
+    --input outputs/ratinabox_002 \
+    --output outputs/ratinabox_002/realtime_decoding \
+    --spike-source sorted \
+    --update-dt 0.025 \
+    --decode-window 0.250
+```
+
+```bash
+python run_decoder_visualization.py \
+    --realtime-dir outputs/ratinabox_002/realtime_decoding \
+    --comparison-dir outputs/ratinabox_002/decoder_comparison
+```
+
+### Which script should I run?
+
+| Goal | Script |
+|---|---|
+| Test one realtime decoder setup | `run_realtime_decoding.py` |
+| Compare many decoders and windows | `run_decoder_comparison.py` |
+| Compare sorted spikes to ground-truth spikes | `--compare-sources` with either computation script |
+| Generate figures from saved decoder results | `run_decoder_visualization.py` |
+| Choose the best causal history window | `run_decoder_comparison.py` |
+| Simulate closed-loop triggers | `run_realtime_decoding.py` |
+
+### Output layout
+
+```text
+outputs/run_001/
+    realtime_decoding/          # single-run closed-loop replay
+        sorted/                 # one spike_source: CSVs, JSON, models
+        ground_truth/           # when --compare-sources
+        comparison/             # side-by-side figures (after visualization)
+        figures/                # single-source replay figures (after visualization)
+
+    decoder_comparison/         # model/window optimization
+        sorted/                 # metrics, models, decoded_examples per source
+        ground_truth/           # when --compare-sources
+        source_comparison_metrics.csv
+        figures/                # summary + per-source figures (after visualization)
+```
+
+**Terminology:** `decode_window` = causal spike-history window; `update_dt` = decoder update interval; `spike_source` = `ground_truth` or `sorted`; **single-run realtime decoding** = one decoder/window configuration; **decoder comparison** = many decoder/window configurations; **closed-loop replay** = causal decoding plus trigger logic. Both computation scripts use causal realtime-compatible features.
+
+### Shared code modules
+
+Both computation scripts share:
+
+| Module | Role |
+|---|---|
+| `realtime/data_loading.py` | Load simulation outputs |
+| `realtime/spike_features.py` | Causal spike-count feature construction |
+| `realtime/decoder_models.py` | Decoder model zoo (sklearn pipelines) |
+| `realtime/train_decoder.py` | Training for single-run replay |
+| `realtime/decoder_comparison.py` | Multi-model/window evaluation |
+| `visualization/decoder_plots.py` | All decoder figures (plot-only script) |
+
+# Github 
+```bash
+cd ~/projects/hippo
+git status
+git add -A
+git commit -m "Update project files"
+git push
 ```
