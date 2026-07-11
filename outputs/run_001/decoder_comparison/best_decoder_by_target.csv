@@ -1,0 +1,9 @@
+target_name,primary_metric,best_decoder_name,best_decode_window_s,best_feature_type,best_metric_value,recommended_realtime_window_s,spike_source
+position,mean_position_error_cm,random_forest_regressor,0.5,counts,26.31975273607837,0.25,sorted
+speed,r2,random_forest_regressor,0.025,counts,-0.022390771195775372,0.025,sorted
+acceleration,r2,random_forest_regressor,0.25,counts,-0.0028292414441890568,0.025,sorted
+head_direction,mean_circular_error_deg,random_forest_regressor,0.1,counts,76.2473190063365,0.025,sorted
+distance_to_wall,r2,ridge,0.25,counts,0.5088486895638135,0.25,sorted
+spatial_context,balanced_accuracy,logistic_regression,0.25,counts,0.7575576873834825,0.25,sorted
+movement_state,balanced_accuracy,random_forest_classifier,1.0,counts,0.3571721464219879,0.1,sorted
+wall_distance_bin,balanced_accuracy,logistic_regression,0.1,counts,0.7512259220592279,0.1,sorted

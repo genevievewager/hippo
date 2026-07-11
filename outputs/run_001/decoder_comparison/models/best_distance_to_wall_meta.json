@@ -1,0 +1,16 @@
+{
+  "spike_source": "sorted",
+  "feature_type": "counts",
+  "decode_window_s": 0.25,
+  "update_dt_s": 0.025,
+  "n_units": 650,
+  "target_name": "distance_to_wall",
+  "decoder_name": "ridge",
+  "n_train_samples": 16793,
+  "n_test_samples": 7198,
+  "r2": 0.5088486895638135,
+  "correlation": 0.7918300641781514,
+  "mae_cm": 5.310497825839918,
+  "rmse_cm": 6.877334571115484,
+  "primary_metric_value": 0.5088486895638135
+}

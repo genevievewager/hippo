@@ -1,0 +1,3 @@
+mean_position_error_cm,median_position_error_cm,spatial_context_accuracy,movement_state_accuracy,speed_r2,speed_correlation,n_decoder_updates,n_closed_loop_events,closed_loop_precision,closed_loop_false_positive_rate,update_dt,decode_window,spike_source,n_units,source
+56.55288211502641,50.66764629843671,0.3570436232286746,0.03056404556821339,-15625.728782104065,0.03632805170162196,7198,0,,,0.025,0.25,ground_truth,200,ground_truth
+14.525068037344223,12.772871404492541,0.837454848569047,0.7278410669630453,0.47381891012093025,0.6940899631350467,7198,60,1.0,0.0,0.025,0.25,sorted,200,sorted

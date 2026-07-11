@@ -1,0 +1,37 @@
+{
+  "spike_source": "sorted",
+  "feature_type": "counts",
+  "decode_window_s": 0.1,
+  "update_dt_s": 0.025,
+  "n_units": 650,
+  "target_name": "wall_distance_bin",
+  "decoder_name": "logistic_regression",
+  "n_train_samples": 16798,
+  "n_test_samples": 7199,
+  "accuracy": 0.7591332129462426,
+  "balanced_accuracy": 0.7512259220592279,
+  "macro_f1": 0.7263774548535644,
+  "confusion_matrix": [
+    [
+      379,
+      86,
+      9
+    ],
+    [
+      139,
+      1424,
+      659
+    ],
+    [
+      63,
+      778,
+      3662
+    ]
+  ],
+  "class_labels": [
+    "center",
+    "middle",
+    "near_wall"
+  ],
+  "primary_metric_value": 0.7512259220592279
+}

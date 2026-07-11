@@ -1,5 +1,0 @@
-cell_type,ground_truth_spike_count,sorted_spike_count,apparent_sorting_loss
-CA1_pyr,2307,1746,0.24317295188556565
-CA2_pyr,2088,1183,0.4334291187739464
-CA3_pyr,1564,1077,0.3113810741687979
-DG_granule,1262,780,0.38193343898573695

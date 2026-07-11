@@ -1,5 +1,10 @@
 #!/usr/bin/env python3
-"""Run causal real-time closed-loop decoding on simulation outputs."""
+"""Single closed-loop replay: one decoder setup, causal session replay, trigger evaluation.
+
+Use when decoder settings (spike_source, decode_window, update_dt) are already chosen.
+For model/window optimization, use run_decoder_comparison.py instead.
+For figures, use run_decoder_visualization.py after computation.
+"""
 
 from __future__ import annotations
 
@@ -96,7 +101,7 @@ def main() -> None:
 
     metrics = run_realtime_pipeline(
         input_dir=args.input,
-        output_dir=args.output,
+        output_dir=args.output / args.spike_source,
         spike_source=args.spike_source,
         update_dt=args.update_dt,
         decode_window=args.decode_window,
@@ -107,7 +112,7 @@ def main() -> None:
     )
 
     print("Real-time decoding complete.")
-    for key, value in metrics.items():
+    for key, value in metrics.metrics.items():
         print(f"  {key}: {value}")
 
 

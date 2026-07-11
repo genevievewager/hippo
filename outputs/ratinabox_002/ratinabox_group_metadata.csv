@@ -1,0 +1,5 @@
+group_name,ratinabox_class,cell_type,rate_model,n_units
+PlaceCells,PlaceCells,CA1_pyr,ratinabox_PlaceCells,80
+HeadDirectionCells,HeadDirectionCells,CA2_pyr,ratinabox_HeadDirectionCells,40
+BoundaryVectorCells,BoundaryVectorCells,CA3_pyr,ratinabox_BoundaryVectorCells,40
+SpeedCells_fallback,SpeedCells_fallback,DG_granule,ratinabox_SpeedCells_fallback,40
