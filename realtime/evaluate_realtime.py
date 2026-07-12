@@ -5,19 +5,29 @@ from __future__ import annotations
 import json
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Any
 
+import joblib
 import numpy as np
 import pandas as pd
 from sklearn.metrics import accuracy_score, r2_score
 
+from realtime.best_decoder_selection import select_best_decoder_row
 from realtime.closed_loop_controller import evaluate_closed_loop
 from realtime.data_loading import load_simulation_data, make_decode_times
+from realtime.decoder_models import (
+    is_bayesian_model,
+    make_categorical_pipeline,
+    make_continuous_pipeline,
+)
+from realtime.decoding_targets import align_extended_behavior_to_decoder_times
 from realtime.realtime_decoder import RealTimeDecoder
-from realtime.spike_binner import build_causal_spike_matrix
+from realtime.spike_features import apply_feature_mode, build_causal_spike_matrix
 from realtime.train_decoder import (
     align_behavior_to_decoder_times,
     causal_train_test_split,
     evaluate_offline_training,
+    infer_arena_bounds,
     train_decoders,
 )
 
@@ -29,6 +39,48 @@ class PipelineResult:
     closed_loop_df: pd.DataFrame
     offline_metrics: dict
     spike_source: str
+    selected_config: dict | None = None
+
+
+def _train_primary_model(
+    decoder_name: str,
+    target: str,
+    X_train: np.ndarray,
+    beh_train: pd.DataFrame,
+    arena_bounds: tuple[float, float, float, float],
+    seed: int = 42,
+    n_jobs: int = -1,
+) -> Any:
+    from realtime.bayesian_decoder import (
+        BayesianDistanceToWallDecoder,
+        BayesianPlaceDerivedDecoder,
+    )
+
+    if target in ("spatial_context", "movement_state", "wall_distance_bin"):
+        model = make_categorical_pipeline(
+            decoder_name, seed=seed, n_jobs=n_jobs,
+            target_name=target, arena_bounds=arena_bounds,
+        )
+    else:
+        model = make_continuous_pipeline(
+            decoder_name, target, seed=seed, n_jobs=n_jobs, arena_bounds=arena_bounds,
+        )
+
+    if is_bayesian_model(decoder_name):
+        position_xy = beh_train[["x", "y"]].to_numpy()
+        if isinstance(model, (BayesianPlaceDerivedDecoder, BayesianDistanceToWallDecoder)):
+            model.fit(X_train, position_xy=position_xy)
+        else:
+            model.fit(X_train, position_xy)
+    else:
+        if target == "position":
+            y = beh_train[["x", "y"]].to_numpy()
+        elif target == "head_direction":
+            y = beh_train[["head_direction_sin", "head_direction_cos"]].to_numpy()
+        else:
+            y = beh_train[target].to_numpy()
+        model.fit(X_train, y)
+    return model
 
 
 def run_realtime_pipeline(
@@ -38,24 +90,48 @@ def run_realtime_pipeline(
     update_dt: float = 0.025,
     decode_window: float = 0.250,
     train_frac: float = 0.70,
+    closed_loop_target: str = "spatial_context",
     trigger_context: str | None = "wall",
     trigger_confidence: float = 0.80,
     trigger_movement: str | None = None,
+    trigger_wall_bin: str | None = "near_wall",
+    trigger_distance_lt_cm: float | None = 10.0,
+    trigger_speed_gt_cm_s: float | None = 10.0,
+    trigger_zone: str | None = "wall",
+    trigger_hd_center_deg: float | None = 90.0,
+    trigger_hd_width_deg: float | None = 30.0,
+    decoder_name: str | None = None,
+    feature_type: str = "counts",
+    selected_config: dict | None = None,
 ) -> PipelineResult:
     """Train decoders, replay causally on test period, evaluate, and save outputs."""
     output_dir = Path(output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
     models_dir = output_dir / "models"
+    models_dir.mkdir(parents=True, exist_ok=True)
 
     data = load_simulation_data(input_dir, spike_source)
+    arena_bounds = infer_arena_bounds(data["behavior_df"], data["summary"])
     decode_times = make_decode_times(data["session_duration"], decode_window, update_dt)
+
+    # Extended labels for richer closed-loop targets; fall back for basic columns.
+    aligned_ext = align_extended_behavior_to_decoder_times(
+        data["behavior_df"], decode_times, data["summary"]
+    )
     aligned_all = align_behavior_to_decoder_times(
         data["behavior_df"], decode_times, data["summary"]
     )
+    for col in ("acceleration", "distance_to_wall", "wall_distance_bin",
+                "head_direction", "head_direction_sin", "head_direction_cos"):
+        if col in aligned_ext.columns and col not in aligned_all.columns:
+            aligned_all[col] = aligned_ext[col]
+    if "wall_distance_bin" in aligned_ext.columns:
+        aligned_all["true_wall_distance_bin"] = aligned_ext["wall_distance_bin"]
 
     X_all = build_causal_spike_matrix(
         data["spikes_df"], data["unit_ids"], decode_times, decode_window
     )
+    X_all = apply_feature_mode(X_all, feature_type, decode_window)
 
     train_mask, test_mask = causal_train_test_split(decode_times, train_frac)
     X_train = X_all[train_mask]
@@ -66,19 +142,37 @@ def run_realtime_pipeline(
     decoders = train_decoders(X_train, beh_train, models_dir=models_dir)
     offline_metrics = evaluate_offline_training(decoders, X_test, beh_test)
 
+    primary_model = None
+    if decoder_name is not None and closed_loop_target is not None:
+        primary_model = _train_primary_model(
+            decoder_name, closed_loop_target, X_train, beh_train, arena_bounds,
+        )
+        joblib.dump(primary_model, models_dir / f"primary_{closed_loop_target}_decoder.joblib")
+
     rt_decoder = RealTimeDecoder(
         models=decoders,
         unit_ids=data["unit_ids"],
         decode_window=decode_window,
         update_dt=update_dt,
+        feature_type=feature_type,
+        primary_model=primary_model,
+        primary_target=closed_loop_target if primary_model is not None else None,
     )
     decoded_df = rt_decoder.replay(data["spikes_df"], beh_test)
 
     closed_loop_df = evaluate_closed_loop(
         decoded_df,
+        closed_loop_target=closed_loop_target,
         trigger_context=trigger_context,
         trigger_confidence=trigger_confidence,
         trigger_movement=trigger_movement,
+        trigger_wall_bin=trigger_wall_bin,
+        trigger_distance_lt_cm=trigger_distance_lt_cm,
+        trigger_speed_gt_cm_s=trigger_speed_gt_cm_s,
+        trigger_zone=trigger_zone,
+        trigger_hd_center_deg=trigger_hd_center_deg,
+        trigger_hd_width_deg=trigger_hd_width_deg,
+        arena_bounds=arena_bounds,
     )
 
     metrics = compute_realtime_metrics(
@@ -88,6 +182,9 @@ def run_realtime_pipeline(
         decode_window=decode_window,
         spike_source=spike_source,
         n_units=len(data["unit_ids"]),
+        decoder_name=decoder_name,
+        closed_loop_target=closed_loop_target,
+        feature_type=feature_type,
     )
 
     decoded_df.to_csv(output_dir / "decoded_realtime.csv", index=False)
@@ -97,12 +194,17 @@ def run_realtime_pipeline(
     with open(output_dir / "offline_test_metrics.json", "w") as f:
         json.dump(offline_metrics, f, indent=2)
 
+    if selected_config is not None:
+        with open(output_dir / "selected_realtime_decoder_config.json", "w") as f:
+            json.dump(selected_config, f, indent=2)
+
     return PipelineResult(
         metrics=metrics,
         decoded_df=decoded_df,
         closed_loop_df=closed_loop_df,
         offline_metrics=offline_metrics,
         spike_source=spike_source,
+        selected_config=selected_config,
     )
 
 
@@ -113,6 +215,9 @@ def compute_realtime_metrics(
     decode_window: float,
     spike_source: str,
     n_units: int,
+    decoder_name: str | None = None,
+    closed_loop_target: str | None = None,
+    feature_type: str = "counts",
 ) -> dict:
     """Aggregate real-time decoding and closed-loop metrics."""
     pos_err = decoded_df["position_error_cm"].to_numpy()
@@ -153,7 +258,81 @@ def compute_realtime_metrics(
         "decode_window": decode_window,
         "spike_source": spike_source,
         "n_units": n_units,
+        "decoder_name": decoder_name,
+        "closed_loop_target": closed_loop_target,
+        "feature_type": feature_type,
     }
+
+
+def run_realtime_with_best_decoder(
+    input_dir: Path,
+    output_dir: Path,
+    comparison_dir: Path,
+    closed_loop_target: str,
+    spike_source: str = "sorted",
+    selection_policy: str = "shortest_near_optimal",
+    update_dt: float = 0.025,
+    train_frac: float = 0.70,
+    trigger_context: str | None = "wall",
+    trigger_confidence: float = 0.80,
+    trigger_movement: str | None = None,
+    trigger_wall_bin: str | None = "near_wall",
+    trigger_distance_lt_cm: float | None = 10.0,
+    trigger_speed_gt_cm_s: float | None = 10.0,
+    trigger_zone: str | None = "wall",
+    trigger_hd_center_deg: float | None = 90.0,
+    trigger_hd_width_deg: float | None = 30.0,
+) -> PipelineResult:
+    """Select best decoder/window from comparison results and run closed-loop replay."""
+    selected, from_file = select_best_decoder_row(
+        comparison_dir=comparison_dir,
+        spike_source=spike_source,
+        closed_loop_target=closed_loop_target,
+        selection_policy=selection_policy,
+    )
+
+    run_dir = (
+        Path(output_dir)
+        / spike_source
+        / f"{closed_loop_target}_{selection_policy}"
+    )
+
+    selected_config = {
+        "selection_mode": "use_best_decoder",
+        "comparison_dir": str(comparison_dir),
+        "closed_loop_target": closed_loop_target,
+        "spike_source": spike_source,
+        "selection_policy": selection_policy,
+        "selected_decoder_name": selected["selected_decoder_name"],
+        "selected_decode_window_s": selected["selected_decode_window_s"],
+        "selected_feature_type": selected["selected_feature_type"],
+        "source_metric": selected.get("primary_metric"),
+        "source_metric_value": selected.get("best_metric_value"),
+        "from_file": str(from_file),
+        "decoder_config": selected.get("decoder_config", {}),
+    }
+
+    return run_realtime_pipeline(
+        input_dir=input_dir,
+        output_dir=run_dir,
+        spike_source=spike_source,
+        update_dt=update_dt,
+        decode_window=float(selected["selected_decode_window_s"]),
+        train_frac=train_frac,
+        closed_loop_target=closed_loop_target,
+        trigger_context=trigger_context,
+        trigger_confidence=trigger_confidence,
+        trigger_movement=trigger_movement,
+        trigger_wall_bin=trigger_wall_bin,
+        trigger_distance_lt_cm=trigger_distance_lt_cm,
+        trigger_speed_gt_cm_s=trigger_speed_gt_cm_s,
+        trigger_zone=trigger_zone,
+        trigger_hd_center_deg=trigger_hd_center_deg,
+        trigger_hd_width_deg=trigger_hd_width_deg,
+        decoder_name=str(selected["selected_decoder_name"]),
+        feature_type=str(selected["selected_feature_type"]),
+        selected_config=selected_config,
+    )
 
 
 def run_compare_sources(
@@ -165,6 +344,7 @@ def run_compare_sources(
     trigger_context: str | None = "wall",
     trigger_confidence: float = 0.80,
     trigger_movement: str | None = None,
+    closed_loop_target: str = "spatial_context",
 ) -> pd.DataFrame:
     """Run decoding for ground-truth and sorted spikes and save comparison metrics."""
     output_dir = Path(output_dir)
@@ -179,6 +359,7 @@ def run_compare_sources(
             update_dt=update_dt,
             decode_window=decode_window,
             train_frac=train_frac,
+            closed_loop_target=closed_loop_target,
             trigger_context=trigger_context,
             trigger_confidence=trigger_confidence,
             trigger_movement=trigger_movement,
