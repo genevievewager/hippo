@@ -1,0 +1,17 @@
+target_name,primary_metric,best_decoder_name,best_decode_window_s,best_feature_type,best_metric_value,recommended_realtime_window_s,spike_source,source
+position,mean_position_error_cm,random_forest_regressor,0.5,counts,4.7506926378913885,0.5,ground_truth,ground_truth
+speed,r2,ridge,0.1,counts,0.6921937126646522,0.1,ground_truth,ground_truth
+acceleration,r2,random_forest_regressor,0.1,counts,0.0080936199077042,0.1,ground_truth,ground_truth
+head_direction,mean_circular_error_deg,ridge,0.1,counts,12.277197782523745,0.1,ground_truth,ground_truth
+distance_to_wall,r2,random_forest_regressor,0.5,counts,0.9175028768365268,0.25,ground_truth,ground_truth
+spatial_context,balanced_accuracy,random_forest_classifier,0.5,counts,0.9002942013453675,0.25,ground_truth,ground_truth
+movement_state,balanced_accuracy,random_forest_classifier,0.1,counts,0.7160434796815934,0.1,ground_truth,ground_truth
+wall_distance_bin,balanced_accuracy,random_forest_classifier,0.5,counts,0.8858414646454871,0.1,ground_truth,ground_truth
+position,mean_position_error_cm,random_forest_regressor,1.0,counts,8.569970843618119,1.0,sorted,sorted
+speed,r2,ridge,0.1,counts,0.5267505544417996,0.1,sorted,sorted
+acceleration,r2,random_forest_regressor,0.1,counts,0.0073505478269355,0.1,sorted,sorted
+head_direction,mean_circular_error_deg,ridge,0.25,counts,15.44530985091637,0.25,sorted,sorted
+distance_to_wall,r2,random_forest_regressor,0.5,counts,0.8209025146128974,0.25,sorted,sorted
+spatial_context,balanced_accuracy,random_forest_classifier,0.5,counts,0.8593753893711059,0.25,sorted,sorted
+movement_state,balanced_accuracy,logistic_regression,0.1,counts,0.5850877298199473,0.1,sorted,sorted
+wall_distance_bin,balanced_accuracy,random_forest_classifier,0.5,counts,0.8214796047728813,0.25,sorted,sorted

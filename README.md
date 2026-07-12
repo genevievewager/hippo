@@ -162,7 +162,7 @@ Run:
 
 ```bash
 python run_simulation.py \
-    --output outputs/ratinabox_002 \
+    --output outputs/ratinabox_003 \
     --seed 1 \
     --neural-backend ratinabox_neurons
 ```
@@ -181,8 +181,8 @@ Run:
 
 ```bash
 python run_visualizations.py \
-    --input outputs/ratinabox_002 \
-    --output outputs/ratinabox_002/figures
+    --input outputs/ratinabox_003 \
+    --output outputs/ratinabox_003/figures
 ```
 
 Main outputs include:
@@ -258,48 +258,101 @@ python run_decoder_comparison.py \
 
 **Script:** `run_realtime_decoding.py`
 
-Use this when you already know the decoder settings you want to test. It uses one `spike_source` (or compares ground-truth versus sorted with `--compare-sources`), one causal `decode_window`, trains/evaluates the selected decoder setup, replays the session causally, optionally generates closed-loop events, and saves decoded state estimates.
+Use this when you want to replay the session causally with one decoder setup and optionally generate closed-loop events.
+
+There are two modes.
+
+#### Manual mode
+
+Use this when you already know the decoder, spike source, and causal history window.
 
 ```bash
 python run_realtime_decoding.py \
     --input outputs/ratinabox_002 \
     --output outputs/ratinabox_002/realtime_decoding \
     --spike-source sorted \
-    --update-dt 0.025 \
+    --decoder-name random_forest_classifier \
+    --closed-loop-target spatial_context \
     --decode-window 0.250
 ```
 
-Compare ground-truth versus sorted spikes at one window (no closed-loop trigger comparison across many models):
+#### Automatic best-decoder mode
+
+Use this after Step 2A. The script reads `best_decoder_by_target.csv` from the decoder comparison output and automatically selects the best decoder and causal history window for the requested target.
 
 ```bash
 python run_realtime_decoding.py \
     --input outputs/ratinabox_002 \
     --output outputs/ratinabox_002/realtime_decoding \
+    --comparison-dir outputs/ratinabox_002/decoder_comparison \
+    --use-best-decoder \
+    --closed-loop-target spatial_context \
+    --selection-policy shortest_near_optimal \
+    --spike-source sorted
+```
+
+`--selection-policy best_accuracy` uses the most accurate window.
+`--selection-policy shortest_near_optimal` uses the shortest window that reaches near-best performance, which is usually better for realtime closed-loop intervention.
+
+Outputs are saved under:
+
+```text
+realtime_decoding/{spike_source}/{closed_loop_target}_{selection_policy}/
+```
+
+including `selected_realtime_decoder_config.json`.
+
+Optional one-shot workflow:
+
+```bash
+python run_full_decoder_workflow.py \
+    --input outputs/ratinabox_002 \
+    --output outputs/ratinabox_002 \
     --compare-sources \
-    --update-dt 0.025 \
-    --decode-window 0.250
+    --closed-loop-target spatial_context \
+    --selection-policy shortest_near_optimal
 ```
 
 ### Step 3: Decoder visualization
 
 **Script:** `run_decoder_visualization.py`
 
-Use this only after computation. It reads saved CSV/JSON/prediction outputs, makes figures, and does not retrain decoders or recompute comparisons.
+Use this only after computation. It reads saved CSV/JSON/prediction outputs, makes figures, and does not retrain decoders or recompute comparisons. All decoder figures are written into the experiment's shared `figures/` folder (alongside simulation visualizations).
 
 ```bash
 python run_decoder_visualization.py \
-    --realtime-dir outputs/ratinabox_002/realtime_decoding \
-    --comparison-dir outputs/ratinabox_002/decoder_comparison
+    --experiment outputs/ratinabox_002
 ```
 
-Either `--realtime-dir` or `--comparison-dir` (or both) must be provided.
+Compile every PNG under `figures/` into one sectioned PDF (`figures/output.pdf`):
+
+```bash
+python run_compile_figures_pdf.py \
+    --experiment outputs/ratinabox_002
+```
+
+Or regenerate decoder figures and compile the PDF in one step:
+
+```bash
+python run_decoder_visualization.py \
+    --experiment outputs/ratinabox_002 \
+    --compile-pdf
+```
+
+Section title pages separate:
+
+* simulation visualizations (root of `figures/`)
+* realtime decoding (comparison / ground truth / sorted)
+* decoder comparison (summary / ground truth / sorted)
 
 ### Recommended order
 
-1. Run the simulation.
-2. Run decoder comparison to identify the best model and causal spike-history window.
-3. Run single-run realtime closed-loop decoding using the chosen settings.
-4. Run decoder visualization to generate report figures.
+Recommended decoder workflow:
+
+1. Run decoder comparison.
+2. Inspect `best_decoder_by_target.csv`.
+3. Run realtime closed-loop replay with `--use-best-decoder`.
+4. Generate decoder visualizations.
 
 ```bash
 python run_simulation.py \
@@ -320,17 +373,18 @@ python run_decoder_comparison.py \
 python run_realtime_decoding.py \
     --input outputs/ratinabox_002 \
     --output outputs/ratinabox_002/realtime_decoding \
-    --spike-source sorted \
-    --update-dt 0.025 \
-    --decode-window 0.250
+    --comparison-dir outputs/ratinabox_002/decoder_comparison \
+    --use-best-decoder \
+    --closed-loop-target spatial_context \
+    --selection-policy shortest_near_optimal \
+    --spike-source sorted
 ```
 
 ```bash
 python run_decoder_visualization.py \
-    --realtime-dir outputs/ratinabox_002/realtime_decoding \
-    --comparison-dir outputs/ratinabox_002/decoder_comparison
+    --experiment outputs/ratinabox_002 \
+    --compile-pdf
 ```
-
 ### Which script should I run?
 
 | Goal | Script |
@@ -339,24 +393,31 @@ python run_decoder_visualization.py \
 | Compare many decoders and windows | `run_decoder_comparison.py` |
 | Compare sorted spikes to ground-truth spikes | `--compare-sources` with either computation script |
 | Generate figures from saved decoder results | `run_decoder_visualization.py` |
+| Compile all figures into one sectioned PDF | `run_compile_figures_pdf.py` |
 | Choose the best causal history window | `run_decoder_comparison.py` |
 | Simulate closed-loop triggers | `run_realtime_decoding.py` |
+| Auto-select best decoder/window from comparison | `run_realtime_decoding.py --use-best-decoder` |
+| Run compare → best replay → visualize | `run_full_decoder_workflow.py` |
 
 ### Output layout
 
 ```text
 outputs/run_001/
-    realtime_decoding/          # single-run closed-loop replay
-        sorted/                 # one spike_source: CSVs, JSON, models
-        ground_truth/           # when --compare-sources
-        comparison/             # side-by-side figures (after visualization)
-        figures/                # single-source replay figures (after visualization)
+    figures/                    # ALL visualizations for this experiment
+        output.pdf              # sectioned PDF of every PNG under figures/
+        ...                     # simulation figures (run_visualizations.py)
+        realtime_decoding/      # closed-loop replay figures
+        decoder_comparison/     # model/window optimization figures
 
-    decoder_comparison/         # model/window optimization
-        sorted/                 # metrics, models, decoded_examples per source
+    realtime_decoding/          # computation only: CSVs, JSON, models
+        sorted/
         ground_truth/           # when --compare-sources
         source_comparison_metrics.csv
-        figures/                # summary + per-source figures (after visualization)
+
+    decoder_comparison/         # computation only: metrics, models, predictions
+        sorted/
+        ground_truth/           # when --compare-sources
+        source_comparison_metrics.csv
 ```
 
 **Terminology:** `decode_window` = causal spike-history window; `update_dt` = decoder update interval; `spike_source` = `ground_truth` or `sorted`; **single-run realtime decoding** = one decoder/window configuration; **decoder comparison** = many decoder/window configurations; **closed-loop replay** = causal decoding plus trigger logic. Both computation scripts use causal realtime-compatible features.

@@ -1,0 +1,1190 @@
+[
+  {
+    "spike_source": "sorted",
+    "source": "sorted",
+    "feature_type": "counts",
+    "decode_window_s": 0.05,
+    "update_dt_s": 0.025,
+    "n_units": 200,
+    "target_name": "position",
+    "target_family": "continuous",
+    "decoder_name": "ridge",
+    "n_train_samples": 16799,
+    "n_test_samples": 7200,
+    "mean_position_error_cm": 23.68286229426908,
+    "median_position_error_cm": 21.517177954882644,
+    "p90_position_error_cm": 42.38669148908567,
+    "r2_x": 0.6416293419024333,
+    "r2_y": 0.684470872115317
+  },
+  {
+    "spike_source": "sorted",
+    "source": "sorted",
+    "feature_type": "counts",
+    "decode_window_s": 0.05,
+    "update_dt_s": 0.025,
+    "n_units": 200,
+    "target_name": "position",
+    "target_family": "continuous",
+    "decoder_name": "pca_ridge",
+    "n_train_samples": 16799,
+    "n_test_samples": 7200,
+    "mean_position_error_cm": 23.69060834180763,
+    "median_position_error_cm": 21.523041066125145,
+    "p90_position_error_cm": 42.23913805463345,
+    "r2_x": 0.6425782497864229,
+    "r2_y": 0.6835169021097396
+  },
+  {
+    "spike_source": "sorted",
+    "source": "sorted",
+    "feature_type": "counts",
+    "decode_window_s": 0.05,
+    "update_dt_s": 0.025,
+    "n_units": 200,
+    "target_name": "position",
+    "target_family": "continuous",
+    "decoder_name": "random_forest_regressor",
+    "n_train_samples": 16799,
+    "n_test_samples": 7200,
+    "mean_position_error_cm": 27.36427932553767,
+    "median_position_error_cm": 23.82538616785653,
+    "p90_position_error_cm": 50.16168088902054,
+    "r2_x": 0.49081774618107865,
+    "r2_y": 0.5734913279547214
+  },
+  {
+    "spike_source": "sorted",
+    "source": "sorted",
+    "feature_type": "counts",
+    "decode_window_s": 0.05,
+    "update_dt_s": 0.025,
+    "n_units": 200,
+    "target_name": "position",
+    "target_family": "continuous",
+    "decoder_name": "bayesian_place_decoder",
+    "n_train_samples": 16799,
+    "n_test_samples": 7200,
+    "mean_position_error_cm": 16.160697192757723,
+    "median_position_error_cm": 12.063339076975302,
+    "p90_position_error_cm": 34.32371777380272,
+    "r2_x": 0.7485191508098916,
+    "r2_y": 0.8185712877018212
+  },
+  {
+    "spike_source": "sorted",
+    "source": "sorted",
+    "feature_type": "counts",
+    "decode_window_s": 0.05,
+    "update_dt_s": 0.025,
+    "n_units": 200,
+    "target_name": "speed",
+    "target_family": "continuous",
+    "decoder_name": "ridge",
+    "n_train_samples": 16799,
+    "n_test_samples": 7200,
+    "r2": 0.3769216518781189,
+    "correlation": 0.6210499935584192,
+    "mae": 3.2838067371533093,
+    "rmse": 4.092933744647731
+  },
+  {
+    "spike_source": "sorted",
+    "source": "sorted",
+    "feature_type": "counts",
+    "decode_window_s": 0.05,
+    "update_dt_s": 0.025,
+    "n_units": 200,
+    "target_name": "speed",
+    "target_family": "continuous",
+    "decoder_name": "pca_ridge",
+    "n_train_samples": 16799,
+    "n_test_samples": 7200,
+    "r2": 0.37783873772454557,
+    "correlation": 0.6221612316026509,
+    "mae": 3.283219604198892,
+    "rmse": 4.089920516999955
+  },
+  {
+    "spike_source": "sorted",
+    "source": "sorted",
+    "feature_type": "counts",
+    "decode_window_s": 0.05,
+    "update_dt_s": 0.025,
+    "n_units": 200,
+    "target_name": "speed",
+    "target_family": "continuous",
+    "decoder_name": "random_forest_regressor",
+    "n_train_samples": 16799,
+    "n_test_samples": 7200,
+    "r2": 0.3060607517176691,
+    "correlation": 0.5619972751572716,
+    "mae": 3.431772248234556,
+    "rmse": 4.319406825152452
+  },
+  {
+    "spike_source": "sorted",
+    "source": "sorted",
+    "feature_type": "counts",
+    "decode_window_s": 0.05,
+    "update_dt_s": 0.025,
+    "n_units": 200,
+    "target_name": "acceleration",
+    "target_family": "continuous",
+    "decoder_name": "ridge",
+    "n_train_samples": 16799,
+    "n_test_samples": 7200,
+    "r2": -0.002622356658704472,
+    "correlation": 0.06401080109149569,
+    "mae": 34.4455173629657,
+    "rmse": 56.80635588392971
+  },
+  {
+    "spike_source": "sorted",
+    "source": "sorted",
+    "feature_type": "counts",
+    "decode_window_s": 0.05,
+    "update_dt_s": 0.025,
+    "n_units": 200,
+    "target_name": "acceleration",
+    "target_family": "continuous",
+    "decoder_name": "pca_ridge",
+    "n_train_samples": 16799,
+    "n_test_samples": 7200,
+    "r2": -0.0005774089394650073,
+    "correlation": 0.06975216667130252,
+    "mae": 34.356934536059846,
+    "rmse": 56.7483952167615
+  },
+  {
+    "spike_source": "sorted",
+    "source": "sorted",
+    "feature_type": "counts",
+    "decode_window_s": 0.05,
+    "update_dt_s": 0.025,
+    "n_units": 200,
+    "target_name": "acceleration",
+    "target_family": "continuous",
+    "decoder_name": "random_forest_regressor",
+    "n_train_samples": 16799,
+    "n_test_samples": 7200,
+    "r2": 0.0005531794000538381,
+    "correlation": 0.048977737009787685,
+    "mae": 33.06466131201155,
+    "rmse": 56.716325130278406
+  },
+  {
+    "spike_source": "sorted",
+    "source": "sorted",
+    "feature_type": "counts",
+    "decode_window_s": 0.05,
+    "update_dt_s": 0.025,
+    "n_units": 200,
+    "target_name": "head_direction",
+    "target_family": "continuous",
+    "decoder_name": "ridge",
+    "n_train_samples": 16799,
+    "n_test_samples": 7200,
+    "mean_circular_error_deg": 26.291288913822065,
+    "median_circular_error_deg": 20.069117897006674,
+    "p90_circular_error_deg": 55.40839299819982
+  },
+  {
+    "spike_source": "sorted",
+    "source": "sorted",
+    "feature_type": "counts",
+    "decode_window_s": 0.05,
+    "update_dt_s": 0.025,
+    "n_units": 200,
+    "target_name": "head_direction",
+    "target_family": "continuous",
+    "decoder_name": "pca_ridge",
+    "n_train_samples": 16799,
+    "n_test_samples": 7200,
+    "mean_circular_error_deg": 26.313950830243698,
+    "median_circular_error_deg": 19.877600170459647,
+    "p90_circular_error_deg": 55.57114341111227
+  },
+  {
+    "spike_source": "sorted",
+    "source": "sorted",
+    "feature_type": "counts",
+    "decode_window_s": 0.05,
+    "update_dt_s": 0.025,
+    "n_units": 200,
+    "target_name": "head_direction",
+    "target_family": "continuous",
+    "decoder_name": "random_forest_regressor",
+    "n_train_samples": 16799,
+    "n_test_samples": 7200,
+    "mean_circular_error_deg": 31.54933112936863,
+    "median_circular_error_deg": 23.111428681163183,
+    "p90_circular_error_deg": 69.1257782876555
+  },
+  {
+    "spike_source": "sorted",
+    "source": "sorted",
+    "feature_type": "counts",
+    "decode_window_s": 0.05,
+    "update_dt_s": 0.025,
+    "n_units": 200,
+    "target_name": "distance_to_wall",
+    "target_family": "continuous",
+    "decoder_name": "ridge",
+    "n_train_samples": 16799,
+    "n_test_samples": 7200,
+    "r2": 0.39583562479676326,
+    "correlation": 0.6584946126674467,
+    "mae_cm": 6.058903637627514,
+    "rmse_cm": 7.657926366741775
+  },
+  {
+    "spike_source": "sorted",
+    "source": "sorted",
+    "feature_type": "counts",
+    "decode_window_s": 0.05,
+    "update_dt_s": 0.025,
+    "n_units": 200,
+    "target_name": "distance_to_wall",
+    "target_family": "continuous",
+    "decoder_name": "pca_ridge",
+    "n_train_samples": 16799,
+    "n_test_samples": 7200,
+    "r2": 0.39629677174643185,
+    "correlation": 0.6588262312620631,
+    "mae_cm": 6.059051025728695,
+    "rmse_cm": 7.655003235508816
+  },
+  {
+    "spike_source": "sorted",
+    "source": "sorted",
+    "feature_type": "counts",
+    "decode_window_s": 0.05,
+    "update_dt_s": 0.025,
+    "n_units": 200,
+    "target_name": "distance_to_wall",
+    "target_family": "continuous",
+    "decoder_name": "random_forest_regressor",
+    "n_train_samples": 16799,
+    "n_test_samples": 7200,
+    "r2": 0.4286155886161719,
+    "correlation": 0.6640587800191672,
+    "mae_cm": 5.352060963250988,
+    "rmse_cm": 7.447282413622683
+  },
+  {
+    "spike_source": "sorted",
+    "source": "sorted",
+    "feature_type": "counts",
+    "decode_window_s": 0.05,
+    "update_dt_s": 0.025,
+    "n_units": 200,
+    "target_name": "distance_to_wall",
+    "target_family": "continuous",
+    "decoder_name": "bayesian_place_decoder",
+    "n_train_samples": 16799,
+    "n_test_samples": 7200,
+    "r2": 0.3288523031589874,
+    "correlation": 0.6857640840717605,
+    "mae_cm": 5.246619449129155,
+    "rmse_cm": 8.07128497952785
+  },
+  {
+    "spike_source": "sorted",
+    "source": "sorted",
+    "feature_type": "counts",
+    "decode_window_s": 0.05,
+    "update_dt_s": 0.025,
+    "n_units": 200,
+    "target_name": "spatial_context",
+    "target_family": "categorical",
+    "decoder_name": "logistic_regression",
+    "n_train_samples": 16799,
+    "n_test_samples": 7200,
+    "accuracy": 0.6331944444444444,
+    "balanced_accuracy": 0.6391701705768392,
+    "macro_f1": 0.6299025541184984,
+    "confusion_matrix": [
+      [
+        978,
+        79,
+        277
+      ],
+      [
+        217,
+        2453,
+        1040
+      ],
+      [
+        272,
+        756,
+        1128
+      ]
+    ],
+    "class_labels": [
+      "center",
+      "corner",
+      "wall"
+    ]
+  },
+  {
+    "spike_source": "sorted",
+    "source": "sorted",
+    "feature_type": "counts",
+    "decode_window_s": 0.05,
+    "update_dt_s": 0.025,
+    "n_units": 200,
+    "target_name": "spatial_context",
+    "target_family": "categorical",
+    "decoder_name": "random_forest_classifier",
+    "n_train_samples": 16799,
+    "n_test_samples": 7200,
+    "accuracy": 0.6348611111111111,
+    "balanced_accuracy": 0.6251030801328429,
+    "macro_f1": 0.604979744635811,
+    "confusion_matrix": [
+      [
+        1008,
+        133,
+        193
+      ],
+      [
+        335,
+        2743,
+        632
+      ],
+      [
+        409,
+        927,
+        820
+      ]
+    ],
+    "class_labels": [
+      "center",
+      "corner",
+      "wall"
+    ]
+  },
+  {
+    "spike_source": "sorted",
+    "source": "sorted",
+    "feature_type": "counts",
+    "decode_window_s": 0.05,
+    "update_dt_s": 0.025,
+    "n_units": 200,
+    "target_name": "spatial_context",
+    "target_family": "categorical",
+    "decoder_name": "bayesian_place_decoder_derived_context",
+    "n_train_samples": 16799,
+    "n_test_samples": 7200,
+    "accuracy": 0.6708333333333333,
+    "balanced_accuracy": 0.6397099897560583,
+    "macro_f1": 0.6412439994998756,
+    "confusion_matrix": [
+      [
+        862,
+        241,
+        231
+      ],
+      [
+        258,
+        1047,
+        851
+      ],
+      [
+        222,
+        567,
+        2921
+      ]
+    ],
+    "class_labels": [
+      "center",
+      "wall",
+      "corner"
+    ]
+  },
+  {
+    "spike_source": "sorted",
+    "source": "sorted",
+    "feature_type": "counts",
+    "decode_window_s": 0.05,
+    "update_dt_s": 0.025,
+    "n_units": 200,
+    "target_name": "movement_state",
+    "target_family": "categorical",
+    "decoder_name": "logistic_regression",
+    "n_train_samples": 16799,
+    "n_test_samples": 7200,
+    "accuracy": 0.5670833333333334,
+    "balanced_accuracy": 0.5452514078306533,
+    "macro_f1": 0.4695475195053705,
+    "confusion_matrix": [
+      [
+        2156,
+        732,
+        148
+      ],
+      [
+        1193,
+        1790,
+        885
+      ],
+      [
+        11,
+        148,
+        137
+      ]
+    ],
+    "class_labels": [
+      "fast",
+      "slow",
+      "still"
+    ]
+  },
+  {
+    "spike_source": "sorted",
+    "source": "sorted",
+    "feature_type": "counts",
+    "decode_window_s": 0.05,
+    "update_dt_s": 0.025,
+    "n_units": 200,
+    "target_name": "movement_state",
+    "target_family": "categorical",
+    "decoder_name": "random_forest_classifier",
+    "n_train_samples": 16799,
+    "n_test_samples": 7200,
+    "accuracy": 0.5447222222222222,
+    "balanced_accuracy": 0.5511790095722923,
+    "macro_f1": 0.4510938543241744,
+    "confusion_matrix": [
+      [
+        2378,
+        534,
+        124
+      ],
+      [
+        1547,
+        1393,
+        928
+      ],
+      [
+        24,
+        121,
+        151
+      ]
+    ],
+    "class_labels": [
+      "fast",
+      "slow",
+      "still"
+    ]
+  },
+  {
+    "spike_source": "sorted",
+    "source": "sorted",
+    "feature_type": "counts",
+    "decode_window_s": 0.05,
+    "update_dt_s": 0.025,
+    "n_units": 200,
+    "target_name": "wall_distance_bin",
+    "target_family": "categorical",
+    "decoder_name": "logistic_regression",
+    "n_train_samples": 16799,
+    "n_test_samples": 7200,
+    "accuracy": 0.7198611111111111,
+    "balanced_accuracy": 0.6998504673561882,
+    "macro_f1": 0.6249735349702225,
+    "confusion_matrix": [
+      [
+        301,
+        74,
+        15
+      ],
+      [
+        310,
+        990,
+        494
+      ],
+      [
+        124,
+        1000,
+        3892
+      ]
+    ],
+    "class_labels": [
+      "center",
+      "middle",
+      "near_wall"
+    ]
+  },
+  {
+    "spike_source": "sorted",
+    "source": "sorted",
+    "feature_type": "counts",
+    "decode_window_s": 0.05,
+    "update_dt_s": 0.025,
+    "n_units": 200,
+    "target_name": "wall_distance_bin",
+    "target_family": "categorical",
+    "decoder_name": "random_forest_classifier",
+    "n_train_samples": 16799,
+    "n_test_samples": 7200,
+    "accuracy": 0.7184722222222222,
+    "balanced_accuracy": 0.6700920043597388,
+    "macro_f1": 0.5913368196379074,
+    "confusion_matrix": [
+      [
+        308,
+        54,
+        28
+      ],
+      [
+        367,
+        700,
+        727
+      ],
+      [
+        158,
+        693,
+        4165
+      ]
+    ],
+    "class_labels": [
+      "center",
+      "middle",
+      "near_wall"
+    ]
+  },
+  {
+    "spike_source": "sorted",
+    "source": "sorted",
+    "feature_type": "counts",
+    "decode_window_s": 0.05,
+    "update_dt_s": 0.025,
+    "n_units": 200,
+    "target_name": "wall_distance_bin",
+    "target_family": "categorical",
+    "decoder_name": "bayesian_place_decoder_derived_context",
+    "n_train_samples": 16799,
+    "n_test_samples": 7200,
+    "accuracy": 0.7219444444444445,
+    "balanced_accuracy": 0.6451613921293555,
+    "macro_f1": 0.6090073316963172,
+    "confusion_matrix": [
+      [
+        4155,
+        789,
+        72
+      ],
+      [
+        772,
+        781,
+        241
+      ],
+      [
+        21,
+        107,
+        262
+      ]
+    ],
+    "class_labels": [
+      "near_wall",
+      "middle",
+      "center"
+    ]
+  },
+  {
+    "spike_source": "sorted",
+    "source": "sorted",
+    "feature_type": "counts",
+    "decode_window_s": 0.25,
+    "update_dt_s": 0.025,
+    "n_units": 200,
+    "target_name": "position",
+    "target_family": "continuous",
+    "decoder_name": "ridge",
+    "n_train_samples": 16793,
+    "n_test_samples": 7198,
+    "mean_position_error_cm": 13.965908207841913,
+    "median_position_error_cm": 12.182740170971002,
+    "p90_position_error_cm": 25.793548053104992,
+    "r2_x": 0.8718296663079425,
+    "r2_y": 0.8829917251828013
+  },
+  {
+    "spike_source": "sorted",
+    "source": "sorted",
+    "feature_type": "counts",
+    "decode_window_s": 0.25,
+    "update_dt_s": 0.025,
+    "n_units": 200,
+    "target_name": "position",
+    "target_family": "continuous",
+    "decoder_name": "pca_ridge",
+    "n_train_samples": 16793,
+    "n_test_samples": 7198,
+    "mean_position_error_cm": 13.998786004444764,
+    "median_position_error_cm": 12.238485402090902,
+    "p90_position_error_cm": 25.618971883456602,
+    "r2_x": 0.8721272502990361,
+    "r2_y": 0.8822271424817462
+  },
+  {
+    "spike_source": "sorted",
+    "source": "sorted",
+    "feature_type": "counts",
+    "decode_window_s": 0.25,
+    "update_dt_s": 0.025,
+    "n_units": 200,
+    "target_name": "position",
+    "target_family": "continuous",
+    "decoder_name": "random_forest_regressor",
+    "n_train_samples": 16793,
+    "n_test_samples": 7198,
+    "mean_position_error_cm": 14.09949039126026,
+    "median_position_error_cm": 9.884999552560632,
+    "p90_position_error_cm": 29.374887099409445,
+    "r2_x": 0.8192238885555228,
+    "r2_y": 0.8229224282378029
+  },
+  {
+    "spike_source": "sorted",
+    "source": "sorted",
+    "feature_type": "counts",
+    "decode_window_s": 0.25,
+    "update_dt_s": 0.025,
+    "n_units": 200,
+    "target_name": "position",
+    "target_family": "continuous",
+    "decoder_name": "bayesian_place_decoder",
+    "n_train_samples": 16793,
+    "n_test_samples": 7198,
+    "mean_position_error_cm": 12.092394800195827,
+    "median_position_error_cm": 10.029118644729035,
+    "p90_position_error_cm": 23.929549186602475,
+    "r2_x": 0.8448740760752333,
+    "r2_y": 0.9396109937731207
+  },
+  {
+    "spike_source": "sorted",
+    "source": "sorted",
+    "feature_type": "counts",
+    "decode_window_s": 0.25,
+    "update_dt_s": 0.025,
+    "n_units": 200,
+    "target_name": "speed",
+    "target_family": "continuous",
+    "decoder_name": "ridge",
+    "n_train_samples": 16793,
+    "n_test_samples": 7198,
+    "r2": 0.5004566890544395,
+    "correlation": 0.7143047159647982,
+    "mae": 2.930971972660097,
+    "rmse": 3.6640913689541783
+  },
+  {
+    "spike_source": "sorted",
+    "source": "sorted",
+    "feature_type": "counts",
+    "decode_window_s": 0.25,
+    "update_dt_s": 0.025,
+    "n_units": 200,
+    "target_name": "speed",
+    "target_family": "continuous",
+    "decoder_name": "pca_ridge",
+    "n_train_samples": 16793,
+    "n_test_samples": 7198,
+    "r2": 0.5026761621294709,
+    "correlation": 0.7165074044799711,
+    "mae": 2.926038770391391,
+    "rmse": 3.6559425206950844
+  },
+  {
+    "spike_source": "sorted",
+    "source": "sorted",
+    "feature_type": "counts",
+    "decode_window_s": 0.25,
+    "update_dt_s": 0.025,
+    "n_units": 200,
+    "target_name": "speed",
+    "target_family": "continuous",
+    "decoder_name": "random_forest_regressor",
+    "n_train_samples": 16793,
+    "n_test_samples": 7198,
+    "r2": 0.436352813457878,
+    "correlation": 0.6733955949784545,
+    "mae": 3.100504683977768,
+    "rmse": 3.8920946454219365
+  },
+  {
+    "spike_source": "sorted",
+    "source": "sorted",
+    "feature_type": "counts",
+    "decode_window_s": 0.25,
+    "update_dt_s": 0.025,
+    "n_units": 200,
+    "target_name": "acceleration",
+    "target_family": "continuous",
+    "decoder_name": "ridge",
+    "n_train_samples": 16793,
+    "n_test_samples": 7198,
+    "r2": 0.00028626426363453916,
+    "correlation": 0.0857875381730457,
+    "mae": 34.95442498115041,
+    "rmse": 56.7311898046032
+  },
+  {
+    "spike_source": "sorted",
+    "source": "sorted",
+    "feature_type": "counts",
+    "decode_window_s": 0.25,
+    "update_dt_s": 0.025,
+    "n_units": 200,
+    "target_name": "acceleration",
+    "target_family": "continuous",
+    "decoder_name": "pca_ridge",
+    "n_train_samples": 16793,
+    "n_test_samples": 7198,
+    "r2": 0.001564722924054518,
+    "correlation": 0.08622017445194614,
+    "mae": 34.74566984115094,
+    "rmse": 56.69490357537049
+  },
+  {
+    "spike_source": "sorted",
+    "source": "sorted",
+    "feature_type": "counts",
+    "decode_window_s": 0.25,
+    "update_dt_s": 0.025,
+    "n_units": 200,
+    "target_name": "acceleration",
+    "target_family": "continuous",
+    "decoder_name": "random_forest_regressor",
+    "n_train_samples": 16793,
+    "n_test_samples": 7198,
+    "r2": 0.0037874687620607084,
+    "correlation": 0.07489749247095494,
+    "mae": 33.58015894916411,
+    "rmse": 56.63176048614231
+  },
+  {
+    "spike_source": "sorted",
+    "source": "sorted",
+    "feature_type": "counts",
+    "decode_window_s": 0.25,
+    "update_dt_s": 0.025,
+    "n_units": 200,
+    "target_name": "head_direction",
+    "target_family": "continuous",
+    "decoder_name": "ridge",
+    "n_train_samples": 16793,
+    "n_test_samples": 7198,
+    "mean_circular_error_deg": 15.44530985091637,
+    "median_circular_error_deg": 12.892198135351867,
+    "p90_circular_error_deg": 32.267638088411594
+  },
+  {
+    "spike_source": "sorted",
+    "source": "sorted",
+    "feature_type": "counts",
+    "decode_window_s": 0.25,
+    "update_dt_s": 0.025,
+    "n_units": 200,
+    "target_name": "head_direction",
+    "target_family": "continuous",
+    "decoder_name": "pca_ridge",
+    "n_train_samples": 16793,
+    "n_test_samples": 7198,
+    "mean_circular_error_deg": 15.407987546242788,
+    "median_circular_error_deg": 12.842877074431549,
+    "p90_circular_error_deg": 32.079140897054806
+  },
+  {
+    "spike_source": "sorted",
+    "source": "sorted",
+    "feature_type": "counts",
+    "decode_window_s": 0.25,
+    "update_dt_s": 0.025,
+    "n_units": 200,
+    "target_name": "head_direction",
+    "target_family": "continuous",
+    "decoder_name": "random_forest_regressor",
+    "n_train_samples": 16793,
+    "n_test_samples": 7198,
+    "mean_circular_error_deg": 18.03733092832751,
+    "median_circular_error_deg": 14.86330501939996,
+    "p90_circular_error_deg": 37.75037049335488
+  },
+  {
+    "spike_source": "sorted",
+    "source": "sorted",
+    "feature_type": "counts",
+    "decode_window_s": 0.25,
+    "update_dt_s": 0.025,
+    "n_units": 200,
+    "target_name": "distance_to_wall",
+    "target_family": "continuous",
+    "decoder_name": "ridge",
+    "n_train_samples": 16793,
+    "n_test_samples": 7198,
+    "r2": 0.71285402736431,
+    "correlation": 0.8477170507857525,
+    "mae_cm": 4.14383345394049,
+    "rmse_cm": 5.279994132773229
+  },
+  {
+    "spike_source": "sorted",
+    "source": "sorted",
+    "feature_type": "counts",
+    "decode_window_s": 0.25,
+    "update_dt_s": 0.025,
+    "n_units": 200,
+    "target_name": "distance_to_wall",
+    "target_family": "continuous",
+    "decoder_name": "pca_ridge",
+    "n_train_samples": 16793,
+    "n_test_samples": 7198,
+    "r2": 0.7159298120749058,
+    "correlation": 0.8503889333632242,
+    "mae_cm": 4.128036885791049,
+    "rmse_cm": 5.2516394794174825
+  },
+  {
+    "spike_source": "sorted",
+    "source": "sorted",
+    "feature_type": "counts",
+    "decode_window_s": 0.25,
+    "update_dt_s": 0.025,
+    "n_units": 200,
+    "target_name": "distance_to_wall",
+    "target_family": "continuous",
+    "decoder_name": "random_forest_regressor",
+    "n_train_samples": 16793,
+    "n_test_samples": 7198,
+    "r2": 0.806069402921842,
+    "correlation": 0.8991176529354995,
+    "mae_cm": 3.0258920009474637,
+    "rmse_cm": 4.339155784809479
+  },
+  {
+    "spike_source": "sorted",
+    "source": "sorted",
+    "feature_type": "counts",
+    "decode_window_s": 0.25,
+    "update_dt_s": 0.025,
+    "n_units": 200,
+    "target_name": "distance_to_wall",
+    "target_family": "continuous",
+    "decoder_name": "bayesian_place_decoder",
+    "n_train_samples": 16793,
+    "n_test_samples": 7198,
+    "r2": 0.5936174611115901,
+    "correlation": 0.8263098326420767,
+    "mae_cm": 3.9848006686700104,
+    "rmse_cm": 6.281300848732423
+  },
+  {
+    "spike_source": "sorted",
+    "source": "sorted",
+    "feature_type": "counts",
+    "decode_window_s": 0.25,
+    "update_dt_s": 0.025,
+    "n_units": 200,
+    "target_name": "spatial_context",
+    "target_family": "categorical",
+    "decoder_name": "logistic_regression",
+    "n_train_samples": 16793,
+    "n_test_samples": 7198,
+    "accuracy": 0.7809113642678521,
+    "balanced_accuracy": 0.7807984928446888,
+    "macro_f1": 0.7806522657646884,
+    "confusion_matrix": [
+      [
+        1123,
+        24,
+        187
+      ],
+      [
+        79,
+        3017,
+        612
+      ],
+      [
+        108,
+        567,
+        1481
+      ]
+    ],
+    "class_labels": [
+      "center",
+      "corner",
+      "wall"
+    ]
+  },
+  {
+    "spike_source": "sorted",
+    "source": "sorted",
+    "feature_type": "counts",
+    "decode_window_s": 0.25,
+    "update_dt_s": 0.025,
+    "n_units": 200,
+    "target_name": "spatial_context",
+    "target_family": "categorical",
+    "decoder_name": "random_forest_classifier",
+    "n_train_samples": 16793,
+    "n_test_samples": 7198,
+    "accuracy": 0.8357877188107807,
+    "balanced_accuracy": 0.8171161603244105,
+    "macro_f1": 0.8253809165213918,
+    "confusion_matrix": [
+      [
+        1141,
+        42,
+        151
+      ],
+      [
+        112,
+        3426,
+        170
+      ],
+      [
+        60,
+        647,
+        1449
+      ]
+    ],
+    "class_labels": [
+      "center",
+      "corner",
+      "wall"
+    ]
+  },
+  {
+    "spike_source": "sorted",
+    "source": "sorted",
+    "feature_type": "counts",
+    "decode_window_s": 0.25,
+    "update_dt_s": 0.025,
+    "n_units": 200,
+    "target_name": "spatial_context",
+    "target_family": "categorical",
+    "decoder_name": "bayesian_place_decoder_derived_context",
+    "n_train_samples": 16793,
+    "n_test_samples": 7198,
+    "accuracy": 0.7574326201722701,
+    "balanced_accuracy": 0.689365747414913,
+    "macro_f1": 0.7225653626498127,
+    "confusion_matrix": [
+      [
+        805,
+        270,
+        259
+      ],
+      [
+        24,
+        1089,
+        1043
+      ],
+      [
+        8,
+        142,
+        3558
+      ]
+    ],
+    "class_labels": [
+      "center",
+      "wall",
+      "corner"
+    ]
+  },
+  {
+    "spike_source": "sorted",
+    "source": "sorted",
+    "feature_type": "counts",
+    "decode_window_s": 0.25,
+    "update_dt_s": 0.025,
+    "n_units": 200,
+    "target_name": "movement_state",
+    "target_family": "categorical",
+    "decoder_name": "logistic_regression",
+    "n_train_samples": 16793,
+    "n_test_samples": 7198,
+    "accuracy": 0.635593220338983,
+    "balanced_accuracy": 0.5339240243663863,
+    "macro_f1": 0.5039059469465116,
+    "confusion_matrix": [
+      [
+        2232,
+        755,
+        49
+      ],
+      [
+        1043,
+        2260,
+        565
+      ],
+      [
+        13,
+        198,
+        83
+      ]
+    ],
+    "class_labels": [
+      "fast",
+      "slow",
+      "still"
+    ]
+  },
+  {
+    "spike_source": "sorted",
+    "source": "sorted",
+    "feature_type": "counts",
+    "decode_window_s": 0.25,
+    "update_dt_s": 0.025,
+    "n_units": 200,
+    "target_name": "movement_state",
+    "target_family": "categorical",
+    "decoder_name": "random_forest_classifier",
+    "n_train_samples": 16793,
+    "n_test_samples": 7198,
+    "accuracy": 0.6990830786329536,
+    "balanced_accuracy": 0.5107253248555991,
+    "macro_f1": 0.5150659153658254,
+    "confusion_matrix": [
+      [
+        2288,
+        748,
+        0
+      ],
+      [
+        1081,
+        2722,
+        65
+      ],
+      [
+        6,
+        266,
+        22
+      ]
+    ],
+    "class_labels": [
+      "fast",
+      "slow",
+      "still"
+    ]
+  },
+  {
+    "spike_source": "sorted",
+    "source": "sorted",
+    "feature_type": "counts",
+    "decode_window_s": 0.25,
+    "update_dt_s": 0.025,
+    "n_units": 200,
+    "target_name": "wall_distance_bin",
+    "target_family": "categorical",
+    "decoder_name": "logistic_regression",
+    "n_train_samples": 16793,
+    "n_test_samples": 7198,
+    "accuracy": 0.8594053903862184,
+    "balanced_accuracy": 0.7788462390775912,
+    "macro_f1": 0.7731756986016429,
+    "confusion_matrix": [
+      [
+        257,
+        129,
+        4
+      ],
+      [
+        108,
+        1383,
+        303
+      ],
+      [
+        23,
+        445,
+        4546
+      ]
+    ],
+    "class_labels": [
+      "center",
+      "middle",
+      "near_wall"
+    ]
+  },
+  {
+    "spike_source": "sorted",
+    "source": "sorted",
+    "feature_type": "counts",
+    "decode_window_s": 0.25,
+    "update_dt_s": 0.025,
+    "n_units": 200,
+    "target_name": "wall_distance_bin",
+    "target_family": "categorical",
+    "decoder_name": "random_forest_classifier",
+    "n_train_samples": 16793,
+    "n_test_samples": 7198,
+    "accuracy": 0.8680188941372603,
+    "balanced_accuracy": 0.7992151889240042,
+    "macro_f1": 0.8077718534057855,
+    "confusion_matrix": [
+      [
+        320,
+        70,
+        0
+      ],
+      [
+        90,
+        1103,
+        601
+      ],
+      [
+        0,
+        189,
+        4825
+      ]
+    ],
+    "class_labels": [
+      "center",
+      "middle",
+      "near_wall"
+    ]
+  },
+  {
+    "spike_source": "sorted",
+    "source": "sorted",
+    "feature_type": "counts",
+    "decode_window_s": 0.25,
+    "update_dt_s": 0.025,
+    "n_units": 200,
+    "target_name": "wall_distance_bin",
+    "target_family": "categorical",
+    "decoder_name": "bayesian_place_decoder_derived_context",
+    "n_train_samples": 16793,
+    "n_test_samples": 7198,
+    "accuracy": 0.7867463184217838,
+    "balanced_accuracy": 0.6648948755450551,
+    "macro_f1": 0.6422889280291998,
+    "confusion_matrix": [
+      [
+        4894,
+        120,
+        0
+      ],
+      [
+        1106,
+        475,
+        213
+      ],
+      [
+        5,
+        91,
+        294
+      ]
+    ],
+    "class_labels": [
+      "near_wall",
+      "middle",
+      "center"
+    ]
+  }
+]

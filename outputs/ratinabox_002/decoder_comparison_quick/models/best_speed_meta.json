@@ -1,0 +1,18 @@
+{
+  "spike_source": "sorted",
+  "source": "sorted",
+  "feature_type": "counts",
+  "decode_window_s": 0.25,
+  "update_dt_s": 0.025,
+  "n_units": 200,
+  "target_name": "speed",
+  "target_family": "continuous",
+  "decoder_name": "pca_ridge",
+  "n_train_samples": 16793,
+  "n_test_samples": 7198,
+  "r2": 0.5026761621294709,
+  "correlation": 0.7165074044799711,
+  "mae": 2.926038770391391,
+  "rmse": 3.6559425206950844,
+  "primary_metric_value": 0.5026761621294709
+}

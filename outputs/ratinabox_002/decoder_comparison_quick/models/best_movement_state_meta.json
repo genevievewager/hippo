@@ -1,0 +1,39 @@
+{
+  "spike_source": "sorted",
+  "source": "sorted",
+  "feature_type": "counts",
+  "decode_window_s": 0.05,
+  "update_dt_s": 0.025,
+  "n_units": 200,
+  "target_name": "movement_state",
+  "target_family": "categorical",
+  "decoder_name": "random_forest_classifier",
+  "n_train_samples": 16799,
+  "n_test_samples": 7200,
+  "accuracy": 0.5447222222222222,
+  "balanced_accuracy": 0.5511790095722923,
+  "macro_f1": 0.4510938543241744,
+  "confusion_matrix": [
+    [
+      2378,
+      534,
+      124
+    ],
+    [
+      1547,
+      1393,
+      928
+    ],
+    [
+      24,
+      121,
+      151
+    ]
+  ],
+  "class_labels": [
+    "fast",
+    "slow",
+    "still"
+  ],
+  "primary_metric_value": 0.5511790095722923
+}

@@ -1,0 +1,37 @@
+{
+  "spike_source": "sorted",
+  "feature_type": "counts",
+  "decode_window_s": 0.5,
+  "update_dt_s": 0.025,
+  "n_units": 200,
+  "target_name": "spatial_context",
+  "decoder_name": "random_forest_classifier",
+  "n_train_samples": 16786,
+  "n_test_samples": 7195,
+  "accuracy": 0.8724113968033357,
+  "balanced_accuracy": 0.8593753893711059,
+  "macro_f1": 0.8669903449555942,
+  "confusion_matrix": [
+    [
+      1193,
+      20,
+      121
+    ],
+    [
+      117,
+      3477,
+      111
+    ],
+    [
+      14,
+      535,
+      1607
+    ]
+  ],
+  "class_labels": [
+    "center",
+    "corner",
+    "wall"
+  ],
+  "primary_metric_value": 0.8593753893711059
+}

@@ -1,0 +1,19 @@
+{
+  "spike_source": "sorted",
+  "source": "sorted",
+  "feature_type": "counts",
+  "decode_window_s": 0.25,
+  "update_dt_s": 0.025,
+  "n_units": 200,
+  "target_name": "position",
+  "target_family": "continuous",
+  "decoder_name": "bayesian_place_decoder",
+  "n_train_samples": 16793,
+  "n_test_samples": 7198,
+  "mean_position_error_cm": 12.092394800195827,
+  "median_position_error_cm": 10.029118644729035,
+  "p90_position_error_cm": 23.929549186602475,
+  "r2_x": 0.8448740760752333,
+  "r2_y": 0.9396109937731207,
+  "primary_metric_value": 12.092394800195827
+}

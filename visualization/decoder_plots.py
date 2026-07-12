@@ -1,4 +1,8 @@
-"""All decoder-related figures: realtime decoding and decoder comparison."""
+"""All decoder-related figures: realtime decoding and decoder comparison.
+
+Figures are written under the experiment's shared figures/ folder so they
+sit alongside simulation visualizations.
+"""
 
 from __future__ import annotations
 
@@ -43,44 +47,91 @@ PLOT_FILENAME = {
 }
 
 
-def plot_realtime_outputs(realtime_dir: Path, output_dir: Path | None = None) -> None:
-    """Generate figures for a realtime decoding output directory."""
+def _read_csv(path: Path) -> pd.DataFrame:
+    """Read a CSV, returning an empty DataFrame if the file has no rows/columns."""
+    path = Path(path)
+    if not path.exists() or path.stat().st_size == 0:
+        return pd.DataFrame()
+    try:
+        return pd.read_csv(path)
+    except pd.errors.EmptyDataError:
+        return pd.DataFrame()
+
+
+def resolve_experiment_dir(
+    experiment_dir: Path | None = None,
+    realtime_dir: Path | None = None,
+    comparison_dir: Path | None = None,
+) -> Path:
+    """Resolve the experiment root that owns the shared figures/ folder."""
+    if experiment_dir is not None:
+        return Path(experiment_dir)
+    for candidate in (realtime_dir, comparison_dir):
+        if candidate is not None:
+            return Path(candidate).resolve().parent
+    raise ValueError("Provide --experiment, --realtime-dir, or --comparison-dir")
+
+
+def plot_realtime_outputs(
+    realtime_dir: Path,
+    figures_dir: Path,
+) -> Path:
+    """Generate realtime decoding figures under figures_dir/realtime_decoding/."""
     realtime_dir = Path(realtime_dir)
+    out_root = Path(figures_dir) / "realtime_decoding"
+    out_root.mkdir(parents=True, exist_ok=True)
+
     gt = realtime_dir / "ground_truth" / "decoded_realtime.csv"
     sorted_csv = realtime_dir / "sorted" / "decoded_realtime.csv"
+    wrote_any = False
 
     if gt.exists() and sorted_csv.exists():
-        out = output_dir or realtime_dir / "comparison"
-        _plot_realtime_compare_sources(realtime_dir, out)
-        return
+        _plot_realtime_compare_sources(realtime_dir, out_root / "comparison")
+        wrote_any = True
 
     for source in ("sorted", "ground_truth"):
         source_dir = realtime_dir / source
         if (source_dir / "decoded_realtime.csv").exists():
-            out = output_dir or realtime_dir / "figures"
-            _plot_realtime_source(source_dir, out, source)
+            _plot_realtime_source(source_dir, out_root / source, source)
+            wrote_any = True
+
+    if not wrote_any:
+        raise FileNotFoundError(
+            f"No realtime decoding outputs found under {realtime_dir}"
+        )
+    return out_root
 
 
 def plot_decoder_comparison_outputs(
     comparison_dir: Path,
-    output_dir: Path | None = None,
-) -> None:
-    """Generate figures for a decoder comparison output directory."""
+    figures_dir: Path,
+) -> Path:
+    """Generate decoder comparison figures under figures_dir/decoder_comparison/."""
     comparison_dir = Path(comparison_dir)
+    out_root = Path(figures_dir) / "decoder_comparison"
+    out_root.mkdir(parents=True, exist_ok=True)
+
     gt_metrics = comparison_dir / "ground_truth" / "decoder_comparison_metrics.csv"
     sorted_metrics = comparison_dir / "sorted" / "decoder_comparison_metrics.csv"
+    wrote_any = False
 
     if gt_metrics.exists() and sorted_metrics.exists():
-        out = output_dir or comparison_dir / "figures"
-        out.mkdir(parents=True, exist_ok=True)
-        _plot_decoder_comparison_source_summary(comparison_dir, out)
+        _plot_decoder_comparison_source_summary(comparison_dir, out_root)
         for source in ("ground_truth", "sorted"):
-            source_out = output_dir or comparison_dir / source / "figures"
-            _plot_decoder_comparison_single(comparison_dir / source, source_out)
-        return
+            _plot_decoder_comparison_single(
+                comparison_dir / source,
+                out_root / source,
+            )
+        wrote_any = True
+    elif (comparison_dir / "decoder_comparison_metrics.csv").exists():
+        _plot_decoder_comparison_single(comparison_dir, out_root)
+        wrote_any = True
 
-    out = output_dir or comparison_dir / "figures"
-    _plot_decoder_comparison_single(comparison_dir, out)
+    if not wrote_any:
+        raise FileNotFoundError(
+            f"No decoder comparison outputs found under {comparison_dir}"
+        )
+    return out_root
 
 
 def _plot_realtime_source(source_dir: Path, output_dir: Path, spike_source: str) -> None:
@@ -88,10 +139,13 @@ def _plot_realtime_source(source_dir: Path, output_dir: Path, spike_source: str)
     output_dir = Path(output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
 
-    decoded_df = pd.read_csv(source_dir / "decoded_realtime.csv")
-    closed_loop_df = pd.read_csv(source_dir / "closed_loop_events.csv")
-    with open(source_dir / "offline_test_metrics.json") as f:
-        offline_metrics = json.load(f)
+    decoded_df = _read_csv(source_dir / "decoded_realtime.csv")
+    if decoded_df.empty:
+        raise FileNotFoundError(f"Missing or empty decoded_realtime.csv in {source_dir}")
+
+    closed_loop_df = _read_csv(source_dir / "closed_loop_events.csv")
+    offline_path = source_dir / "offline_test_metrics.json"
+    offline_metrics = json.loads(offline_path.read_text()) if offline_path.exists() else {}
 
     source_label = SOURCE_LABELS.get(spike_source, spike_source)
     title_suffix = f" ({source_label})"
@@ -145,7 +199,7 @@ def _plot_realtime_source(source_dir: Path, output_dir: Path, spike_source: str)
         decoded_df["time"], decoded_df["position_error_cm"],
         s=2, alpha=0.2, color="gray", label="Position error",
     )
-    if not closed_loop_df.empty:
+    if not closed_loop_df.empty and "correct_trigger" in closed_loop_df.columns:
         colors = closed_loop_df["correct_trigger"].map({True: "green", False: "red"})
         ax.scatter(
             closed_loop_df["time"],
@@ -170,14 +224,16 @@ def _plot_realtime_compare_sources(realtime_dir: Path, output_dir: Path) -> None
     for source in ("ground_truth", "sorted"):
         source_dir = realtime_dir / source
         results[source] = {
-            "decoded_df": pd.read_csv(source_dir / "decoded_realtime.csv"),
-            "closed_loop_df": pd.read_csv(source_dir / "closed_loop_events.csv"),
+            "decoded_df": _read_csv(source_dir / "decoded_realtime.csv"),
+            "closed_loop_df": _read_csv(source_dir / "closed_loop_events.csv"),
             "offline_metrics": json.loads(
                 (source_dir / "offline_test_metrics.json").read_text()
             ),
             "metrics": json.loads((source_dir / "realtime_metrics.json").read_text()),
             "spike_source": source,
         }
+        if results[source]["decoded_df"].empty:
+            raise FileNotFoundError(f"Missing decoded_realtime.csv in {source_dir}")
 
     ground_truth = results["ground_truth"]
     sorted_result = results["sorted"]
@@ -191,7 +247,11 @@ def _plot_realtime_compare_sources(realtime_dir: Path, output_dir: Path) -> None
         ax.set_title(SOURCE_LABELS[result["spike_source"]])
     fig.suptitle("Real-time position decoding error", y=1.02)
     fig.tight_layout()
-    fig.savefig(output_dir / "position_decoding_error_over_time.png", dpi=FIGURE_DPI, bbox_inches="tight")
+    fig.savefig(
+        output_dir / "position_decoding_error_over_time.png",
+        dpi=FIGURE_DPI,
+        bbox_inches="tight",
+    )
     plt.close(fig)
 
     fig, axes = plt.subplots(1, 2, figsize=(12, 6))
@@ -216,7 +276,11 @@ def _plot_realtime_compare_sources(realtime_dir: Path, output_dir: Path) -> None
         cbar = fig.colorbar(scatter, ax=axes.ravel().tolist(), fraction=0.02, pad=0.02)
         cbar.set_label("Time (s)")
     fig.suptitle("True vs decoded position colored by time", y=1.02)
-    fig.savefig(output_dir / "true_vs_decoded_position.png", dpi=FIGURE_DPI, bbox_inches="tight")
+    fig.savefig(
+        output_dir / "true_vs_decoded_position.png",
+        dpi=FIGURE_DPI,
+        bbox_inches="tight",
+    )
     plt.close(fig)
 
     for task, title, filename in (
@@ -235,7 +299,7 @@ def _plot_realtime_compare_sources(realtime_dir: Path, output_dir: Path) -> None
             decoded_df["time"], decoded_df["position_error_cm"],
             s=2, alpha=0.2, color="gray", label="Position error",
         )
-        if not closed_loop_df.empty:
+        if not closed_loop_df.empty and "correct_trigger" in closed_loop_df.columns:
             colors = closed_loop_df["correct_trigger"].map({True: "green", False: "red"})
             ax.scatter(
                 closed_loop_df["time"],
@@ -248,7 +312,11 @@ def _plot_realtime_compare_sources(realtime_dir: Path, output_dir: Path) -> None
         ax.legend(loc="upper right")
     fig.suptitle("Closed-loop events over time", y=1.02)
     fig.tight_layout()
-    fig.savefig(output_dir / "closed_loop_events_over_time.png", dpi=FIGURE_DPI, bbox_inches="tight")
+    fig.savefig(
+        output_dir / "closed_loop_events_over_time.png",
+        dpi=FIGURE_DPI,
+        bbox_inches="tight",
+    )
     plt.close(fig)
 
     _plot_realtime_metrics_summary(ground_truth, sorted_result, output_dir)
@@ -351,12 +419,11 @@ def _plot_realtime_metrics_summary(
 def _plot_decoder_comparison_single(comparison_dir: Path, figures_dir: Path) -> None:
     comparison_dir = Path(comparison_dir)
     figures_dir = Path(figures_dir)
-    examples_dir = figures_dir.parent / "decoded_examples"
     figures_dir.mkdir(parents=True, exist_ok=True)
-    examples_dir.mkdir(parents=True, exist_ok=True)
 
     metrics_path = comparison_dir / "decoder_comparison_metrics.csv"
     best_path = comparison_dir / "best_decoder_by_target.csv"
+    examples_dir = comparison_dir / "decoded_examples"
     if not metrics_path.exists() or not best_path.exists():
         return
 
@@ -385,7 +452,7 @@ def _plot_decoder_comparison_single(comparison_dir: Path, figures_dir: Path) -> 
             figures_dir / f"best_{target}_confusion_matrix.png",
         )
 
-    _plot_comparison_prediction_examples(examples_dir, examples_dir)
+    _plot_comparison_prediction_examples(examples_dir, figures_dir)
 
 
 def _plot_decoder_comparison_source_summary(comparison_dir: Path, figures_dir: Path) -> None:
@@ -402,7 +469,10 @@ def _plot_decoder_comparison_source_summary(comparison_dir: Path, figures_dir: P
         ax.set_ylabel("Mean position error (cm)")
         ax.set_title("Ground truth vs sorted: best position error")
         fig.tight_layout()
-        fig.savefig(figures_dir / "ground_truth_vs_sorted_best_position_error.png", dpi=FIGURE_DPI)
+        fig.savefig(
+            figures_dir / "ground_truth_vs_sorted_best_position_error.png",
+            dpi=FIGURE_DPI,
+        )
         plt.close(fig)
 
     ctx_df = comparison_df[comparison_df["target_name"] == "spatial_context"]
@@ -414,7 +484,10 @@ def _plot_decoder_comparison_source_summary(comparison_dir: Path, figures_dir: P
         ax.set_ylim(0, 1)
         ax.set_title("Ground truth vs sorted: best spatial context accuracy")
         fig.tight_layout()
-        fig.savefig(figures_dir / "ground_truth_vs_sorted_best_context_accuracy.png", dpi=FIGURE_DPI)
+        fig.savefig(
+            figures_dir / "ground_truth_vs_sorted_best_context_accuracy.png",
+            dpi=FIGURE_DPI,
+        )
         plt.close(fig)
 
 
@@ -466,7 +539,10 @@ def _plot_recommended_windows(best_df: pd.DataFrame, out_path: Path) -> None:
     fig, ax = plt.subplots(figsize=(10, 5))
     x = np.arange(len(best_df))
     width = 0.35
-    ax.bar(x - width / 2, best_df["best_decode_window_s"], width, label="Best window", color="#4C78A8")
+    ax.bar(
+        x - width / 2, best_df["best_decode_window_s"], width,
+        label="Best window", color="#4C78A8",
+    )
     ax.bar(
         x + width / 2, best_df["recommended_realtime_window_s"], width,
         label="Recommended (95% optimal)", color="#F58518",
@@ -512,14 +588,22 @@ def _save_confusion_matrix_plot(
 def _plot_comparison_prediction_examples(examples_dir: Path, output_dir: Path) -> None:
     examples_dir = Path(examples_dir)
     output_dir = Path(output_dir)
+    if not examples_dir.exists():
+        return
 
     pos_path = examples_dir / "best_position_predictions.csv"
     if pos_path.exists():
         df = pd.read_csv(pos_path)
         time = df["time"].to_numpy()
         fig, ax = plt.subplots(figsize=(6, 6))
-        sc = ax.scatter(df["true_x"], df["true_y"], c=time, s=4, alpha=0.6, cmap="viridis", label="True")
-        ax.scatter(df["pred_x"], df["pred_y"], c=time, s=4, alpha=0.6, cmap="viridis", marker="x", label="Predicted")
+        sc = ax.scatter(
+            df["true_x"], df["true_y"], c=time, s=4, alpha=0.6,
+            cmap="viridis", label="True",
+        )
+        ax.scatter(
+            df["pred_x"], df["pred_y"], c=time, s=4, alpha=0.6,
+            cmap="viridis", marker="x", label="Predicted",
+        )
         fig.colorbar(sc, ax=ax, label="Time (s)")
         ax.set_xlabel("x (cm)")
         ax.set_ylabel("y (cm)")

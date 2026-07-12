@@ -1,0 +1,16 @@
+{
+  "spike_source": "ground_truth",
+  "feature_type": "counts",
+  "decode_window_s": 0.1,
+  "update_dt_s": 0.025,
+  "n_units": 200,
+  "target_name": "speed",
+  "decoder_name": "ridge",
+  "n_train_samples": 16798,
+  "n_test_samples": 7199,
+  "r2": 0.6921937126646522,
+  "correlation": 0.8328284890260285,
+  "mae": 2.2702125283587793,
+  "rmse": 2.876912071842685,
+  "primary_metric_value": 0.6921937126646522
+}

@@ -1,0 +1,15 @@
+{
+  "spike_source": "sorted",
+  "feature_type": "counts",
+  "decode_window_s": 0.25,
+  "update_dt_s": 0.025,
+  "n_units": 200,
+  "target_name": "head_direction",
+  "decoder_name": "ridge",
+  "n_train_samples": 16793,
+  "n_test_samples": 7198,
+  "mean_circular_error_deg": 15.44530985091637,
+  "median_circular_error_deg": 12.892198135351867,
+  "p90_circular_error_deg": 32.267638088411594,
+  "primary_metric_value": 15.44530985091637
+}

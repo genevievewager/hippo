@@ -1,0 +1,16 @@
+{
+  "spike_source": "ground_truth",
+  "feature_type": "counts",
+  "decode_window_s": 0.5,
+  "update_dt_s": 0.025,
+  "n_units": 200,
+  "target_name": "distance_to_wall",
+  "decoder_name": "random_forest_regressor",
+  "n_train_samples": 16786,
+  "n_test_samples": 7195,
+  "r2": 0.9175028768365268,
+  "correlation": 0.9582995718242733,
+  "mae_cm": 1.9849506896806333,
+  "rmse_cm": 2.830576701000402,
+  "primary_metric_value": 0.9175028768365268
+}
