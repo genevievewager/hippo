@@ -1,0 +1,28 @@
+{
+  "selection_mode": "use_best_decoder",
+  "comparison_dir": "outputs/ratinabox_002/decoder_comparison_quick",
+  "closed_loop_target": "spatial_context",
+  "spike_source": "sorted",
+  "selection_policy": "shortest_near_optimal",
+  "selected_decoder_name": "random_forest_classifier",
+  "selected_decode_window_s": 0.25,
+  "selected_feature_type": "counts",
+  "source_metric": "balanced_accuracy",
+  "source_metric_value": 0.8171161603244105,
+  "from_file": "outputs/ratinabox_002/decoder_comparison_quick/best_decoder_by_target.csv",
+  "decoder_config": {
+    "decoder_name": "random_forest_classifier",
+    "decode_window_s": 0.25,
+    "feature_type": "counts",
+    "target_name": "spatial_context",
+    "target_family": "categorical",
+    "model_params": {
+      "n_estimators": 100,
+      "max_depth": 12,
+      "class_weight": "balanced",
+      "random_state": 42,
+      "n_jobs": -1
+    },
+    "bayesian_params": {}
+  }
+}
