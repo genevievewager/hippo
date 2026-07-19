@@ -157,6 +157,12 @@ class RealTimeDecoder:
 
         aligned_behavior must contain decoder times and ground-truth labels.
         """
+        # searchsorted-based window counts require monotonically increasing times.
+        time_col = "time" if "time" in spikes_df.columns else "spike_time_s"
+        times = spikes_df[time_col].to_numpy()
+        if times.size and np.any(times[:-1] > times[1:]):
+            spikes_df = spikes_df.sort_values(time_col, kind="mergesort")
+
         rows = []
         for _, beh in aligned_behavior.iterrows():
             t = float(beh["time"])

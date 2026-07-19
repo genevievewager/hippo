@@ -1,0 +1,46 @@
+{
+  "spike_source": "sorted",
+  "source": "sorted",
+  "feature_type": "global_pca",
+  "decode_window_s": 0.05,
+  "update_dt_s": 0.05,
+  "n_units": 200,
+  "manifold_type": "pca",
+  "manifold_grouping": null,
+  "manifold_n_components": 3,
+  "actual_n_features": 3,
+  "explained_variance_ratio": "[0.03268634690082246, 0.024071277342842205, 0.0198235916655465]",
+  "manifold_transform_path": "outputs/ratinabox_003/decoder_comparison/sorted/models/manifold_transforms/global_pca_k3_w0050ms",
+  "target_name": "movement_state",
+  "target_family": "categorical",
+  "decoder_name": "random_forest_classifier",
+  "n_train_samples": 8399,
+  "n_test_samples": 3600,
+  "primary_metric": "balanced_accuracy",
+  "accuracy": 0.4661111111111111,
+  "balanced_accuracy": 0.35371519438636234,
+  "macro_f1": 0.3487849256188544,
+  "confusion_matrix": [
+    [
+      809,
+      917,
+      99
+    ],
+    [
+      681,
+      856,
+      102
+    ],
+    [
+      62,
+      61,
+      13
+    ]
+  ],
+  "class_labels": [
+    "fast",
+    "slow",
+    "still"
+  ],
+  "primary_metric_value": 0.35371519438636234
+}

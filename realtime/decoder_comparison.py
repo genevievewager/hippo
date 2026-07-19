@@ -725,7 +725,12 @@ def _best_row_at_window(
         np.isclose(target_df["decode_window_s"].astype(float), float(decode_window))
         & (target_df["feature_type"] == feature_type)
     )
-    if "manifold_n_components" in target_df.columns and n_components is not None:
+    # counts / non-manifold rows store NaN for n_components; treat as "no filter".
+    if (
+        "manifold_n_components" in target_df.columns
+        and n_components is not None
+        and not pd.isna(n_components)
+    ):
         mask = mask & (
             target_df["manifold_n_components"].fillna(-1).astype(float) == float(n_components)
         )

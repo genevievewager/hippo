@@ -1,22 +1,22 @@
 {
-  "mean_position_error_cm": 9.132620657776664,
-  "median_position_error_cm": 8.074256861465162,
-  "spatial_context_accuracy": 0.9158099472075577,
+  "mean_position_error_cm": 5.64963613184544,
+  "median_position_error_cm": 4.500872902826677,
+  "spatial_context_accuracy": 0.9077521533759377,
   "spatial_context_confusion_matrix": [
     [
-      1056,
-      43,
-      5
+      528,
+      21,
+      3
     ],
     [
-      40,
-      2821,
-      99
+      15,
+      1410,
+      55
     ],
     [
-      63,
-      356,
-      2715
+      31,
+      207,
+      1329
     ]
   ],
   "spatial_context_labels": [
@@ -24,22 +24,22 @@
     "wall",
     "corner"
   ],
-  "movement_state_accuracy": 0.7335370936371214,
+  "movement_state_accuracy": 0.7071408724645735,
   "movement_state_confusion_matrix": [
     [
-      57,
-      213,
-      2
+      89,
+      46,
+      1
     ],
     [
-      103,
-      2307,
-      866
+      241,
+      1035,
+      362
     ],
     [
-      1,
-      733,
-      2916
+      9,
+      395,
+      1421
     ]
   ],
   "movement_state_labels": [
@@ -47,6 +47,6 @@
     "slow",
     "fast"
   ],
-  "speed_r2": 0.6045554513418108,
-  "speed_correlation": 0.7784098445025132
+  "speed_r2": 0.6390351444179013,
+  "speed_correlation": 0.8002108933671025
 }

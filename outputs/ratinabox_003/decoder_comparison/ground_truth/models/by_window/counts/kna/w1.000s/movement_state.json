@@ -1,0 +1,46 @@
+{
+  "spike_source": "ground_truth",
+  "source": "ground_truth",
+  "feature_type": "counts",
+  "decode_window_s": 1.0,
+  "update_dt_s": 0.05,
+  "n_units": 200,
+  "manifold_type": "none",
+  "manifold_grouping": null,
+  "manifold_n_components": null,
+  "actual_n_features": 200,
+  "explained_variance_ratio": null,
+  "manifold_transform_path": "outputs/ratinabox_003/decoder_comparison/ground_truth/models/manifold_transforms/counts_w1000ms",
+  "target_name": "movement_state",
+  "target_family": "categorical",
+  "decoder_name": "random_forest_classifier",
+  "n_train_samples": 8386,
+  "n_test_samples": 3594,
+  "primary_metric": "balanced_accuracy",
+  "accuracy": 0.6739009460211464,
+  "balanced_accuracy": 0.4784901044614509,
+  "macro_f1": 0.4819735904882696,
+  "confusion_matrix": [
+    [
+      1368,
+      457,
+      0
+    ],
+    [
+      573,
+      1048,
+      12
+    ],
+    [
+      22,
+      108,
+      6
+    ]
+  ],
+  "class_labels": [
+    "fast",
+    "slow",
+    "still"
+  ],
+  "primary_metric_value": 0.4784901044614509
+}

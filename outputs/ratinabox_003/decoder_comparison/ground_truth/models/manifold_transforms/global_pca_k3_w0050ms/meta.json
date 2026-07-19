@@ -1,0 +1,11 @@
+{
+  "class_name": "GlobalPCAManifold",
+  "n_components": 3,
+  "actual_n_components": 3,
+  "random_state": 42,
+  "explained_variance_ratio": [
+    0.04611762276556295,
+    0.034266787595603525,
+    0.02404699719339242
+  ]
+}

@@ -81,6 +81,7 @@ def select_best_decoder_row(
         model_path = row.get("best_window_model_path") or row.get("model_path") or ""
         decoder_config_raw = row.get("decoder_config_json", "{}")
         n_comp = row.get("best_manifold_n_components")
+        # Best-row column matches the best-W model / transform.
         transform_path = row.get("manifold_transform_path")
     elif selection_policy == "shortest_near_optimal":
         selected_window = float(row["recommended_realtime_window_s"])
@@ -92,7 +93,10 @@ def select_best_decoder_row(
             "realtime_decoder_config_json", row.get("decoder_config_json", "{}")
         )
         n_comp = row.get("best_manifold_n_components")
-        transform_path = row.get("manifold_transform_path")
+        # Do not use the top-level manifold_transform_path here: that column
+        # stores the *best-W* transform. Prefer the path from the realtime
+        # config (matched to recommended_realtime_window_s) below.
+        transform_path = None
     else:
         raise ValueError(
             f"Unknown selection_policy {selection_policy!r}; "
@@ -108,8 +112,13 @@ def select_best_decoder_row(
 
     if n_comp is None and isinstance(decoder_config, dict):
         n_comp = decoder_config.get("manifold_n_components")
-    if not transform_path and isinstance(decoder_config, dict):
-        transform_path = decoder_config.get("manifold_transform_path")
+    if isinstance(decoder_config, dict):
+        cfg_transform = decoder_config.get("manifold_transform_path")
+        if cfg_transform:
+            # Window-matched transform from the selected config wins.
+            transform_path = cfg_transform
+    if not transform_path:
+        transform_path = row.get("manifold_transform_path")
     if isinstance(decoder_config, dict) and decoder_config.get("feature_type"):
         # Prefer feature type from the selected realtime config when present.
         if selection_policy == "shortest_near_optimal":

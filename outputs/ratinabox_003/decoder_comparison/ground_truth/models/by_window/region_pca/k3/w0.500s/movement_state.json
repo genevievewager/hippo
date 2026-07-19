@@ -1,0 +1,46 @@
+{
+  "spike_source": "ground_truth",
+  "source": "ground_truth",
+  "feature_type": "region_pca",
+  "decode_window_s": 0.5,
+  "update_dt_s": 0.05,
+  "n_units": 200,
+  "manifold_type": "pca",
+  "manifold_grouping": "region",
+  "manifold_n_components": 3,
+  "actual_n_features": 12,
+  "explained_variance_ratio": null,
+  "manifold_transform_path": "outputs/ratinabox_003/decoder_comparison/ground_truth/models/manifold_transforms/region_pca_k3_w0500ms",
+  "target_name": "movement_state",
+  "target_family": "categorical",
+  "decoder_name": "logistic_regression",
+  "n_train_samples": 8393,
+  "n_test_samples": 3597,
+  "primary_metric": "balanced_accuracy",
+  "accuracy": 0.617737003058104,
+  "balanced_accuracy": 0.6701527739742446,
+  "macro_f1": 0.5217178168891891,
+  "confusion_matrix": [
+    [
+      1411,
+      375,
+      39
+    ],
+    [
+      461,
+      701,
+      474
+    ],
+    [
+      4,
+      22,
+      110
+    ]
+  ],
+  "class_labels": [
+    "fast",
+    "slow",
+    "still"
+  ],
+  "primary_metric_value": 0.6701527739742446
+}

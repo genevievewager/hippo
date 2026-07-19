@@ -1,0 +1,46 @@
+{
+  "spike_source": "sorted",
+  "source": "sorted",
+  "feature_type": "global_pca",
+  "decode_window_s": 1.0,
+  "update_dt_s": 0.05,
+  "n_units": 200,
+  "manifold_type": "pca",
+  "manifold_grouping": null,
+  "manifold_n_components": 3,
+  "actual_n_features": 3,
+  "explained_variance_ratio": "[0.1811473278716225, 0.12034588771810134, 0.07765254773076805]",
+  "manifold_transform_path": "outputs/ratinabox_003/decoder_comparison/sorted/models/manifold_transforms/global_pca_k3_w1000ms",
+  "target_name": "wall_distance_bin",
+  "target_family": "categorical",
+  "decoder_name": "bayesian_place_decoder_derived_context",
+  "n_train_samples": 8386,
+  "n_test_samples": 3594,
+  "primary_metric": "balanced_accuracy",
+  "accuracy": 0.5030606566499721,
+  "balanced_accuracy": 0.579152334565512,
+  "macro_f1": 0.4382089415556975,
+  "confusion_matrix": [
+    [
+      1175,
+      1332,
+      196
+    ],
+    [
+      46,
+      541,
+      139
+    ],
+    [
+      7,
+      66,
+      92
+    ]
+  ],
+  "class_labels": [
+    "near_wall",
+    "middle",
+    "center"
+  ],
+  "primary_metric_value": 0.579152334565512
+}

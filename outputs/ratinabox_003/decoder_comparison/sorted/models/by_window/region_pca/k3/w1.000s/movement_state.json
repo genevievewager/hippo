@@ -1,0 +1,46 @@
+{
+  "spike_source": "sorted",
+  "source": "sorted",
+  "feature_type": "region_pca",
+  "decode_window_s": 1.0,
+  "update_dt_s": 0.05,
+  "n_units": 200,
+  "manifold_type": "pca",
+  "manifold_grouping": "region",
+  "manifold_n_components": 3,
+  "actual_n_features": 12,
+  "explained_variance_ratio": null,
+  "manifold_transform_path": "outputs/ratinabox_003/decoder_comparison/sorted/models/manifold_transforms/region_pca_k3_w1000ms",
+  "target_name": "movement_state",
+  "target_family": "categorical",
+  "decoder_name": "logistic_regression",
+  "n_train_samples": 8386,
+  "n_test_samples": 3594,
+  "primary_metric": "balanced_accuracy",
+  "accuracy": 0.5102949360044519,
+  "balanced_accuracy": 0.5636462834510949,
+  "macro_f1": 0.42294197947172285,
+  "confusion_matrix": [
+    [
+      1230,
+      407,
+      188
+    ],
+    [
+      458,
+      508,
+      667
+    ],
+    [
+      14,
+      26,
+      96
+    ]
+  ],
+  "class_labels": [
+    "fast",
+    "slow",
+    "still"
+  ],
+  "primary_metric_value": 0.5636462834510949
+}

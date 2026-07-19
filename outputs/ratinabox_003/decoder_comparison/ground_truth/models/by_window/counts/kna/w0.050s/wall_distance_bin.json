@@ -1,0 +1,46 @@
+{
+  "spike_source": "ground_truth",
+  "source": "ground_truth",
+  "feature_type": "counts",
+  "decode_window_s": 0.05,
+  "update_dt_s": 0.05,
+  "n_units": 200,
+  "manifold_type": "none",
+  "manifold_grouping": null,
+  "manifold_n_components": null,
+  "actual_n_features": 200,
+  "explained_variance_ratio": null,
+  "manifold_transform_path": "outputs/ratinabox_003/decoder_comparison/ground_truth/models/manifold_transforms/counts_w0050ms",
+  "target_name": "wall_distance_bin",
+  "target_family": "categorical",
+  "decoder_name": "random_forest_classifier",
+  "n_train_samples": 8399,
+  "n_test_samples": 3600,
+  "primary_metric": "balanced_accuracy",
+  "accuracy": 0.8088888888888889,
+  "balanced_accuracy": 0.7808676719881794,
+  "macro_f1": 0.7144201292034559,
+  "confusion_matrix": [
+    [
+      140,
+      25,
+      0
+    ],
+    [
+      104,
+      467,
+      155
+    ],
+    [
+      7,
+      397,
+      2305
+    ]
+  ],
+  "class_labels": [
+    "center",
+    "middle",
+    "near_wall"
+  ],
+  "primary_metric_value": 0.7808676719881794
+}
