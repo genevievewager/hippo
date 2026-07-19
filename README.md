@@ -2,11 +2,13 @@
 
 Simulates realistic hippocampal single-unit activity during 10-minute open-field navigation, recorded through a Neuropixels 1.0 single-shank probe (384 channels), with Neuropixels-like recording degradation and Kilosort-like spike re-extraction. Decodes latent behavioral variables from **causal** population spike counts, with optional low-dimensional manifold features.
 
+Equations below use plain Unicode / code formatting so they render in Cursor, GitHub, and terminals without a LaTeX math plugin.
+
 ---
 
 ## Public workflow
 
-Three user-facing scripts. Hyperparameter search (decoder model, causal window \(W\), feature mode) runs **inside** the decoder workflow; you do not pick windows by hand for the standard path.
+Three user-facing scripts. Hyperparameter search (decoder model, causal window `W`, feature mode) runs **inside** the decoder workflow; you do not pick windows by hand for the standard path.
 
 ```bash
 source .hippo/bin/activate
@@ -94,67 +96,67 @@ Source of truth: `hippo_sim/rate_equations.py`, `hippo_sim/config.py`.
 
 ### Dynamics
 
-\[
-\tau_i \frac{dR_i}{dt} = -R_i + \lambda_i^{\mathrm{target}}(t)
-\]
+```text
+τ_i · dR_i/dt  =  −R_i  +  λ_i^target(t)
+```
 
 ### Rate equations by cell type
 
 | Cell type | Rate equation | Driver features |
 |-----------|---------------|-----------------|
-| **CA1_pyr** | \(\tau\,dR/dt = -R + \mathrm{target}\) where \(\mathrm{target} = [b + A\cdot f_{\mathrm{place}}\cdot(1 + w_{\mathrm{hd}}\cdot f_{\mathrm{hd}})\cdot(1 + w_{\mathrm{speed}}\cdot f_{\mathrm{speed}})\cdot(1 + 0.2\cdot f_{\mathrm{acc}})\cdot f_\theta + w_{\mathrm{bnd}}\cdot A\cdot f_{\mathrm{bnd}} + w_{\mathrm{ripple}}\cdot A\cdot f_{\mathrm{ripple}}]\cdot \xi_{\mathrm{state}}\cdot g\) | place, HD, speed, accel, boundary, theta, ripple |
-| **CA2_pyr** | Same as CA1 with lower ripple/theta weights and sharper place fields (\(\sigma = 8\) cm) | place, HD, speed, accel, boundary, theta |
-| **CA3_pyr** | Same as CA1 plus recurrent term \(+\, w_{\mathrm{rec}}\cdot \bar R_{\mathrm{pop}}\) | place, HD, speed, recurrent, ripple |
-| **DG_granule** | Same structure with sparsity gate: if \(f_{\mathrm{place}}\cdot(1 + w_{\mathrm{speed}}\cdot f_{\mathrm{speed}}) < \theta_{\mathrm{sparse}}\) then \(\mathrm{target} \approx 0.1\cdot b\) | place, speed, boundary |
+| **CA1_pyr** | `τ dR/dt = −R + target` where `target = [b + A·f_place·(1 + w_hd·f_hd)·(1 + w_speed·f_speed)·(1 + 0.2·f_acc)·f_θ + w_bnd·A·f_bnd + w_ripple·A·f_ripple] · ξ_state · g` | place, HD, speed, accel, boundary, theta, ripple |
+| **CA2_pyr** | Same as CA1 with lower ripple/theta weights and sharper place fields (`σ = 8` cm) | place, HD, speed, accel, boundary, theta |
+| **CA3_pyr** | Same as CA1 plus recurrent term `+ w_rec · R̄_pop` | place, HD, speed, recurrent, ripple |
+| **DG_granule** | Same structure with sparsity gate: if `f_place·(1 + w_speed·f_speed) < θ_sparse` then `target ≈ 0.1·b` | place, speed, boundary |
 
 ### Driver feature definitions
 
 | Feature | Type | Mathematical definition |
 |---------|------|-------------------------|
-| **Place** (exteroceptive) | Allocentric | \(f_{\mathrm{place}} = \exp(-\|p - p_0\|^2 / 2\sigma^2)\) |
-| **Head direction** (proprioceptive) | Egocentric | \(f_{\mathrm{hd}} = \exp(\kappa\cos(\theta - \theta_{\mathrm{pref}})) / (\exp(\kappa)/I_0(\kappa))\) |
-| **Speed** (proprioceptive) | Egocentric | \(f_{\mathrm{speed}} = \max(0,\, v - v_{\mathrm{thresh}}) / (30 - v_{\mathrm{thresh}})\) |
-| **Acceleration** (proprioceptive) | Egocentric | \(f_{\mathrm{acc}} = \mathrm{clip}(\|dv/dt\| / 50,\, 0,\, 1)\) |
-| **Boundary** (exteroceptive) | Allocentric | \(f_{\mathrm{bnd}} = \exp(-d_{\mathrm{wall}}^2 / (2\cdot 15^2))\) |
-| **Theta phase** (internal) | Internal | \(f_\theta = 1 + w_\theta\cos(\phi_\theta(t))\) |
-| **Ripple** (internal) | CA1-biased | Sparse 80 ms bursts, \(\sin(\pi\cdot\mathrm{phase})\) envelope |
+| **Place** (exteroceptive) | Allocentric | `f_place = exp(−‖p − p₀‖² / 2σ²)` |
+| **Head direction** (proprioceptive) | Egocentric | `f_hd = exp(κ cos(θ − θ_pref)) / (exp(κ) / I₀(κ))` |
+| **Speed** (proprioceptive) | Egocentric | `f_speed = max(0, v − v_thresh) / (30 − v_thresh)` |
+| **Acceleration** (proprioceptive) | Egocentric | `f_acc = clip(‖dv/dt‖ / 50, 0, 1)` |
+| **Boundary** (exteroceptive) | Allocentric | `f_bnd = exp(−d_wall² / (2 · 15²))` |
+| **Theta phase** (internal) | Internal | `f_θ = 1 + w_θ cos(φ_θ(t))` |
+| **Ripple** (internal) | CA1-biased | Sparse 80 ms bursts, `sin(π·phase)` envelope |
 
 ### Drift terms
 
 | Process | Equation | Timescale |
 |---------|----------|-----------|
-| Place-field drift | \(p_0 \leftarrow p_0 + \mathcal{N}(0, \sigma_{\mathrm{drift}})\) every 30 s | slow (minutes) |
-| State drift (arousal) | OU: \(d\xi = -\xi/\tau\,dt + \sigma\,dW\), multiply target by \(\exp(\xi)\) | \(\tau = 120\) s |
-| Gain drift | OU on per-unit gain \(g\) | \(\tau = 180\) s |
+| Place-field drift | `p₀ ← p₀ + N(0, σ_drift)` every 30 s | slow (minutes) |
+| State drift (arousal) | OU: `dξ = −ξ/τ · dt + σ · dW`, multiply target by `exp(ξ)` | `τ = 120` s |
+| Gain drift | OU on per-unit gain `g` | `τ = 180` s |
 
 ### Parameter values
 
 | Parameter | CA1_pyr | CA2_pyr | CA3_pyr | DG_granule | Units |
 |-----------|---------|---------|---------|------------|-------|
-| \(\tau\) | 0.05 | 0.05 | 0.06 | 0.08 | s |
-| \(b\) (baseline) | 0.5 | 0.4 | 0.3 | 0.05 | Hz |
-| \(A\) (amplitude) | 12.0 | 10.0 | 8.0 | 15.0 | Hz |
-| \(\sigma_{\mathrm{place}}\) | 10.0 | 8.0 | 12.0 | 6.0 | cm |
-| \(w_{\mathrm{hd}}\) | 0.4 | 0.35 | 0.2 | 0.1 | — |
-| \(\kappa_{\mathrm{hd}}\) | 2.0 | 2.5 | 1.5 | 1.0 | — |
-| \(w_{\mathrm{speed}}\) | 0.3 | 0.25 | 0.2 | 0.5 | — |
-| \(v_{\mathrm{thresh}}\) | 2.0 | 2.0 | 2.0 | 3.0 | cm/s |
-| \(w_\theta\) | 0.25 | 0.15 | 0.1 | 0.05 | — |
-| \(f_\theta\) | 8.0 | 8.0 | 8.0 | 8.0 | Hz |
-| \(w_{\mathrm{ripple}}\) | 0.5 | 0.1 | 0.6 | 0.0 | — |
-| \(w_{\mathrm{boundary}}\) | 0.2 | 0.15 | 0.1 | 0.3 | — |
-| \(w_{\mathrm{recurrent}}\) | — | — | 0.15 | — | — |
-| \(\theta_{\mathrm{sparse}}\) | — | — | — | 0.3 | — |
+| τ | 0.05 | 0.05 | 0.06 | 0.08 | s |
+| b (baseline) | 0.5 | 0.4 | 0.3 | 0.05 | Hz |
+| A (amplitude) | 12.0 | 10.0 | 8.0 | 15.0 | Hz |
+| σ_place | 10.0 | 8.0 | 12.0 | 6.0 | cm |
+| w_hd | 0.4 | 0.35 | 0.2 | 0.1 | — |
+| κ_hd | 2.0 | 2.5 | 1.5 | 1.0 | — |
+| w_speed | 0.3 | 0.25 | 0.2 | 0.5 | — |
+| v_thresh | 2.0 | 2.0 | 2.0 | 3.0 | cm/s |
+| w_θ | 0.25 | 0.15 | 0.1 | 0.05 | — |
+| f_θ | 8.0 | 8.0 | 8.0 | 8.0 | Hz |
+| w_ripple | 0.5 | 0.1 | 0.6 | 0.0 | — |
+| w_boundary | 0.2 | 0.15 | 0.1 | 0.3 | — |
+| w_recurrent | — | — | 0.15 | — | — |
+| θ_sparse | — | — | — | 0.3 | — |
 
 | Drift parameter | Value | Units |
 |-----------------|-------|-------|
 | Behavior / rate update rate | 20 | Hz |
-| Place drift \(\sigma\) | **0.1** | cm/min |
+| Place drift σ | **0.1** | cm/min |
 | Place update interval | 30 | s |
-| State drift \(\tau\) | 120 | s |
-| State drift \(\sigma\) | 0.15 | — |
-| Gain drift \(\tau\) | 180 | s |
-| Gain drift \(\sigma\) | 0.1 | — |
+| State drift τ | 120 | s |
+| State drift σ | 0.15 | — |
+| Gain drift τ | 180 | s |
+| Gain drift σ | 0.1 | — |
 
 | Recording / sorting parameter | Value |
 |-------------------------------|-------|
@@ -163,7 +165,7 @@ Source of truth: `hippo_sim/rate_equations.py`, `hippo_sim/config.py`.
 | Sample rate | 30 kHz |
 | Template span | 3–10 channels |
 | Amplitude range | 20–200 µV |
-| Noise \(\sigma\) | 15 µV |
+| Noise σ | 15 µV |
 | Miss rate | 12% |
 | Jitter | 0.3 ms |
 | Contamination rate | 0.08 |
@@ -219,18 +221,21 @@ python run_simulation.py \
 
 ### Causal observation
 
-At each behavioral frame time \(t\):
+At each behavioral frame time `t`:
 
-\[
-x_t^{(W)} \in \mathbb{R}^{N},\qquad
-\bigl(x_t^{(W)}\bigr)_i
-=
-\#\{\text{spikes of unit } i \text{ with times in } [t-W,\, t)\}
-\]
+```text
+x_t^(W) ∈ R^N
 
-Half-open interval: spikes with time \(\ge t\) are **never** included.
+(x_t^(W))_i  =  # { spikes of unit i with times in [t − W, t) }
+```
 
-Optional rate features: \(r_t^{(W)} = x_t^{(W)} / W\).
+Half-open interval: spikes with time `≥ t` are **never** included.
+
+Optional rate features:
+
+```text
+r_t^(W)  =  x_t^(W) / W
+```
 
 ### Timing parameters
 
@@ -238,26 +243,26 @@ Optional rate features: \(r_t^{(W)} = x_t^{(W)} / W\).
 |--------------|---------|---------|
 | Behavior timestamps | from `behavior.csv` | Prediction grid (prefer actual frames) |
 | `update_dt` / `dt_update` | **0.050 s** (20 Hz) | One prediction per behavioral frame |
-| `decode_window` / \(W\) | searched | Causal integration window |
+| `decode_window` / `W` | searched | Causal integration window |
 | `train_frac` | 0.70 | Contiguous train fraction (rest = test) |
 | Alignment tolerance | 0.005 s | Max allowed decode↔behavior mismatch |
 
 ### Default window search
 
-| \(W\) (s) | 0.050 | 0.100 | 0.250 | 0.500 | 1.000 |
-|-----------|-------|-------|-------|-------|-------|
+| W (s) | 0.050 | 0.100 | 0.250 | 0.500 | 1.000 |
+|-------|-------|-------|-------|-------|-------|
 | Duration | 50 ms | 100 ms | 250 ms | 500 ms | 1 s |
 
-Short \(W\): lower latency, fewer spikes. Long \(W\): more reliable counts, higher effective latency.
+Short `W`: lower latency, fewer spikes. Long `W`: more reliable counts, higher effective latency.
 
 ### Roles kept separate
 
 | Symbol | Role | Not the same as |
 |--------|------|-----------------|
-| \(W\) | Spike evidence for **current** neural state | Model memory |
-| \(z_t\) | Manifold coordinate of current observation | Temporal dynamics |
-| \(L\) | History of recent latents (optional temporal stage) | Integration window |
-| \(\tau\) | Prediction lag \(\hat y_{t+\tau}\) | Update interval |
+| `W` | Spike evidence for **current** neural state | Model memory |
+| `z_t` | Manifold coordinate of current observation | Temporal dynamics |
+| `L` | History of recent latents (optional temporal stage) | Integration window |
+| `τ` | Prediction lag `ŷ_{t+τ}` | Update interval |
 
 ---
 
@@ -265,7 +270,7 @@ Short \(W\): lower latency, fewer spikes. Long \(W\): more reliable counts, high
 
 | Target | Family | Output | Primary metric | Direction |
 |--------|--------|--------|----------------|-----------|
-| `position` | continuous | \((x,y)\) cm | `mean_position_error_cm` | lower |
+| `position` | continuous | `(x, y)` cm | `mean_position_error_cm` | lower |
 | `speed` | continuous | cm/s | `r2` | higher |
 | `acceleration` | continuous | cm/s² | `r2` | higher |
 | `head_direction` | continuous / circular | rad | `mean_circular_error_deg` | lower |
@@ -286,8 +291,8 @@ Source: `realtime/decoder_models.py`. Continuous targets use regressors (positio
 
 | Name | Task | Default hyperparameters |
 |------|------|-------------------------|
-| `ridge` | regression | \(\alpha = 1.0\) |
-| `pca_ridge` | regression | PCA retain 95% variance → Ridge \(\alpha=1.0\) |
+| `ridge` | regression | `α = 1.0` |
+| `pca_ridge` | regression | PCA retain 95% variance → Ridge `α = 1.0` |
 | `random_forest_regressor` | regression | 100 trees, `max_depth=12` |
 | `logistic_regression` | classification | `max_iter=1000`, `class_weight=balanced` |
 | `random_forest_classifier` | classification | 100 trees, `max_depth=12`, `class_weight=balanced` |
@@ -296,16 +301,16 @@ Source: `realtime/decoder_models.py`. Continuous targets use regressors (positio
 
 ### Full mode (`--max-models full`)
 
-Adds: `elastic_net` (\(\alpha=0.1\), `l1_ratio=0.5`), `pls_regression` (10 components), `hist_gradient_boosting_{regressor,classifier}` (`max_depth=8`), `knn_{regressor,classifier}` (\(k=15\), distance weights), `linear_svm_classifier`, `bayesian_place_decoder_smoothed`.
+Adds: `elastic_net` (`α=0.1`, `l1_ratio=0.5`), `pls_regression` (10 components), `hist_gradient_boosting_regressor` / `hist_gradient_boosting_classifier` (`max_depth=8`), `knn_regressor` / `knn_classifier` (`k=15`, distance weights), `linear_svm_classifier`, `bayesian_place_decoder_smoothed`.
 
 ### Selection policies (under the hood)
 
-After comparing all \((\mathrm{model},\, W,\, \mathrm{feature\_mode})\) configurations per target:
+After comparing all `(model, W, feature_mode)` configurations per target:
 
 | Policy | Rule |
 |--------|------|
 | `best_accuracy` | Best primary metric over all windows |
-| `shortest_near_optimal` (default) | Shortest \(W\) with metric within **5%** of best (≤ 1.05× best if lower-is-better; ≥ 0.95× best if higher-is-better) |
+| `shortest_near_optimal` (default) | Shortest `W` with metric within **5%** of best (≤ 1.05× best if lower-is-better; ≥ 0.95× best if higher-is-better) |
 
 Closed-loop replay loads the selected `.joblib` and does **not** retrain when comparison artifacts exist.
 
@@ -320,17 +325,14 @@ Poisson likelihood place-map decoder on a 2D grid.
 | Parameter | Default | Meaning |
 |-----------|---------|---------|
 | `n_bins` | 20 | Bins per spatial axis |
-| `occupancy_floor` | \(10^{-3}\) | Floor on occupancy / prior |
+| `occupancy_floor` | `1e-3` | Floor on occupancy / prior |
 | `smooth` | `false` (`true` for `_smoothed` variant) | Causal exponential posterior smoothing |
 | `smooth_alpha` | 0.7 | Smoothing weight on previous posterior |
 
-\[
-\log P(\mathrm{bin}\mid x_t)
-\propto
-\log P(\mathrm{bin})
-+
-\sum_i \bigl[ x_{t,i}\log\lambda_i(\mathrm{bin}) - \lambda_i(\mathrm{bin})\,W \bigr]
-\]
+```text
+log P(bin | x_t)  ∝  log P(bin)
+                   +  Σ_i [ x_{t,i} · log λ_i(bin)  −  λ_i(bin) · W ]
+```
 
 (with implementation details in code; smoothing uses **past** posteriors only).
 
@@ -344,34 +346,30 @@ Source: `realtime/manifold_features.py`.
 
 Architecture for manifold-informed static decoding:
 
-\[
-x_t^{(W)}
-\;\xrightarrow{\;E\;}
-z_t
-\;\xrightarrow{\;\mathrm{decoder}\;}
-\hat y_t
-\]
+```text
+x_t^(W)  →  E(·)  →  z_t  →  decoder  →  ŷ_t
+```
 
-Encoder \(E\) is fit on **training** activity only, then frozen for test / realtime.
+Encoder `E` is fit on **training** activity only, then frozen for test / realtime.
 
 | Feature mode | Transform | Grouping column | Latent dim |
 |--------------|-----------|-----------------|------------|
-| `counts` | \(z = x\) | — | \(N\) |
-| `rates` | \(z = x / W\) | — | \(N\) |
-| `global_pca` | PCA on all units | — | \(k\) (default 3) |
-| `region_pca` | PCA per region, concatenate | `region` | \(k\) per group |
-| `layer_pca` | PCA per layer | `layer` | \(k\) per group |
-| `cell_type_pca` | PCA per cell type | `cell_type` | \(k\) per group |
-| `rate_model_pca` | PCA per rate model | `rate_model` (fallback `ratinabox_class`) | \(k\) per group |
+| `counts` | `z = x` | — | `N` |
+| `rates` | `z = x / W` | — | `N` |
+| `global_pca` | PCA on all units | — | `k` (default 3) |
+| `region_pca` | PCA per region, concatenate | `region` | `k` per group |
+| `layer_pca` | PCA per layer | `layer` | `k` per group |
+| `cell_type_pca` | PCA per cell type | `cell_type` | `k` per group |
+| `rate_model_pca` | PCA per rate model | `rate_model` (fallback `ratinabox_class`) | `k` per group |
 
 | Setting | Default |
 |---------|---------|
 | Quick feature modes | `counts`, `global_pca`, `region_pca` |
-| Default \(k\) list | `(3,)` (override with `--manifold-components-list 2 3 5`) |
+| Default `k` list | `(3,)` (override with `--manifold-components-list 2 3 5`) |
 | Fit data | train split only |
 | Realtime | load saved transform from comparison `models/` |
 
-**Note:** Static manifold PCA in `manifold_features.py` is applied to raw (or rate) count vectors. The optional **temporal** PCA path (`realtime/manifolds/pca.py`) uses \(\sqrt{\mathrm{counts}}\) + `StandardScaler` before PCA — see Table 8.
+**Note:** Static manifold PCA in `manifold_features.py` is applied to raw (or rate) count vectors. The optional **temporal** PCA path (`realtime/manifolds/pca.py`) uses `√counts` + `StandardScaler` before PCA — see Table 8.
 
 ---
 
@@ -379,25 +377,19 @@ Encoder \(E\) is fit on **training** activity only, then frozen for test / realt
 
 Enabled with `--enable-temporal-manifold` on `run_full_decoder_workflow.py`. Config reference: `configs/temporal_decoding.yaml`.
 
-\[
-x_t^{(W)}
-\;\rightarrow\;
-z_t
-\;\rightarrow\;
-Z_t^{(L)} = [z_{t-L+1},\ldots,z_t]
-\;\rightarrow\;
-\hat y_{t+\tau}
-\]
+```text
+x_t^(W)  →  z_t  →  Z_t^(L) = [z_{t−L+1}, …, z_t]  →  ŷ_{t+τ}
+```
 
 | Parameter | Defaults | Meaning |
 |-----------|----------|---------|
-| \(W\) | same window grid as static | Spike integration |
+| `W` | same window grid as static | Spike integration |
 | Representations | `raw`, `pca` | Latent encoder |
-| PCA preprocess | \(\sqrt{x}\) + standardize | Temporal PCA path |
+| PCA preprocess | `√x` + standardize | Temporal PCA path |
 | Default latent dim (temporal PCA) | 16 | From config |
-| \(L\) (frames) | 1, 2, 5, 10, 20 | History length |
-| \(L\) duration @ 20 Hz | 50, 100, 250, 500, 1000 ms | |
-| \(\tau\) | 0.0 (searchable) | Prediction lag |
+| `L` (frames) | 1, 2, 5, 10, 20 | History length |
+| `L` duration @ 20 Hz | 50, 100, 250, 500, 1000 ms | |
+| `τ` | 0.0 (searchable) | Prediction lag |
 | Temporal models | `raw_static`, `static_latent`, `flattened_history` | Phase-1 |
 | Controls | `averaged_history`, `shuffled_sequence` | |
 | Split | train / val / test contiguous + leakage gap | Selection on **validation** only |
@@ -434,7 +426,7 @@ python run_full_decoder_workflow.py \
 | `--compare-sources` | Run both `ground_truth` and `sorted` |
 | `--closed-loop-target` | Target for realtime selection / triggers |
 | `--selection-policy` | `shortest_near_optimal` or `best_accuracy` |
-| `--decode-windows` | Values of \(W\) to search |
+| `--decode-windows` | Values of `W` to search |
 | `--feature-modes` | Observation / manifold modes |
 | `--max-models` | `quick` or `full` model zoo |
 | `--enable-temporal-manifold` | Also run Table 8 W×L comparison |
@@ -489,7 +481,7 @@ outputs/<run>/
 |--------|------|
 | `hippo_sim/` | Behavior, rates, spikes, recording, sorting |
 | `realtime/data_loading.py` | Load simulation outputs |
-| `realtime/timing.py` | `dt_update`, \(W\), \(L\), \(\tau\), timestamp validation |
+| `realtime/timing.py` | `dt_update`, `W`, `L`, `τ`, timestamp validation |
 | `realtime/spike_features.py` | Causal spike-count matrices |
 | `realtime/decoder_models.py` | Model zoo |
 | `realtime/bayesian_decoder.py` | Bayesian place decoder |
@@ -534,6 +526,7 @@ python -m pytest tests/ -q
 | Timestamp mismatch | Behavior is 20 Hz (`behavior_dt=0.05`); check `summary.json` |
 | Want plots without re-decoding | Use `run_visualizations.py` only |
 | Re-run only comparison for debugging | `run_decoder_comparison.py` (developer) |
+| README equations look like raw LaTeX | This README uses Unicode/code blocks on purpose (no `\( \)` / `\[ \]`) |
 
 ---
 
