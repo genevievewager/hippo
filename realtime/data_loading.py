@@ -63,10 +63,28 @@ def make_decode_times(
     session_duration: float,
     decode_window: float,
     update_dt: float,
+    *,
+    behavior_times: np.ndarray | None = None,
 ) -> np.ndarray:
-    """Decoder times from decode_window to session end at update_dt steps."""
+    """
+    Decoder update timestamps.
+
+    When ``behavior_times`` is provided (preferred), use the original behavioral
+    / video frame timestamps at or after ``decode_window`` so every prediction
+    corresponds to one behavioral frame. Otherwise fall back to a fixed grid
+    with spacing ``update_dt``.
+    """
     if update_dt <= 0 or decode_window <= 0:
         raise ValueError("update_dt and decode_window must be positive")
+    if behavior_times is not None:
+        t = np.asarray(behavior_times, dtype=float)
+        decode_times = t[t >= float(decode_window) - 1e-12]
+        if len(decode_times) == 0:
+            raise ValueError(
+                f"No behavioral timestamps >= decode_window ({decode_window})"
+            )
+        return decode_times
+
     t_start = decode_window
     t_end = session_duration
     if t_start >= t_end:

@@ -24,10 +24,11 @@ class RealTimeDecoder:
         models: TrainedDecoders,
         unit_ids: list[int] | np.ndarray,
         decode_window: float = 0.250,
-        update_dt: float = 0.025,
+        update_dt: float = 0.050,
         feature_type: str = "counts",
         primary_model: Any | None = None,
         primary_target: str | None = None,
+        feature_transformer: Any | None = None,
     ):
         self.models = models
         self.unit_ids = np.asarray(unit_ids, dtype=int)
@@ -36,6 +37,8 @@ class RealTimeDecoder:
         self.feature_type = feature_type
         self.primary_model = primary_model
         self.primary_target = primary_target
+        # Optional fitted manifold / identity transform (frozen at replay time).
+        self.feature_transformer = feature_transformer
 
     def _features(self, spikes_df: pd.DataFrame, t: float) -> np.ndarray:
         counts = count_spikes_in_window(
@@ -44,6 +47,8 @@ class RealTimeDecoder:
             t - self.decode_window,
             t,
         ).reshape(1, -1)
+        if self.feature_transformer is not None:
+            return np.asarray(self.feature_transformer.transform(counts), dtype=float)
         if self.feature_type == "rates":
             return counts / self.decode_window
         return counts

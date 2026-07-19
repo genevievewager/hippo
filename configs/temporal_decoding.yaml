@@ -1,0 +1,48 @@
+timing:
+  behavior_sampling_rate_hz: 20.0
+  derive_update_interval_from_behavior: true
+  update_dt_s: 0.050
+  alignment_tolerance_s: 0.005
+
+neural_features:
+  integration_windows_s:
+    - 0.050
+    - 0.100
+    - 0.250
+    - 0.500
+    - 1.000
+  transform: sqrt_counts
+
+manifold:
+  representations:
+    - raw
+    - pca
+  # Phase 2+: autoencoder; Phase 3: cebra
+  optional_representations: []
+  latent_dims:
+    - 16
+  representation_mode: target_specific
+
+temporal_decoding:
+  enabled: true
+  latent_history_frames:
+    - 1
+    - 2
+    - 5
+    - 10
+    - 20
+  models:
+    - raw_static
+    - static_latent
+    - flattened_history
+    # Phase 2+: gru; Phase 3: tcn
+  prediction_lags_s:
+    - 0.000
+  controls:
+    shuffled_sequence: true
+    averaged_sequence: true
+
+streaming:
+  enabled: false
+  reset_on_episode_boundary: true
+  reset_on_time_gap_s: 0.250

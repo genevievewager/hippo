@@ -1,8 +1,12 @@
 #!/usr/bin/env python3
-"""Single closed-loop replay: one decoder setup, causal session replay, trigger evaluation.
+"""Developer utility: realtime closed-loop replay only.
 
-Manual mode: specify --decode-window / --decoder-name yourself.
-Automatic mode: --use-best-decoder reads best_decoder_by_target.csv from Step 2A.
+Most users should run the public end-to-end workflow instead::
+
+    python run_full_decoder_workflow.py --input ... --output ...
+
+This script wraps ``realtime.evaluate_realtime`` for debugging replay
+without re-running decoder comparison.
 """
 
 from __future__ import annotations
@@ -19,32 +23,25 @@ from realtime.evaluate_realtime import (
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="Causal real-time decoding from hippocampal Neuropixels spikes",
+        description=(
+            "[Developer] Causal realtime replay. "
+            "Prefer run_full_decoder_workflow.py for end-to-end runs."
+        ),
     )
-    parser.add_argument("--input", type=Path, required=True, help="Simulation output directory")
-    parser.add_argument("--output", type=Path, required=True, help="Realtime decoding output directory")
-    parser.add_argument(
-        "--spike-source", choices=["sorted", "ground_truth"], default="sorted",
-    )
-    parser.add_argument("--update-dt", type=float, default=0.025)
+    parser.add_argument("--input", type=Path, required=True)
+    parser.add_argument("--output", type=Path, required=True)
+    parser.add_argument("--spike-source", choices=["sorted", "ground_truth"], default="sorted")
+    parser.add_argument("--update-dt", type=float, default=0.050)
     parser.add_argument("--decode-window", type=float, default=0.250)
     parser.add_argument("--train-frac", type=float, default=0.70)
+    parser.add_argument("--decoder-name", default=None)
     parser.add_argument(
-        "--decoder-name", default=None,
-        help="Optional primary decoder for closed-loop target (manual mode)",
+        "--feature-type",
+        default="counts",
+        help="counts | rates | global_pca | region_pca | layer_pca | ...",
     )
-    parser.add_argument(
-        "--feature-type", choices=["counts", "rates"], default="counts",
-    )
-    parser.add_argument(
-        "--closed-loop-target",
-        default="spatial_context",
-        choices=[
-            "position", "spatial_context", "distance_to_wall", "wall_distance_bin",
-            "speed", "movement_state", "head_direction", "acceleration",
-        ],
-        help="Latent variable used for closed-loop triggering",
-    )
+    parser.add_argument("--manifold-n-components", type=int, default=3)
+    parser.add_argument("--closed-loop-target", default="spatial_context")
     parser.add_argument("--trigger-context", default="wall")
     parser.add_argument("--trigger-confidence", type=float, default=0.80)
     parser.add_argument("--trigger-movement", default="none")
@@ -54,18 +51,9 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--trigger-zone", default="wall")
     parser.add_argument("--trigger-hd-center-deg", type=float, default=90.0)
     parser.add_argument("--trigger-hd-width-deg", type=float, default=30.0)
-    parser.add_argument(
-        "--compare-sources", action="store_true",
-        help="Run pipeline for both ground_truth and sorted spikes (manual mode)",
-    )
-    parser.add_argument(
-        "--comparison-dir", type=Path, default=None,
-        help="Decoder comparison output directory (required with --use-best-decoder)",
-    )
-    parser.add_argument(
-        "--use-best-decoder", action="store_true",
-        help="Automatically select decoder/window from comparison results",
-    )
+    parser.add_argument("--compare-sources", action="store_true")
+    parser.add_argument("--comparison-dir", type=Path, default=None)
+    parser.add_argument("--use-best-decoder", action="store_true")
     parser.add_argument(
         "--selection-policy",
         choices=["best_accuracy", "shortest_near_optimal"],
@@ -76,16 +64,12 @@ def parse_args() -> argparse.Namespace:
 
 def main() -> None:
     args = parse_args()
-
     trigger_context = None if args.trigger_context.lower() == "none" else args.trigger_context
     trigger_movement = None if args.trigger_movement.lower() == "none" else args.trigger_movement
 
     if args.use_best_decoder:
         if args.comparison_dir is None:
             raise SystemExit("--use-best-decoder requires --comparison-dir")
-        if not args.closed_loop_target:
-            raise SystemExit("--use-best-decoder requires --closed-loop-target")
-
         result = run_realtime_with_best_decoder(
             input_dir=args.input,
             output_dir=args.output,
@@ -107,11 +91,13 @@ def main() -> None:
         )
         print("Best-decoder realtime replay complete.")
         if result.selected_config:
-            cfg = result.selected_config
-            print(f"  selected_decoder_name: {cfg['selected_decoder_name']}")
-            print(f"  selected_decode_window_s: {cfg['selected_decode_window_s']}")
-            print(f"  selection_policy: {cfg['selection_policy']}")
-            print(f"  from_file: {cfg['from_file']}")
+            for key in (
+                "selected_decoder_name", "selected_decode_window_s",
+                "feature_type", "manifold_type", "manifold_n_components",
+                "manifold_transform_path",
+            ):
+                if key in result.selected_config:
+                    print(f"  {key}: {result.selected_config[key]}")
         for key, value in result.metrics.items():
             print(f"  {key}: {value}")
         return
@@ -151,8 +137,8 @@ def main() -> None:
         trigger_hd_width_deg=args.trigger_hd_width_deg,
         decoder_name=args.decoder_name,
         feature_type=args.feature_type,
+        manifold_n_components=args.manifold_n_components,
     )
-
     print("Real-time decoding complete.")
     for key, value in metrics.metrics.items():
         print(f"  {key}: {value}")
