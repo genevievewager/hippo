@@ -1,8 +1,0 @@
-region,layer,depth_start_um,depth_end_um,channels,n_channels,n_units,cell_types
-CA1,oriens,0,200,1-10,10,20,CA1_pyr
-CA1,pyramidal,200,400,11-20,10,80,CA1_pyr
-CA1,radiatum,400,600,21-30,10,50,CA1_pyr
-CA2,pyramidal,600,800,31-40,10,60,CA2_pyr
-CA3,pyramidal,800,1400,41-70,30,210,CA3_pyr
-DG,granule,1400,1800,71-90,20,200,DG_granule
-DG,hilus,1800,2000,91-100,10,30,DG_granule
