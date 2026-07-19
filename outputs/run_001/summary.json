@@ -1,8 +1,0 @@
-{
-  "n_units": 650,
-  "n_ground_truth_spikes": 1568857,
-  "n_sorted_spikes": 1053818,
-  "session_duration_s": 600.0,
-  "n_channels": 384,
-  "seed": 42
-}
