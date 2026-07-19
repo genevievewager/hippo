@@ -21,17 +21,18 @@ python run_simulation.py \
     --neural-backend ratinabox_neurons
 
 # 2. Decode (compare → select best → closed-loop replay → optional figures)
-python run_full_decoder_workflow.py \
-    --input outputs/ratinabox_002 \
-    --output outputs/ratinabox_002 \
+python run_decoder.py \
+    --input outputs/ratinabox_003 \
+    --output outputs/ratinabox_003 \
     --compare-sources \
     --closed-loop-target spatial_context \
     --selection-policy shortest_near_optimal \
+    --enable-temporal-manifold
     --compile-pdf
 
 # 3. Visualize anytime (reads saved outputs only; never retrains)
 python run_visualizations.py \
-    --experiment outputs/ratinabox_002 \
+    --experiment outputs/ratinabox_003 \
     --all \
     --compile-pdf
 ```

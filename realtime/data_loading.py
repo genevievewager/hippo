@@ -38,6 +38,9 @@ def load_simulation_data(input_dir: Path, spike_source: str) -> dict:
 
     time_col, _ = _resolve_spike_columns(spikes_df)
     spikes_df = spikes_df.rename(columns={time_col: "time"})
+    # count_spikes_in_window uses searchsorted and requires sorted spike times.
+    # Ground-truth exports are often unsorted by unit; sorted exports usually are.
+    spikes_df = spikes_df.sort_values("time", kind="mergesort").reset_index(drop=True)
 
     session_duration = summary.get("session_duration_s")
     if session_duration is None:

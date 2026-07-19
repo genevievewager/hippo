@@ -41,6 +41,10 @@ def count_spikes_in_window(
     using only spikes in [t_start, t_end).
 
     Units appear in the same order as unit_ids.
+
+    ``spikes_df`` spike times must be sorted ascending. Callers that load
+    simulation outputs should sort once (see ``load_simulation_data`` /
+    ``RealTimeDecoder.replay``); this function does not re-sort per call.
     """
     unit_ids = np.asarray(unit_ids, dtype=int)
     unit_to_idx = {int(u): i for i, u in enumerate(unit_ids)}
