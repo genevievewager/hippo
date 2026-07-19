@@ -1,0 +1,39 @@
+{
+  "spike_source": "sorted",
+  "source": "sorted",
+  "feature_type": "counts",
+  "decode_window_s": 0.1,
+  "update_dt_s": 0.025,
+  "n_units": 200,
+  "target_name": "movement_state",
+  "target_family": "categorical",
+  "decoder_name": "logistic_regression",
+  "n_train_samples": 16798,
+  "n_test_samples": 7199,
+  "accuracy": 0.6452285039588832,
+  "balanced_accuracy": 0.622942587709732,
+  "macro_f1": 0.5330847150738033,
+  "confusion_matrix": [
+    [
+      2715,
+      833,
+      102
+    ],
+    [
+      731,
+      1771,
+      775
+    ],
+    [
+      1,
+      112,
+      159
+    ]
+  ],
+  "class_labels": [
+    "fast",
+    "slow",
+    "still"
+  ],
+  "primary_metric_value": 0.622942587709732
+}

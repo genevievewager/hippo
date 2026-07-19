@@ -1,0 +1,135 @@
+"""Unified experiment visualization: simulation + decoder figures + optional PDF.
+
+Plot-only: reads saved CSV/JSON outputs and never retrains decoders.
+Public entry point: ``run_visualizations.py``.
+"""
+
+from __future__ import annotations
+
+from dataclasses import dataclass
+from pathlib import Path
+
+from visualization.behavior_plots import generate_behavior_plots
+from visualization.cell_class_plots import generate_cell_class_plots
+from visualization.decoder_plots import (
+    plot_decoder_comparison_outputs,
+    plot_realtime_outputs,
+)
+from visualization.feature_plots import generate_feature_plots
+from visualization.load_outputs import load_simulation_outputs
+from visualization.neural_plots import generate_neural_plots
+from visualization.pdf import compile_figures_pdf
+from visualization.report_figures import generate_report_figures
+
+
+@dataclass
+class VizResult:
+    """Summary of what was generated for an experiment."""
+
+    figures_dir: Path
+    simulation: bool = False
+    comparison: bool = False
+    realtime: bool = False
+    pdf_path: Path | None = None
+
+
+def has_simulation_outputs(experiment_dir: Path) -> bool:
+    """Return True if core simulation files are present."""
+    experiment_dir = Path(experiment_dir)
+    required = ("behavior.csv", "units.csv", "spikes_ground_truth.csv", "summary.json")
+    return all((experiment_dir / name).exists() for name in required)
+
+
+def has_decoder_comparison(experiment_dir: Path) -> bool:
+    """Return True if decoder comparison outputs exist."""
+    root = Path(experiment_dir) / "decoder_comparison"
+    if (root / "decoder_comparison_metrics.csv").exists():
+        return True
+    if (root / "sorted" / "decoder_comparison_metrics.csv").exists():
+        return True
+    if (root / "ground_truth" / "decoder_comparison_metrics.csv").exists():
+        return True
+    return False
+
+
+def has_realtime_decoding(experiment_dir: Path) -> bool:
+    """Return True if realtime decoding outputs exist."""
+    root = Path(experiment_dir) / "realtime_decoding"
+    if not root.exists():
+        return False
+    for _path in root.rglob("decoded_realtime.csv"):
+        return True
+    return False
+
+
+def generate_simulation_figures(
+    experiment_dir: Path,
+    figures_dir: Path,
+    rate_bin_size: float = 0.250,
+) -> None:
+    """Generate simulation behavior/neural/probe figures into figures_dir."""
+    data = load_simulation_outputs(experiment_dir)
+    generate_behavior_plots(data, figures_dir)
+    generate_feature_plots(data, figures_dir)
+    generate_neural_plots(data, figures_dir, rate_bin_size=rate_bin_size)
+    generate_cell_class_plots(data, figures_dir, rate_bin_size=rate_bin_size)
+    generate_report_figures(data, figures_dir, rate_bin_size=rate_bin_size)
+
+
+def generate_experiment_figures(
+    experiment_dir: Path,
+    figures_dir: Path | None = None,
+    *,
+    include_simulation: bool = True,
+    include_comparison: bool = True,
+    include_realtime: bool = True,
+    compile_pdf: bool = False,
+    rate_bin_size: float = 0.250,
+) -> VizResult:
+    """
+    Detect available experiment outputs and generate figures.
+
+    Never retrains decoders or recomputes comparison metrics. Only reads
+    saved simulation / decoder outputs and writes under ``figures/``.
+    """
+    experiment_dir = Path(experiment_dir)
+    figures_dir = Path(figures_dir) if figures_dir is not None else experiment_dir / "figures"
+    figures_dir.mkdir(parents=True, exist_ok=True)
+
+    result = VizResult(figures_dir=figures_dir)
+
+    if include_simulation and has_simulation_outputs(experiment_dir):
+        print(f"Generating simulation figures from {experiment_dir}...")
+        generate_simulation_figures(experiment_dir, figures_dir, rate_bin_size=rate_bin_size)
+        result.simulation = True
+
+    comparison_dir = experiment_dir / "decoder_comparison"
+    if include_comparison and has_decoder_comparison(experiment_dir):
+        print(f"Generating decoder comparison figures from {comparison_dir}...")
+        plot_decoder_comparison_outputs(comparison_dir, figures_dir)
+        result.comparison = True
+
+    realtime_dir = experiment_dir / "realtime_decoding"
+    if include_realtime and has_realtime_decoding(experiment_dir):
+        print(f"Generating realtime decoding figures from {realtime_dir}...")
+        plot_realtime_outputs(realtime_dir, figures_dir)
+        result.realtime = True
+
+    temporal_dir = experiment_dir / "decoding"
+    if include_comparison and (temporal_dir / "comparison").exists():
+        try:
+            from visualization.temporal_plots import plot_temporal_comparison_outputs
+
+            print(f"Generating temporal decoding figures from {temporal_dir}...")
+            plot_temporal_comparison_outputs(temporal_dir, figures_dir)
+        except Exception as exc:
+            print(f"  warning: temporal plots skipped ({exc})")
+
+    if compile_pdf:
+        print(f"Compiling PDF under {figures_dir}...")
+        result.pdf_path = compile_figures_pdf(
+            figures_dir=figures_dir,
+            experiment_dir=experiment_dir,
+        )
+
+    return result

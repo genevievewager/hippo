@@ -1,0 +1,35 @@
+column,in_raw_units_csv,n_non_null_after_normalize,status
+unit_id,True,200,column exists in current units.csv / simulation
+cell_type,True,200,column exists in current units.csv / simulation
+region,True,200,column exists in current units.csv / simulation
+layer,True,200,column exists in current units.csv / simulation
+channel,True,200,column exists in current units.csv / simulation
+depth_um,True,200,column exists in current units.csv / simulation
+place_x_cm,True,80,column exists in current units.csv / simulation
+place_y_cm,True,80,column exists in current units.csv / simulation
+hd_pref_rad,True,200,column exists in current units.csv / simulation
+rate_model,True,200,column exists in current units.csv / simulation
+ratinabox_class,True,200,column exists in current units.csv / simulation
+subfield,True,200,column exists in current units.csv / simulation
+cell_class,True,200,column exists in current units.csv / simulation
+deep_superficial_coordinate,True,160,column exists in current units.csv / simulation
+deep_superficial_group,True,200,column exists in current units.csv / simulation
+proximodistal_coordinate,True,0,column exists in current units.csv / simulation
+proximodistal_group,True,200,column exists in current units.csv / simulation
+dorsoventral_coordinate,True,0,column exists in current units.csv / simulation
+dorsoventral_group,True,200,column exists in current units.csv / simulation
+projection_target,True,200,column exists in current units.csv / simulation
+baseline_rate_hz,True,0,column exists in current units.csv / simulation
+burst_index,True,0,column exists in current units.csv / simulation
+waveform_width_ms,True,0,column exists in current units.csv / simulation
+theta_phase_preference_rad,False,0,schema reserved; filled with NaN until simulation emits it
+theta_modulation_strength,True,0,column exists in current units.csv / simulation
+ripple_participation_probability,True,0,column exists in current units.csv / simulation
+spatial_tuning_strength,True,0,column exists in current units.csv / simulation
+head_direction_tuning_strength,True,0,column exists in current units.csv / simulation
+speed_tuning_strength,True,0,column exists in current units.csv / simulation
+boundary_tuning_strength,True,0,column exists in current units.csv / simulation
+reward_tuning_strength,False,0,schema reserved; filled with NaN until simulation emits it
+context_tuning_strength,False,0,schema reserved; filled with NaN until simulation emits it
+time_tuning_strength,False,0,schema reserved; filled with NaN until simulation emits it
+memory_identity_tuning_strength,False,0,schema reserved; filled with NaN until simulation emits it

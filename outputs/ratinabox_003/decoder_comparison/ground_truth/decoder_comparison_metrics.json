@@ -1,0 +1,3566 @@
+[
+  {
+    "spike_source": "ground_truth",
+    "source": "ground_truth",
+    "feature_type": "counts",
+    "decode_window_s": 0.025,
+    "update_dt_s": 0.025,
+    "n_units": 200,
+    "target_name": "position",
+    "target_family": "continuous",
+    "decoder_name": "ridge",
+    "n_train_samples": 16800,
+    "n_test_samples": 7200,
+    "mean_position_error_cm": 20.89629940795527,
+    "median_position_error_cm": 19.12325713355506,
+    "p90_position_error_cm": 37.336135581096634,
+    "r2_x": 0.6939031578528456,
+    "r2_y": 0.7615045079230643
+  },
+  {
+    "spike_source": "ground_truth",
+    "source": "ground_truth",
+    "feature_type": "counts",
+    "decode_window_s": 0.025,
+    "update_dt_s": 0.025,
+    "n_units": 200,
+    "target_name": "position",
+    "target_family": "continuous",
+    "decoder_name": "pca_ridge",
+    "n_train_samples": 16800,
+    "n_test_samples": 7200,
+    "mean_position_error_cm": 20.892603260018262,
+    "median_position_error_cm": 19.16050257912266,
+    "p90_position_error_cm": 37.199711603806826,
+    "r2_x": 0.6938302667184962,
+    "r2_y": 0.761690601049418
+  },
+  {
+    "spike_source": "ground_truth",
+    "source": "ground_truth",
+    "feature_type": "counts",
+    "decode_window_s": 0.025,
+    "update_dt_s": 0.025,
+    "n_units": 200,
+    "target_name": "position",
+    "target_family": "continuous",
+    "decoder_name": "random_forest_regressor",
+    "n_train_samples": 16800,
+    "n_test_samples": 7200,
+    "mean_position_error_cm": 28.155287733312306,
+    "median_position_error_cm": 25.09165488951934,
+    "p90_position_error_cm": 47.15240176068528,
+    "r2_x": 0.42687761878140296,
+    "r2_y": 0.6036327567821262
+  },
+  {
+    "spike_source": "ground_truth",
+    "source": "ground_truth",
+    "feature_type": "counts",
+    "decode_window_s": 0.025,
+    "update_dt_s": 0.025,
+    "n_units": 200,
+    "target_name": "position",
+    "target_family": "continuous",
+    "decoder_name": "bayesian_place_decoder",
+    "n_train_samples": 16800,
+    "n_test_samples": 7200,
+    "mean_position_error_cm": 11.421343977679703,
+    "median_position_error_cm": 9.15529819742302,
+    "p90_position_error_cm": 22.320648709574513,
+    "r2_x": 0.8569793418559202,
+    "r2_y": 0.929871912385233
+  },
+  {
+    "spike_source": "ground_truth",
+    "source": "ground_truth",
+    "feature_type": "counts",
+    "decode_window_s": 0.025,
+    "update_dt_s": 0.025,
+    "n_units": 200,
+    "target_name": "speed",
+    "target_family": "continuous",
+    "decoder_name": "ridge",
+    "n_train_samples": 16800,
+    "n_test_samples": 7200,
+    "r2": 0.4791373131770694,
+    "correlation": 0.6943762210763579,
+    "mae": 3.064020069566458,
+    "rmse": 3.891713249077973
+  },
+  {
+    "spike_source": "ground_truth",
+    "source": "ground_truth",
+    "feature_type": "counts",
+    "decode_window_s": 0.025,
+    "update_dt_s": 0.025,
+    "n_units": 200,
+    "target_name": "speed",
+    "target_family": "continuous",
+    "decoder_name": "pca_ridge",
+    "n_train_samples": 16800,
+    "n_test_samples": 7200,
+    "r2": 0.47950960743392,
+    "correlation": 0.6945828757217998,
+    "mae": 3.064531391199668,
+    "rmse": 3.8903221708532256
+  },
+  {
+    "spike_source": "ground_truth",
+    "source": "ground_truth",
+    "feature_type": "counts",
+    "decode_window_s": 0.025,
+    "update_dt_s": 0.025,
+    "n_units": 200,
+    "target_name": "speed",
+    "target_family": "continuous",
+    "decoder_name": "random_forest_regressor",
+    "n_train_samples": 16800,
+    "n_test_samples": 7200,
+    "r2": 0.3601549152195145,
+    "correlation": 0.6314422545594919,
+    "mae": 3.4251242500736216,
+    "rmse": 4.313369156489487
+  },
+  {
+    "spike_source": "ground_truth",
+    "source": "ground_truth",
+    "feature_type": "counts",
+    "decode_window_s": 0.025,
+    "update_dt_s": 0.025,
+    "n_units": 200,
+    "target_name": "acceleration",
+    "target_family": "continuous",
+    "decoder_name": "ridge",
+    "n_train_samples": 16800,
+    "n_test_samples": 7200,
+    "r2": -0.0003853751032234509,
+    "correlation": 0.07250680522297608,
+    "mae": 35.17046475129477,
+    "rmse": 59.49533635310519
+  },
+  {
+    "spike_source": "ground_truth",
+    "source": "ground_truth",
+    "feature_type": "counts",
+    "decode_window_s": 0.025,
+    "update_dt_s": 0.025,
+    "n_units": 200,
+    "target_name": "acceleration",
+    "target_family": "continuous",
+    "decoder_name": "pca_ridge",
+    "n_train_samples": 16800,
+    "n_test_samples": 7200,
+    "r2": 0.0020057395624921703,
+    "correlation": 0.07789463153782362,
+    "mae": 34.98985815222183,
+    "rmse": 59.42419113051499
+  },
+  {
+    "spike_source": "ground_truth",
+    "source": "ground_truth",
+    "feature_type": "counts",
+    "decode_window_s": 0.025,
+    "update_dt_s": 0.025,
+    "n_units": 200,
+    "target_name": "acceleration",
+    "target_family": "continuous",
+    "decoder_name": "random_forest_regressor",
+    "n_train_samples": 16800,
+    "n_test_samples": 7200,
+    "r2": 0.0015806953772992127,
+    "correlation": 0.050516890227470294,
+    "mae": 33.4792325382582,
+    "rmse": 59.43684411818628
+  },
+  {
+    "spike_source": "ground_truth",
+    "source": "ground_truth",
+    "feature_type": "counts",
+    "decode_window_s": 0.025,
+    "update_dt_s": 0.025,
+    "n_units": 200,
+    "target_name": "head_direction",
+    "target_family": "continuous",
+    "decoder_name": "ridge",
+    "n_train_samples": 16800,
+    "n_test_samples": 7200,
+    "mean_circular_error_deg": 23.449672295694487,
+    "median_circular_error_deg": 17.685309195598116,
+    "p90_circular_error_deg": 48.610371727543985
+  },
+  {
+    "spike_source": "ground_truth",
+    "source": "ground_truth",
+    "feature_type": "counts",
+    "decode_window_s": 0.025,
+    "update_dt_s": 0.025,
+    "n_units": 200,
+    "target_name": "head_direction",
+    "target_family": "continuous",
+    "decoder_name": "pca_ridge",
+    "n_train_samples": 16800,
+    "n_test_samples": 7200,
+    "mean_circular_error_deg": 23.43814132359925,
+    "median_circular_error_deg": 17.648207262876273,
+    "p90_circular_error_deg": 48.8156355235375
+  },
+  {
+    "spike_source": "ground_truth",
+    "source": "ground_truth",
+    "feature_type": "counts",
+    "decode_window_s": 0.025,
+    "update_dt_s": 0.025,
+    "n_units": 200,
+    "target_name": "head_direction",
+    "target_family": "continuous",
+    "decoder_name": "random_forest_regressor",
+    "n_train_samples": 16800,
+    "n_test_samples": 7200,
+    "mean_circular_error_deg": 31.97374706774081,
+    "median_circular_error_deg": 23.47347752148456,
+    "p90_circular_error_deg": 68.6149678230869
+  },
+  {
+    "spike_source": "ground_truth",
+    "source": "ground_truth",
+    "feature_type": "counts",
+    "decode_window_s": 0.025,
+    "update_dt_s": 0.025,
+    "n_units": 200,
+    "target_name": "distance_to_wall",
+    "target_family": "continuous",
+    "decoder_name": "ridge",
+    "n_train_samples": 16800,
+    "n_test_samples": 7200,
+    "r2": 0.48007464002764433,
+    "correlation": 0.7152497712164263,
+    "mae_cm": 4.768762683319533,
+    "rmse_cm": 6.0865544329250785
+  },
+  {
+    "spike_source": "ground_truth",
+    "source": "ground_truth",
+    "feature_type": "counts",
+    "decode_window_s": 0.025,
+    "update_dt_s": 0.025,
+    "n_units": 200,
+    "target_name": "distance_to_wall",
+    "target_family": "continuous",
+    "decoder_name": "pca_ridge",
+    "n_train_samples": 16800,
+    "n_test_samples": 7200,
+    "r2": 0.48134460232249654,
+    "correlation": 0.71603284115504,
+    "mae_cm": 4.762346600884685,
+    "rmse_cm": 6.079116422476992
+  },
+  {
+    "spike_source": "ground_truth",
+    "source": "ground_truth",
+    "feature_type": "counts",
+    "decode_window_s": 0.025,
+    "update_dt_s": 0.025,
+    "n_units": 200,
+    "target_name": "distance_to_wall",
+    "target_family": "continuous",
+    "decoder_name": "random_forest_regressor",
+    "n_train_samples": 16800,
+    "n_test_samples": 7200,
+    "r2": 0.39455931001825817,
+    "correlation": 0.649435128399101,
+    "mae_cm": 4.887789450200568,
+    "rmse_cm": 6.568055477180502
+  },
+  {
+    "spike_source": "ground_truth",
+    "source": "ground_truth",
+    "feature_type": "counts",
+    "decode_window_s": 0.025,
+    "update_dt_s": 0.025,
+    "n_units": 200,
+    "target_name": "distance_to_wall",
+    "target_family": "continuous",
+    "decoder_name": "bayesian_place_decoder",
+    "n_train_samples": 16800,
+    "n_test_samples": 7200,
+    "r2": 0.517647940099566,
+    "correlation": 0.7612217310817878,
+    "mae_cm": 3.9872433746074534,
+    "rmse_cm": 5.862503007335261
+  },
+  {
+    "spike_source": "ground_truth",
+    "source": "ground_truth",
+    "feature_type": "counts",
+    "decode_window_s": 0.025,
+    "update_dt_s": 0.025,
+    "n_units": 200,
+    "target_name": "spatial_context",
+    "target_family": "categorical",
+    "decoder_name": "logistic_regression",
+    "n_train_samples": 16800,
+    "n_test_samples": 7200,
+    "accuracy": 0.6726388888888889,
+    "balanced_accuracy": 0.7097361842302612,
+    "macro_f1": 0.6776126653861726,
+    "confusion_matrix": [
+      [
+        934,
+        34,
+        135
+      ],
+      [
+        172,
+        2003,
+        962
+      ],
+      [
+        466,
+        588,
+        1906
+      ]
+    ],
+    "class_labels": [
+      "center",
+      "corner",
+      "wall"
+    ]
+  },
+  {
+    "spike_source": "ground_truth",
+    "source": "ground_truth",
+    "feature_type": "counts",
+    "decode_window_s": 0.025,
+    "update_dt_s": 0.025,
+    "n_units": 200,
+    "target_name": "spatial_context",
+    "target_family": "categorical",
+    "decoder_name": "random_forest_classifier",
+    "n_train_samples": 16800,
+    "n_test_samples": 7200,
+    "accuracy": 0.5708333333333333,
+    "balanced_accuracy": 0.6215304047190112,
+    "macro_f1": 0.582298318754436,
+    "confusion_matrix": [
+      [
+        890,
+        36,
+        177
+      ],
+      [
+        240,
+        1581,
+        1316
+      ],
+      [
+        575,
+        746,
+        1639
+      ]
+    ],
+    "class_labels": [
+      "center",
+      "corner",
+      "wall"
+    ]
+  },
+  {
+    "spike_source": "ground_truth",
+    "source": "ground_truth",
+    "feature_type": "counts",
+    "decode_window_s": 0.025,
+    "update_dt_s": 0.025,
+    "n_units": 200,
+    "target_name": "spatial_context",
+    "target_family": "categorical",
+    "decoder_name": "bayesian_place_decoder_derived_context",
+    "n_train_samples": 16800,
+    "n_test_samples": 7200,
+    "accuracy": 0.7277777777777777,
+    "balanced_accuracy": 0.7355108814258968,
+    "macro_f1": 0.72264723526822,
+    "confusion_matrix": [
+      [
+        845,
+        194,
+        64
+      ],
+      [
+        317,
+        2068,
+        575
+      ],
+      [
+        136,
+        674,
+        2327
+      ]
+    ],
+    "class_labels": [
+      "center",
+      "wall",
+      "corner"
+    ]
+  },
+  {
+    "spike_source": "ground_truth",
+    "source": "ground_truth",
+    "feature_type": "counts",
+    "decode_window_s": 0.025,
+    "update_dt_s": 0.025,
+    "n_units": 200,
+    "target_name": "movement_state",
+    "target_family": "categorical",
+    "decoder_name": "logistic_regression",
+    "n_train_samples": 16800,
+    "n_test_samples": 7200,
+    "accuracy": 0.6058333333333333,
+    "balanced_accuracy": 0.6314292260871658,
+    "macro_f1": 0.5096182230887695,
+    "confusion_matrix": [
+      [
+        2602,
+        894,
+        150
+      ],
+      [
+        785,
+        1566,
+        927
+      ],
+      [
+        3,
+        79,
+        194
+      ]
+    ],
+    "class_labels": [
+      "fast",
+      "slow",
+      "still"
+    ]
+  },
+  {
+    "spike_source": "ground_truth",
+    "source": "ground_truth",
+    "feature_type": "counts",
+    "decode_window_s": 0.025,
+    "update_dt_s": 0.025,
+    "n_units": 200,
+    "target_name": "movement_state",
+    "target_family": "categorical",
+    "decoder_name": "random_forest_classifier",
+    "n_train_samples": 16800,
+    "n_test_samples": 7200,
+    "accuracy": 0.5644444444444444,
+    "balanced_accuracy": 0.6270172903945064,
+    "macro_f1": 0.45385598752845907,
+    "confusion_matrix": [
+      [
+        2989,
+        431,
+        226
+      ],
+      [
+        1274,
+        854,
+        1150
+      ],
+      [
+        8,
+        47,
+        221
+      ]
+    ],
+    "class_labels": [
+      "fast",
+      "slow",
+      "still"
+    ]
+  },
+  {
+    "spike_source": "ground_truth",
+    "source": "ground_truth",
+    "feature_type": "counts",
+    "decode_window_s": 0.025,
+    "update_dt_s": 0.025,
+    "n_units": 200,
+    "target_name": "wall_distance_bin",
+    "target_family": "categorical",
+    "decoder_name": "logistic_regression",
+    "n_train_samples": 16800,
+    "n_test_samples": 7200,
+    "accuracy": 0.7275,
+    "balanced_accuracy": 0.731869512548997,
+    "macro_f1": 0.6270848047042369,
+    "confusion_matrix": [
+      [
+        277,
+        51,
+        3
+      ],
+      [
+        276,
+        877,
+        296
+      ],
+      [
+        101,
+        1235,
+        4084
+      ]
+    ],
+    "class_labels": [
+      "center",
+      "middle",
+      "near_wall"
+    ]
+  },
+  {
+    "spike_source": "ground_truth",
+    "source": "ground_truth",
+    "feature_type": "counts",
+    "decode_window_s": 0.025,
+    "update_dt_s": 0.025,
+    "n_units": 200,
+    "target_name": "wall_distance_bin",
+    "target_family": "categorical",
+    "decoder_name": "random_forest_classifier",
+    "n_train_samples": 16800,
+    "n_test_samples": 7200,
+    "accuracy": 0.7151388888888889,
+    "balanced_accuracy": 0.6975208913454719,
+    "macro_f1": 0.5990215087955192,
+    "confusion_matrix": [
+      [
+        265,
+        64,
+        2
+      ],
+      [
+        309,
+        773,
+        367
+      ],
+      [
+        108,
+        1201,
+        4111
+      ]
+    ],
+    "class_labels": [
+      "center",
+      "middle",
+      "near_wall"
+    ]
+  },
+  {
+    "spike_source": "ground_truth",
+    "source": "ground_truth",
+    "feature_type": "counts",
+    "decode_window_s": 0.025,
+    "update_dt_s": 0.025,
+    "n_units": 200,
+    "target_name": "wall_distance_bin",
+    "target_family": "categorical",
+    "decoder_name": "bayesian_place_decoder_derived_context",
+    "n_train_samples": 16800,
+    "n_test_samples": 7200,
+    "accuracy": 0.7672222222222222,
+    "balanced_accuracy": 0.6577348998268401,
+    "macro_f1": 0.6427617876346405,
+    "confusion_matrix": [
+      [
+        4361,
+        1044,
+        15
+      ],
+      [
+        340,
+        1006,
+        103
+      ],
+      [
+        9,
+        165,
+        157
+      ]
+    ],
+    "class_labels": [
+      "near_wall",
+      "middle",
+      "center"
+    ]
+  },
+  {
+    "spike_source": "ground_truth",
+    "source": "ground_truth",
+    "feature_type": "counts",
+    "decode_window_s": 0.05,
+    "update_dt_s": 0.025,
+    "n_units": 200,
+    "target_name": "position",
+    "target_family": "continuous",
+    "decoder_name": "ridge",
+    "n_train_samples": 16799,
+    "n_test_samples": 7200,
+    "mean_position_error_cm": 16.18236245250263,
+    "median_position_error_cm": 14.58391499371141,
+    "p90_position_error_cm": 29.201933139866235,
+    "r2_x": 0.8126912137400814,
+    "r2_y": 0.8534233351630802
+  },
+  {
+    "spike_source": "ground_truth",
+    "source": "ground_truth",
+    "feature_type": "counts",
+    "decode_window_s": 0.05,
+    "update_dt_s": 0.025,
+    "n_units": 200,
+    "target_name": "position",
+    "target_family": "continuous",
+    "decoder_name": "pca_ridge",
+    "n_train_samples": 16799,
+    "n_test_samples": 7200,
+    "mean_position_error_cm": 16.244675970746457,
+    "median_position_error_cm": 14.585596817423678,
+    "p90_position_error_cm": 29.260082113518326,
+    "r2_x": 0.8124454120377009,
+    "r2_y": 0.8515993818914731
+  },
+  {
+    "spike_source": "ground_truth",
+    "source": "ground_truth",
+    "feature_type": "counts",
+    "decode_window_s": 0.05,
+    "update_dt_s": 0.025,
+    "n_units": 200,
+    "target_name": "position",
+    "target_family": "continuous",
+    "decoder_name": "random_forest_regressor",
+    "n_train_samples": 16799,
+    "n_test_samples": 7200,
+    "mean_position_error_cm": 17.02582158502293,
+    "median_position_error_cm": 14.587999784086872,
+    "p90_position_error_cm": 31.975328222222675,
+    "r2_x": 0.7586659926385835,
+    "r2_y": 0.842110343578877
+  },
+  {
+    "spike_source": "ground_truth",
+    "source": "ground_truth",
+    "feature_type": "counts",
+    "decode_window_s": 0.05,
+    "update_dt_s": 0.025,
+    "n_units": 200,
+    "target_name": "position",
+    "target_family": "continuous",
+    "decoder_name": "bayesian_place_decoder",
+    "n_train_samples": 16799,
+    "n_test_samples": 7200,
+    "mean_position_error_cm": 8.794755977308887,
+    "median_position_error_cm": 7.089526776198724,
+    "p90_position_error_cm": 17.976767971569554,
+    "r2_x": 0.9180498134468354,
+    "r2_y": 0.9644305648176139
+  },
+  {
+    "spike_source": "ground_truth",
+    "source": "ground_truth",
+    "feature_type": "counts",
+    "decode_window_s": 0.05,
+    "update_dt_s": 0.025,
+    "n_units": 200,
+    "target_name": "speed",
+    "target_family": "continuous",
+    "decoder_name": "ridge",
+    "n_train_samples": 16799,
+    "n_test_samples": 7200,
+    "r2": 0.572096563611324,
+    "correlation": 0.7581084295782142,
+    "mae": 2.7578007273838376,
+    "rmse": 3.5326749262935255
+  },
+  {
+    "spike_source": "ground_truth",
+    "source": "ground_truth",
+    "feature_type": "counts",
+    "decode_window_s": 0.05,
+    "update_dt_s": 0.025,
+    "n_units": 200,
+    "target_name": "speed",
+    "target_family": "continuous",
+    "decoder_name": "pca_ridge",
+    "n_train_samples": 16799,
+    "n_test_samples": 7200,
+    "r2": 0.5726216927198889,
+    "correlation": 0.7583628509296088,
+    "mae": 2.7558381171162414,
+    "rmse": 3.530506586685812
+  },
+  {
+    "spike_source": "ground_truth",
+    "source": "ground_truth",
+    "feature_type": "counts",
+    "decode_window_s": 0.05,
+    "update_dt_s": 0.025,
+    "n_units": 200,
+    "target_name": "speed",
+    "target_family": "continuous",
+    "decoder_name": "random_forest_regressor",
+    "n_train_samples": 16799,
+    "n_test_samples": 7200,
+    "r2": 0.4602306749227262,
+    "correlation": 0.7011559665399155,
+    "mae": 3.12508750709254,
+    "rmse": 3.96766401667192
+  },
+  {
+    "spike_source": "ground_truth",
+    "source": "ground_truth",
+    "feature_type": "counts",
+    "decode_window_s": 0.05,
+    "update_dt_s": 0.025,
+    "n_units": 200,
+    "target_name": "acceleration",
+    "target_family": "continuous",
+    "decoder_name": "ridge",
+    "n_train_samples": 16799,
+    "n_test_samples": 7200,
+    "r2": 0.0015576596601523107,
+    "correlation": 0.08151099584172965,
+    "mae": 35.20341661583622,
+    "rmse": 59.43752978325645
+  },
+  {
+    "spike_source": "ground_truth",
+    "source": "ground_truth",
+    "feature_type": "counts",
+    "decode_window_s": 0.05,
+    "update_dt_s": 0.025,
+    "n_units": 200,
+    "target_name": "acceleration",
+    "target_family": "continuous",
+    "decoder_name": "pca_ridge",
+    "n_train_samples": 16799,
+    "n_test_samples": 7200,
+    "r2": 0.0031349402137413884,
+    "correlation": 0.08447295954199055,
+    "mae": 35.05336829053993,
+    "rmse": 59.390563268307886
+  },
+  {
+    "spike_source": "ground_truth",
+    "source": "ground_truth",
+    "feature_type": "counts",
+    "decode_window_s": 0.05,
+    "update_dt_s": 0.025,
+    "n_units": 200,
+    "target_name": "acceleration",
+    "target_family": "continuous",
+    "decoder_name": "random_forest_regressor",
+    "n_train_samples": 16799,
+    "n_test_samples": 7200,
+    "r2": 0.002291962530771352,
+    "correlation": 0.05766756510974048,
+    "mae": 33.79957924634054,
+    "rmse": 59.415669143628044
+  },
+  {
+    "spike_source": "ground_truth",
+    "source": "ground_truth",
+    "feature_type": "counts",
+    "decode_window_s": 0.05,
+    "update_dt_s": 0.025,
+    "n_units": 200,
+    "target_name": "head_direction",
+    "target_family": "continuous",
+    "decoder_name": "ridge",
+    "n_train_samples": 16799,
+    "n_test_samples": 7200,
+    "mean_circular_error_deg": 16.7574105128443,
+    "median_circular_error_deg": 13.556692684528347,
+    "p90_circular_error_deg": 34.44014486215338
+  },
+  {
+    "spike_source": "ground_truth",
+    "source": "ground_truth",
+    "feature_type": "counts",
+    "decode_window_s": 0.05,
+    "update_dt_s": 0.025,
+    "n_units": 200,
+    "target_name": "head_direction",
+    "target_family": "continuous",
+    "decoder_name": "pca_ridge",
+    "n_train_samples": 16799,
+    "n_test_samples": 7200,
+    "mean_circular_error_deg": 16.71030799536525,
+    "median_circular_error_deg": 13.476158049049147,
+    "p90_circular_error_deg": 34.5867655132532
+  },
+  {
+    "spike_source": "ground_truth",
+    "source": "ground_truth",
+    "feature_type": "counts",
+    "decode_window_s": 0.05,
+    "update_dt_s": 0.025,
+    "n_units": 200,
+    "target_name": "head_direction",
+    "target_family": "continuous",
+    "decoder_name": "random_forest_regressor",
+    "n_train_samples": 16799,
+    "n_test_samples": 7200,
+    "mean_circular_error_deg": 21.303497003462446,
+    "median_circular_error_deg": 16.782872386298134,
+    "p90_circular_error_deg": 44.01961053621859
+  },
+  {
+    "spike_source": "ground_truth",
+    "source": "ground_truth",
+    "feature_type": "counts",
+    "decode_window_s": 0.05,
+    "update_dt_s": 0.025,
+    "n_units": 200,
+    "target_name": "distance_to_wall",
+    "target_family": "continuous",
+    "decoder_name": "ridge",
+    "n_train_samples": 16799,
+    "n_test_samples": 7200,
+    "r2": 0.6318430828061927,
+    "correlation": 0.8042356747604522,
+    "mae_cm": 3.9873286359752864,
+    "rmse_cm": 5.121675041858723
+  },
+  {
+    "spike_source": "ground_truth",
+    "source": "ground_truth",
+    "feature_type": "counts",
+    "decode_window_s": 0.05,
+    "update_dt_s": 0.025,
+    "n_units": 200,
+    "target_name": "distance_to_wall",
+    "target_family": "continuous",
+    "decoder_name": "pca_ridge",
+    "n_train_samples": 16799,
+    "n_test_samples": 7200,
+    "r2": 0.6328300145567203,
+    "correlation": 0.8048106466864186,
+    "mae_cm": 3.9786002997047105,
+    "rmse_cm": 5.1148055038493165
+  },
+  {
+    "spike_source": "ground_truth",
+    "source": "ground_truth",
+    "feature_type": "counts",
+    "decode_window_s": 0.05,
+    "update_dt_s": 0.025,
+    "n_units": 200,
+    "target_name": "distance_to_wall",
+    "target_family": "continuous",
+    "decoder_name": "random_forest_regressor",
+    "n_train_samples": 16799,
+    "n_test_samples": 7200,
+    "r2": 0.6245711069919898,
+    "correlation": 0.7995081038904109,
+    "mae_cm": 3.7815485769995445,
+    "rmse_cm": 5.172010336031719
+  },
+  {
+    "spike_source": "ground_truth",
+    "source": "ground_truth",
+    "feature_type": "counts",
+    "decode_window_s": 0.05,
+    "update_dt_s": 0.025,
+    "n_units": 200,
+    "target_name": "distance_to_wall",
+    "target_family": "continuous",
+    "decoder_name": "bayesian_place_decoder",
+    "n_train_samples": 16799,
+    "n_test_samples": 7200,
+    "r2": 0.6792774189440702,
+    "correlation": 0.8354443758478455,
+    "mae_cm": 3.178392436224716,
+    "rmse_cm": 4.780356731820259
+  },
+  {
+    "spike_source": "ground_truth",
+    "source": "ground_truth",
+    "feature_type": "counts",
+    "decode_window_s": 0.05,
+    "update_dt_s": 0.025,
+    "n_units": 200,
+    "target_name": "spatial_context",
+    "target_family": "categorical",
+    "decoder_name": "logistic_regression",
+    "n_train_samples": 16799,
+    "n_test_samples": 7200,
+    "accuracy": 0.7727777777777778,
+    "balanced_accuracy": 0.7976808746412783,
+    "macro_f1": 0.7807647642656589,
+    "confusion_matrix": [
+      [
+        981,
+        16,
+        107
+      ],
+      [
+        84,
+        2313,
+        739
+      ],
+      [
+        247,
+        443,
+        2270
+      ]
+    ],
+    "class_labels": [
+      "center",
+      "corner",
+      "wall"
+    ]
+  },
+  {
+    "spike_source": "ground_truth",
+    "source": "ground_truth",
+    "feature_type": "counts",
+    "decode_window_s": 0.05,
+    "update_dt_s": 0.025,
+    "n_units": 200,
+    "target_name": "spatial_context",
+    "target_family": "categorical",
+    "decoder_name": "random_forest_classifier",
+    "n_train_samples": 16799,
+    "n_test_samples": 7200,
+    "accuracy": 0.67,
+    "balanced_accuracy": 0.7177552052940251,
+    "macro_f1": 0.6897225436820508,
+    "confusion_matrix": [
+      [
+        977,
+        11,
+        116
+      ],
+      [
+        128,
+        1654,
+        1354
+      ],
+      [
+        299,
+        468,
+        2193
+      ]
+    ],
+    "class_labels": [
+      "center",
+      "corner",
+      "wall"
+    ]
+  },
+  {
+    "spike_source": "ground_truth",
+    "source": "ground_truth",
+    "feature_type": "counts",
+    "decode_window_s": 0.05,
+    "update_dt_s": 0.025,
+    "n_units": 200,
+    "target_name": "spatial_context",
+    "target_family": "categorical",
+    "decoder_name": "bayesian_place_decoder_derived_context",
+    "n_train_samples": 16799,
+    "n_test_samples": 7200,
+    "accuracy": 0.7959722222222222,
+    "balanced_accuracy": 0.7908569450106717,
+    "macro_f1": 0.7891269915760318,
+    "confusion_matrix": [
+      [
+        855,
+        186,
+        63
+      ],
+      [
+        198,
+        2282,
+        480
+      ],
+      [
+        75,
+        467,
+        2594
+      ]
+    ],
+    "class_labels": [
+      "center",
+      "wall",
+      "corner"
+    ]
+  },
+  {
+    "spike_source": "ground_truth",
+    "source": "ground_truth",
+    "feature_type": "counts",
+    "decode_window_s": 0.05,
+    "update_dt_s": 0.025,
+    "n_units": 200,
+    "target_name": "movement_state",
+    "target_family": "categorical",
+    "decoder_name": "logistic_regression",
+    "n_train_samples": 16799,
+    "n_test_samples": 7200,
+    "accuracy": 0.6669444444444445,
+    "balanced_accuracy": 0.6752644748923999,
+    "macro_f1": 0.5676902591349086,
+    "confusion_matrix": [
+      [
+        2780,
+        822,
+        48
+      ],
+      [
+        765,
+        1830,
+        683
+      ],
+      [
+        2,
+        78,
+        192
+      ]
+    ],
+    "class_labels": [
+      "fast",
+      "slow",
+      "still"
+    ]
+  },
+  {
+    "spike_source": "ground_truth",
+    "source": "ground_truth",
+    "feature_type": "counts",
+    "decode_window_s": 0.05,
+    "update_dt_s": 0.025,
+    "n_units": 200,
+    "target_name": "movement_state",
+    "target_family": "categorical",
+    "decoder_name": "random_forest_classifier",
+    "n_train_samples": 16799,
+    "n_test_samples": 7200,
+    "accuracy": 0.6559722222222222,
+    "balanced_accuracy": 0.6715488003353656,
+    "macro_f1": 0.5530795877792253,
+    "confusion_matrix": [
+      [
+        3014,
+        586,
+        50
+      ],
+      [
+        1069,
+        1511,
+        698
+      ],
+      [
+        2,
+        72,
+        198
+      ]
+    ],
+    "class_labels": [
+      "fast",
+      "slow",
+      "still"
+    ]
+  },
+  {
+    "spike_source": "ground_truth",
+    "source": "ground_truth",
+    "feature_type": "counts",
+    "decode_window_s": 0.05,
+    "update_dt_s": 0.025,
+    "n_units": 200,
+    "target_name": "wall_distance_bin",
+    "target_family": "categorical",
+    "decoder_name": "logistic_regression",
+    "n_train_samples": 16799,
+    "n_test_samples": 7200,
+    "accuracy": 0.8004166666666667,
+    "balanced_accuracy": 0.7929486143016798,
+    "macro_f1": 0.7159597269118089,
+    "confusion_matrix": [
+      [
+        285,
+        44,
+        1
+      ],
+      [
+        209,
+        1000,
+        243
+      ],
+      [
+        14,
+        926,
+        4478
+      ]
+    ],
+    "class_labels": [
+      "center",
+      "middle",
+      "near_wall"
+    ]
+  },
+  {
+    "spike_source": "ground_truth",
+    "source": "ground_truth",
+    "feature_type": "counts",
+    "decode_window_s": 0.05,
+    "update_dt_s": 0.025,
+    "n_units": 200,
+    "target_name": "wall_distance_bin",
+    "target_family": "categorical",
+    "decoder_name": "random_forest_classifier",
+    "n_train_samples": 16799,
+    "n_test_samples": 7200,
+    "accuracy": 0.8031944444444444,
+    "balanced_accuracy": 0.7818520959112926,
+    "macro_f1": 0.7062848688534201,
+    "confusion_matrix": [
+      [
+        286,
+        43,
+        1
+      ],
+      [
+        230,
+        921,
+        301
+      ],
+      [
+        19,
+        823,
+        4576
+      ]
+    ],
+    "class_labels": [
+      "center",
+      "middle",
+      "near_wall"
+    ]
+  },
+  {
+    "spike_source": "ground_truth",
+    "source": "ground_truth",
+    "feature_type": "counts",
+    "decode_window_s": 0.05,
+    "update_dt_s": 0.025,
+    "n_units": 200,
+    "target_name": "wall_distance_bin",
+    "target_family": "categorical",
+    "decoder_name": "bayesian_place_decoder_derived_context",
+    "n_train_samples": 16799,
+    "n_test_samples": 7200,
+    "accuracy": 0.8227777777777778,
+    "balanced_accuracy": 0.6787848280448703,
+    "macro_f1": 0.6804334904088427,
+    "confusion_matrix": [
+      [
+        4806,
+        610,
+        2
+      ],
+      [
+        384,
+        956,
+        112
+      ],
+      [
+        4,
+        164,
+        162
+      ]
+    ],
+    "class_labels": [
+      "near_wall",
+      "middle",
+      "center"
+    ]
+  },
+  {
+    "spike_source": "ground_truth",
+    "source": "ground_truth",
+    "feature_type": "counts",
+    "decode_window_s": 0.1,
+    "update_dt_s": 0.025,
+    "n_units": 200,
+    "target_name": "position",
+    "target_family": "continuous",
+    "decoder_name": "ridge",
+    "n_train_samples": 16798,
+    "n_test_samples": 7199,
+    "mean_position_error_cm": 12.668947016667131,
+    "median_position_error_cm": 11.28316711387938,
+    "p90_position_error_cm": 22.65520180299799,
+    "r2_x": 0.8860032954239125,
+    "r2_y": 0.9090814603908695
+  },
+  {
+    "spike_source": "ground_truth",
+    "source": "ground_truth",
+    "feature_type": "counts",
+    "decode_window_s": 0.1,
+    "update_dt_s": 0.025,
+    "n_units": 200,
+    "target_name": "position",
+    "target_family": "continuous",
+    "decoder_name": "pca_ridge",
+    "n_train_samples": 16798,
+    "n_test_samples": 7199,
+    "mean_position_error_cm": 12.826025126546918,
+    "median_position_error_cm": 11.49385136531319,
+    "p90_position_error_cm": 23.03730848204416,
+    "r2_x": 0.8835755443046209,
+    "r2_y": 0.9071673767413087
+  },
+  {
+    "spike_source": "ground_truth",
+    "source": "ground_truth",
+    "feature_type": "counts",
+    "decode_window_s": 0.1,
+    "update_dt_s": 0.025,
+    "n_units": 200,
+    "target_name": "position",
+    "target_family": "continuous",
+    "decoder_name": "random_forest_regressor",
+    "n_train_samples": 16798,
+    "n_test_samples": 7199,
+    "mean_position_error_cm": 9.365612330373958,
+    "median_position_error_cm": 7.538937694450252,
+    "p90_position_error_cm": 18.33177668369092,
+    "r2_x": 0.9278534087723644,
+    "r2_y": 0.9440531803806712
+  },
+  {
+    "spike_source": "ground_truth",
+    "source": "ground_truth",
+    "feature_type": "counts",
+    "decode_window_s": 0.1,
+    "update_dt_s": 0.025,
+    "n_units": 200,
+    "target_name": "position",
+    "target_family": "continuous",
+    "decoder_name": "bayesian_place_decoder",
+    "n_train_samples": 16798,
+    "n_test_samples": 7199,
+    "mean_position_error_cm": 7.741249967395533,
+    "median_position_error_cm": 6.400061829166702,
+    "p90_position_error_cm": 15.67176285346435,
+    "r2_x": 0.9376013495734624,
+    "r2_y": 0.9736726639746298
+  },
+  {
+    "spike_source": "ground_truth",
+    "source": "ground_truth",
+    "feature_type": "counts",
+    "decode_window_s": 0.1,
+    "update_dt_s": 0.025,
+    "n_units": 200,
+    "target_name": "speed",
+    "target_family": "continuous",
+    "decoder_name": "ridge",
+    "n_train_samples": 16798,
+    "n_test_samples": 7199,
+    "r2": 0.6984619939269103,
+    "correlation": 0.8364090482363126,
+    "mae": 2.3017299937689804,
+    "rmse": 2.9655837802973335
+  },
+  {
+    "spike_source": "ground_truth",
+    "source": "ground_truth",
+    "feature_type": "counts",
+    "decode_window_s": 0.1,
+    "update_dt_s": 0.025,
+    "n_units": 200,
+    "target_name": "speed",
+    "target_family": "continuous",
+    "decoder_name": "pca_ridge",
+    "n_train_samples": 16798,
+    "n_test_samples": 7199,
+    "r2": 0.6990122314036722,
+    "correlation": 0.836674885314884,
+    "mae": 2.3008092273870466,
+    "rmse": 2.962876790818223
+  },
+  {
+    "spike_source": "ground_truth",
+    "source": "ground_truth",
+    "feature_type": "counts",
+    "decode_window_s": 0.1,
+    "update_dt_s": 0.025,
+    "n_units": 200,
+    "target_name": "speed",
+    "target_family": "continuous",
+    "decoder_name": "random_forest_regressor",
+    "n_train_samples": 16798,
+    "n_test_samples": 7199,
+    "r2": 0.5887923338964547,
+    "correlation": 0.7874231004292279,
+    "mae": 2.712548968135869,
+    "rmse": 3.4631377758398827
+  },
+  {
+    "spike_source": "ground_truth",
+    "source": "ground_truth",
+    "feature_type": "counts",
+    "decode_window_s": 0.1,
+    "update_dt_s": 0.025,
+    "n_units": 200,
+    "target_name": "acceleration",
+    "target_family": "continuous",
+    "decoder_name": "ridge",
+    "n_train_samples": 16798,
+    "n_test_samples": 7199,
+    "r2": 0.00011215559393995544,
+    "correlation": 0.08319361774020229,
+    "mae": 35.55807076708874,
+    "rmse": 59.484670859854184
+  },
+  {
+    "spike_source": "ground_truth",
+    "source": "ground_truth",
+    "feature_type": "counts",
+    "decode_window_s": 0.1,
+    "update_dt_s": 0.025,
+    "n_units": 200,
+    "target_name": "acceleration",
+    "target_family": "continuous",
+    "decoder_name": "pca_ridge",
+    "n_train_samples": 16798,
+    "n_test_samples": 7199,
+    "r2": 0.002039405941054784,
+    "correlation": 0.08400975385766796,
+    "mae": 35.314062183051384,
+    "rmse": 59.42731585319496
+  },
+  {
+    "spike_source": "ground_truth",
+    "source": "ground_truth",
+    "feature_type": "counts",
+    "decode_window_s": 0.1,
+    "update_dt_s": 0.025,
+    "n_units": 200,
+    "target_name": "acceleration",
+    "target_family": "continuous",
+    "decoder_name": "random_forest_regressor",
+    "n_train_samples": 16798,
+    "n_test_samples": 7199,
+    "r2": 0.009611996463363637,
+    "correlation": 0.09824247132150832,
+    "mae": 33.89350867990885,
+    "rmse": 59.20141731632955
+  },
+  {
+    "spike_source": "ground_truth",
+    "source": "ground_truth",
+    "feature_type": "counts",
+    "decode_window_s": 0.1,
+    "update_dt_s": 0.025,
+    "n_units": 200,
+    "target_name": "head_direction",
+    "target_family": "continuous",
+    "decoder_name": "ridge",
+    "n_train_samples": 16798,
+    "n_test_samples": 7199,
+    "mean_circular_error_deg": 12.390706315328078,
+    "median_circular_error_deg": 10.318449317044173,
+    "p90_circular_error_deg": 25.82143113670142
+  },
+  {
+    "spike_source": "ground_truth",
+    "source": "ground_truth",
+    "feature_type": "counts",
+    "decode_window_s": 0.1,
+    "update_dt_s": 0.025,
+    "n_units": 200,
+    "target_name": "head_direction",
+    "target_family": "continuous",
+    "decoder_name": "pca_ridge",
+    "n_train_samples": 16798,
+    "n_test_samples": 7199,
+    "mean_circular_error_deg": 12.338203608792512,
+    "median_circular_error_deg": 10.293707780707054,
+    "p90_circular_error_deg": 25.825404129859365
+  },
+  {
+    "spike_source": "ground_truth",
+    "source": "ground_truth",
+    "feature_type": "counts",
+    "decode_window_s": 0.1,
+    "update_dt_s": 0.025,
+    "n_units": 200,
+    "target_name": "head_direction",
+    "target_family": "continuous",
+    "decoder_name": "random_forest_regressor",
+    "n_train_samples": 16798,
+    "n_test_samples": 7199,
+    "mean_circular_error_deg": 15.269065564029518,
+    "median_circular_error_deg": 12.488688665338575,
+    "p90_circular_error_deg": 31.44729748346215
+  },
+  {
+    "spike_source": "ground_truth",
+    "source": "ground_truth",
+    "feature_type": "counts",
+    "decode_window_s": 0.1,
+    "update_dt_s": 0.025,
+    "n_units": 200,
+    "target_name": "distance_to_wall",
+    "target_family": "continuous",
+    "decoder_name": "ridge",
+    "n_train_samples": 16798,
+    "n_test_samples": 7199,
+    "r2": 0.7460122237492371,
+    "correlation": 0.8671594618079494,
+    "mae_cm": 3.3256937955801122,
+    "rmse_cm": 4.254303126844867
+  },
+  {
+    "spike_source": "ground_truth",
+    "source": "ground_truth",
+    "feature_type": "counts",
+    "decode_window_s": 0.1,
+    "update_dt_s": 0.025,
+    "n_units": 200,
+    "target_name": "distance_to_wall",
+    "target_family": "continuous",
+    "decoder_name": "pca_ridge",
+    "n_train_samples": 16798,
+    "n_test_samples": 7199,
+    "r2": 0.7505130251406543,
+    "correlation": 0.8697114249786368,
+    "mae_cm": 3.287941144960041,
+    "rmse_cm": 4.216440358456912
+  },
+  {
+    "spike_source": "ground_truth",
+    "source": "ground_truth",
+    "feature_type": "counts",
+    "decode_window_s": 0.1,
+    "update_dt_s": 0.025,
+    "n_units": 200,
+    "target_name": "distance_to_wall",
+    "target_family": "continuous",
+    "decoder_name": "random_forest_regressor",
+    "n_train_samples": 16798,
+    "n_test_samples": 7199,
+    "r2": 0.7768555574729186,
+    "correlation": 0.8854536907810264,
+    "mae_cm": 2.9241254617796555,
+    "rmse_cm": 3.9876318913428728
+  },
+  {
+    "spike_source": "ground_truth",
+    "source": "ground_truth",
+    "feature_type": "counts",
+    "decode_window_s": 0.1,
+    "update_dt_s": 0.025,
+    "n_units": 200,
+    "target_name": "distance_to_wall",
+    "target_family": "continuous",
+    "decoder_name": "bayesian_place_decoder",
+    "n_train_samples": 16798,
+    "n_test_samples": 7199,
+    "r2": 0.7343497115416462,
+    "correlation": 0.8653627073533169,
+    "mae_cm": 2.949793029008879,
+    "rmse_cm": 4.350880637803493
+  },
+  {
+    "spike_source": "ground_truth",
+    "source": "ground_truth",
+    "feature_type": "counts",
+    "decode_window_s": 0.1,
+    "update_dt_s": 0.025,
+    "n_units": 200,
+    "target_name": "spatial_context",
+    "target_family": "categorical",
+    "decoder_name": "logistic_regression",
+    "n_train_samples": 16798,
+    "n_test_samples": 7199,
+    "accuracy": 0.836088345603556,
+    "balanced_accuracy": 0.851597809063484,
+    "macro_f1": 0.844065202908204,
+    "confusion_matrix": [
+      [
+        1003,
+        14,
+        87
+      ],
+      [
+        52,
+        2562,
+        521
+      ],
+      [
+        134,
+        372,
+        2454
+      ]
+    ],
+    "class_labels": [
+      "center",
+      "corner",
+      "wall"
+    ]
+  },
+  {
+    "spike_source": "ground_truth",
+    "source": "ground_truth",
+    "feature_type": "counts",
+    "decode_window_s": 0.1,
+    "update_dt_s": 0.025,
+    "n_units": 200,
+    "target_name": "spatial_context",
+    "target_family": "categorical",
+    "decoder_name": "random_forest_classifier",
+    "n_train_samples": 16798,
+    "n_test_samples": 7199,
+    "accuracy": 0.7958049729129045,
+    "balanced_accuracy": 0.8234147711264416,
+    "macro_f1": 0.8123644753573949,
+    "confusion_matrix": [
+      [
+        1010,
+        2,
+        92
+      ],
+      [
+        80,
+        2061,
+        994
+      ],
+      [
+        99,
+        203,
+        2658
+      ]
+    ],
+    "class_labels": [
+      "center",
+      "corner",
+      "wall"
+    ]
+  },
+  {
+    "spike_source": "ground_truth",
+    "source": "ground_truth",
+    "feature_type": "counts",
+    "decode_window_s": 0.1,
+    "update_dt_s": 0.025,
+    "n_units": 200,
+    "target_name": "spatial_context",
+    "target_family": "categorical",
+    "decoder_name": "bayesian_place_decoder_derived_context",
+    "n_train_samples": 16798,
+    "n_test_samples": 7199,
+    "accuracy": 0.8292818447006529,
+    "balanced_accuracy": 0.819622698941921,
+    "macro_f1": 0.8230232890984396,
+    "confusion_matrix": [
+      [
+        868,
+        193,
+        43
+      ],
+      [
+        141,
+        2397,
+        422
+      ],
+      [
+        50,
+        380,
+        2705
+      ]
+    ],
+    "class_labels": [
+      "center",
+      "wall",
+      "corner"
+    ]
+  },
+  {
+    "spike_source": "ground_truth",
+    "source": "ground_truth",
+    "feature_type": "counts",
+    "decode_window_s": 0.1,
+    "update_dt_s": 0.025,
+    "n_units": 200,
+    "target_name": "movement_state",
+    "target_family": "categorical",
+    "decoder_name": "logistic_regression",
+    "n_train_samples": 16798,
+    "n_test_samples": 7199,
+    "accuracy": 0.730101402972635,
+    "balanced_accuracy": 0.72419848624674,
+    "macro_f1": 0.6328004175787983,
+    "confusion_matrix": [
+      [
+        2953,
+        692,
+        5
+      ],
+      [
+        665,
+        2107,
+        505
+      ],
+      [
+        1,
+        75,
+        196
+      ]
+    ],
+    "class_labels": [
+      "fast",
+      "slow",
+      "still"
+    ]
+  },
+  {
+    "spike_source": "ground_truth",
+    "source": "ground_truth",
+    "feature_type": "counts",
+    "decode_window_s": 0.1,
+    "update_dt_s": 0.025,
+    "n_units": 200,
+    "target_name": "movement_state",
+    "target_family": "categorical",
+    "decoder_name": "random_forest_classifier",
+    "n_train_samples": 16798,
+    "n_test_samples": 7199,
+    "accuracy": 0.7360744547853869,
+    "balanced_accuracy": 0.6946409792864437,
+    "macro_f1": 0.6493833079186311,
+    "confusion_matrix": [
+      [
+        2974,
+        674,
+        2
+      ],
+      [
+        829,
+        2159,
+        289
+      ],
+      [
+        1,
+        105,
+        166
+      ]
+    ],
+    "class_labels": [
+      "fast",
+      "slow",
+      "still"
+    ]
+  },
+  {
+    "spike_source": "ground_truth",
+    "source": "ground_truth",
+    "feature_type": "counts",
+    "decode_window_s": 0.1,
+    "update_dt_s": 0.025,
+    "n_units": 200,
+    "target_name": "wall_distance_bin",
+    "target_family": "categorical",
+    "decoder_name": "logistic_regression",
+    "n_train_samples": 16798,
+    "n_test_samples": 7199,
+    "accuracy": 0.8499791637727462,
+    "balanced_accuracy": 0.8159683921972677,
+    "macro_f1": 0.7735279867455183,
+    "confusion_matrix": [
+      [
+        270,
+        58,
+        2
+      ],
+      [
+        133,
+        1091,
+        228
+      ],
+      [
+        0,
+        659,
+        4758
+      ]
+    ],
+    "class_labels": [
+      "center",
+      "middle",
+      "near_wall"
+    ]
+  },
+  {
+    "spike_source": "ground_truth",
+    "source": "ground_truth",
+    "feature_type": "counts",
+    "decode_window_s": 0.1,
+    "update_dt_s": 0.025,
+    "n_units": 200,
+    "target_name": "wall_distance_bin",
+    "target_family": "categorical",
+    "decoder_name": "random_forest_classifier",
+    "n_train_samples": 16798,
+    "n_test_samples": 7199,
+    "accuracy": 0.8740102792054452,
+    "balanced_accuracy": 0.8261097897260147,
+    "macro_f1": 0.7948271951345903,
+    "confusion_matrix": [
+      [
+        270,
+        60,
+        0
+      ],
+      [
+        122,
+        1088,
+        242
+      ],
+      [
+        1,
+        482,
+        4934
+      ]
+    ],
+    "class_labels": [
+      "center",
+      "middle",
+      "near_wall"
+    ]
+  },
+  {
+    "spike_source": "ground_truth",
+    "source": "ground_truth",
+    "feature_type": "counts",
+    "decode_window_s": 0.1,
+    "update_dt_s": 0.025,
+    "n_units": 200,
+    "target_name": "wall_distance_bin",
+    "target_family": "categorical",
+    "decoder_name": "bayesian_place_decoder_derived_context",
+    "n_train_samples": 16798,
+    "n_test_samples": 7199,
+    "accuracy": 0.8409501319627726,
+    "balanced_accuracy": 0.6911264117164734,
+    "macro_f1": 0.6975363196420736,
+    "confusion_matrix": [
+      [
+        4943,
+        474,
+        0
+      ],
+      [
+        396,
+        942,
+        114
+      ],
+      [
+        1,
+        160,
+        169
+      ]
+    ],
+    "class_labels": [
+      "near_wall",
+      "middle",
+      "center"
+    ]
+  },
+  {
+    "spike_source": "ground_truth",
+    "source": "ground_truth",
+    "feature_type": "counts",
+    "decode_window_s": 0.25,
+    "update_dt_s": 0.025,
+    "n_units": 200,
+    "target_name": "position",
+    "target_family": "continuous",
+    "decoder_name": "ridge",
+    "n_train_samples": 16793,
+    "n_test_samples": 7198,
+    "mean_position_error_cm": 9.132620657776657,
+    "median_position_error_cm": 8.074256861465386,
+    "p90_position_error_cm": 16.85982871156002,
+    "r2_x": 0.9402346238566907,
+    "r2_y": 0.951797471511321
+  },
+  {
+    "spike_source": "ground_truth",
+    "source": "ground_truth",
+    "feature_type": "counts",
+    "decode_window_s": 0.25,
+    "update_dt_s": 0.025,
+    "n_units": 200,
+    "target_name": "position",
+    "target_family": "continuous",
+    "decoder_name": "pca_ridge",
+    "n_train_samples": 16793,
+    "n_test_samples": 7198,
+    "mean_position_error_cm": 9.368772592188552,
+    "median_position_error_cm": 8.385120182538131,
+    "p90_position_error_cm": 17.064899648223108,
+    "r2_x": 0.9367505366412239,
+    "r2_y": 0.9507201482045845
+  },
+  {
+    "spike_source": "ground_truth",
+    "source": "ground_truth",
+    "feature_type": "counts",
+    "decode_window_s": 0.25,
+    "update_dt_s": 0.025,
+    "n_units": 200,
+    "target_name": "position",
+    "target_family": "continuous",
+    "decoder_name": "random_forest_regressor",
+    "n_train_samples": 16793,
+    "n_test_samples": 7198,
+    "mean_position_error_cm": 5.735521930666451,
+    "median_position_error_cm": 4.493776412528109,
+    "p90_position_error_cm": 10.838311842631365,
+    "r2_x": 0.9569243083288954,
+    "r2_y": 0.9864500137327362
+  },
+  {
+    "spike_source": "ground_truth",
+    "source": "ground_truth",
+    "feature_type": "counts",
+    "decode_window_s": 0.25,
+    "update_dt_s": 0.025,
+    "n_units": 200,
+    "target_name": "position",
+    "target_family": "continuous",
+    "decoder_name": "bayesian_place_decoder",
+    "n_train_samples": 16793,
+    "n_test_samples": 7198,
+    "mean_position_error_cm": 6.966288187959511,
+    "median_position_error_cm": 5.923826903084857,
+    "p90_position_error_cm": 13.815265806335432,
+    "r2_x": 0.9505290977393334,
+    "r2_y": 0.9793220507283904
+  },
+  {
+    "spike_source": "ground_truth",
+    "source": "ground_truth",
+    "feature_type": "counts",
+    "decode_window_s": 0.25,
+    "update_dt_s": 0.025,
+    "n_units": 200,
+    "target_name": "speed",
+    "target_family": "continuous",
+    "decoder_name": "ridge",
+    "n_train_samples": 16793,
+    "n_test_samples": 7198,
+    "r2": 0.6045554513418108,
+    "correlation": 0.7784098445025132,
+    "mae": 2.6406542007556078,
+    "rmse": 3.396484130462166
+  },
+  {
+    "spike_source": "ground_truth",
+    "source": "ground_truth",
+    "feature_type": "counts",
+    "decode_window_s": 0.25,
+    "update_dt_s": 0.025,
+    "n_units": 200,
+    "target_name": "speed",
+    "target_family": "continuous",
+    "decoder_name": "pca_ridge",
+    "n_train_samples": 16793,
+    "n_test_samples": 7198,
+    "r2": 0.6161301667287713,
+    "correlation": 0.7858821256079478,
+    "mae": 2.5920904338185218,
+    "rmse": 3.3464071945999714
+  },
+  {
+    "spike_source": "ground_truth",
+    "source": "ground_truth",
+    "feature_type": "counts",
+    "decode_window_s": 0.25,
+    "update_dt_s": 0.025,
+    "n_units": 200,
+    "target_name": "speed",
+    "target_family": "continuous",
+    "decoder_name": "random_forest_regressor",
+    "n_train_samples": 16793,
+    "n_test_samples": 7198,
+    "r2": 0.550331813284193,
+    "correlation": 0.7530968921269247,
+    "mae": 2.81740003437996,
+    "rmse": 3.621870139009009
+  },
+  {
+    "spike_source": "ground_truth",
+    "source": "ground_truth",
+    "feature_type": "counts",
+    "decode_window_s": 0.25,
+    "update_dt_s": 0.025,
+    "n_units": 200,
+    "target_name": "acceleration",
+    "target_family": "continuous",
+    "decoder_name": "ridge",
+    "n_train_samples": 16793,
+    "n_test_samples": 7198,
+    "r2": -0.00014597718860964726,
+    "correlation": 0.0786894340802072,
+    "mae": 35.472909973679826,
+    "rmse": 59.492328684491724
+  },
+  {
+    "spike_source": "ground_truth",
+    "source": "ground_truth",
+    "feature_type": "counts",
+    "decode_window_s": 0.25,
+    "update_dt_s": 0.025,
+    "n_units": 200,
+    "target_name": "acceleration",
+    "target_family": "continuous",
+    "decoder_name": "pca_ridge",
+    "n_train_samples": 16793,
+    "n_test_samples": 7198,
+    "r2": 0.00501928940401386,
+    "correlation": 0.08817793419127588,
+    "mae": 34.99157059968617,
+    "rmse": 59.3385053785268
+  },
+  {
+    "spike_source": "ground_truth",
+    "source": "ground_truth",
+    "feature_type": "counts",
+    "decode_window_s": 0.25,
+    "update_dt_s": 0.025,
+    "n_units": 200,
+    "target_name": "acceleration",
+    "target_family": "continuous",
+    "decoder_name": "random_forest_regressor",
+    "n_train_samples": 16793,
+    "n_test_samples": 7198,
+    "r2": 0.00551731779740483,
+    "correlation": 0.08061958022334884,
+    "mae": 34.24143766439488,
+    "rmse": 59.32365284965935
+  },
+  {
+    "spike_source": "ground_truth",
+    "source": "ground_truth",
+    "feature_type": "counts",
+    "decode_window_s": 0.25,
+    "update_dt_s": 0.025,
+    "n_units": 200,
+    "target_name": "head_direction",
+    "target_family": "continuous",
+    "decoder_name": "ridge",
+    "n_train_samples": 16793,
+    "n_test_samples": 7198,
+    "mean_circular_error_deg": 14.200321465163372,
+    "median_circular_error_deg": 12.109387152688896,
+    "p90_circular_error_deg": 28.86068861130568
+  },
+  {
+    "spike_source": "ground_truth",
+    "source": "ground_truth",
+    "feature_type": "counts",
+    "decode_window_s": 0.25,
+    "update_dt_s": 0.025,
+    "n_units": 200,
+    "target_name": "head_direction",
+    "target_family": "continuous",
+    "decoder_name": "pca_ridge",
+    "n_train_samples": 16793,
+    "n_test_samples": 7198,
+    "mean_circular_error_deg": 14.016354953321581,
+    "median_circular_error_deg": 11.809090962937862,
+    "p90_circular_error_deg": 28.605903138437252
+  },
+  {
+    "spike_source": "ground_truth",
+    "source": "ground_truth",
+    "feature_type": "counts",
+    "decode_window_s": 0.25,
+    "update_dt_s": 0.025,
+    "n_units": 200,
+    "target_name": "head_direction",
+    "target_family": "continuous",
+    "decoder_name": "random_forest_regressor",
+    "n_train_samples": 16793,
+    "n_test_samples": 7198,
+    "mean_circular_error_deg": 15.801379977363075,
+    "median_circular_error_deg": 13.339973246329127,
+    "p90_circular_error_deg": 32.06868171533192
+  },
+  {
+    "spike_source": "ground_truth",
+    "source": "ground_truth",
+    "feature_type": "counts",
+    "decode_window_s": 0.25,
+    "update_dt_s": 0.025,
+    "n_units": 200,
+    "target_name": "distance_to_wall",
+    "target_family": "continuous",
+    "decoder_name": "ridge",
+    "n_train_samples": 16793,
+    "n_test_samples": 7198,
+    "r2": 0.8329075104878156,
+    "correlation": 0.9138554067982425,
+    "mae_cm": 2.6704669912783827,
+    "rmse_cm": 3.4506488640197386
+  },
+  {
+    "spike_source": "ground_truth",
+    "source": "ground_truth",
+    "feature_type": "counts",
+    "decode_window_s": 0.25,
+    "update_dt_s": 0.025,
+    "n_units": 200,
+    "target_name": "distance_to_wall",
+    "target_family": "continuous",
+    "decoder_name": "pca_ridge",
+    "n_train_samples": 16793,
+    "n_test_samples": 7198,
+    "r2": 0.8435508146445545,
+    "correlation": 0.919278841343946,
+    "mae_cm": 2.5819334333983077,
+    "rmse_cm": 3.3389426237299715
+  },
+  {
+    "spike_source": "ground_truth",
+    "source": "ground_truth",
+    "feature_type": "counts",
+    "decode_window_s": 0.25,
+    "update_dt_s": 0.025,
+    "n_units": 200,
+    "target_name": "distance_to_wall",
+    "target_family": "continuous",
+    "decoder_name": "random_forest_regressor",
+    "n_train_samples": 16793,
+    "n_test_samples": 7198,
+    "r2": 0.8629450479341211,
+    "correlation": 0.9301187743762508,
+    "mae_cm": 2.261200264534704,
+    "rmse_cm": 3.125141378584223
+  },
+  {
+    "spike_source": "ground_truth",
+    "source": "ground_truth",
+    "feature_type": "counts",
+    "decode_window_s": 0.25,
+    "update_dt_s": 0.025,
+    "n_units": 200,
+    "target_name": "distance_to_wall",
+    "target_family": "continuous",
+    "decoder_name": "bayesian_place_decoder",
+    "n_train_samples": 16793,
+    "n_test_samples": 7198,
+    "r2": 0.8033922137606326,
+    "correlation": 0.9025037525596091,
+    "mae_cm": 2.6077789656643677,
+    "rmse_cm": 3.7430244134342505
+  },
+  {
+    "spike_source": "ground_truth",
+    "source": "ground_truth",
+    "feature_type": "counts",
+    "decode_window_s": 0.25,
+    "update_dt_s": 0.025,
+    "n_units": 200,
+    "target_name": "spatial_context",
+    "target_family": "categorical",
+    "decoder_name": "logistic_regression",
+    "n_train_samples": 16793,
+    "n_test_samples": 7198,
+    "accuracy": 0.8620450125034732,
+    "balanced_accuracy": 0.8629671221122623,
+    "macro_f1": 0.8619579318986288,
+    "confusion_matrix": [
+      [
+        958,
+        43,
+        103
+      ],
+      [
+        26,
+        2745,
+        363
+      ],
+      [
+        132,
+        326,
+        2502
+      ]
+    ],
+    "class_labels": [
+      "center",
+      "corner",
+      "wall"
+    ]
+  },
+  {
+    "spike_source": "ground_truth",
+    "source": "ground_truth",
+    "feature_type": "counts",
+    "decode_window_s": 0.25,
+    "update_dt_s": 0.025,
+    "n_units": 200,
+    "target_name": "spatial_context",
+    "target_family": "categorical",
+    "decoder_name": "random_forest_classifier",
+    "n_train_samples": 16793,
+    "n_test_samples": 7198,
+    "accuracy": 0.9158099472075577,
+    "balanced_accuracy": 0.9252891070505038,
+    "macro_f1": 0.9194548450728556,
+    "confusion_matrix": [
+      [
+        1056,
+        5,
+        43
+      ],
+      [
+        63,
+        2715,
+        356
+      ],
+      [
+        40,
+        99,
+        2821
+      ]
+    ],
+    "class_labels": [
+      "center",
+      "corner",
+      "wall"
+    ]
+  },
+  {
+    "spike_source": "ground_truth",
+    "source": "ground_truth",
+    "feature_type": "counts",
+    "decode_window_s": 0.25,
+    "update_dt_s": 0.025,
+    "n_units": 200,
+    "target_name": "spatial_context",
+    "target_family": "categorical",
+    "decoder_name": "bayesian_place_decoder_derived_context",
+    "n_train_samples": 16793,
+    "n_test_samples": 7198,
+    "accuracy": 0.87329813837177,
+    "balanced_accuracy": 0.8664109029397867,
+    "macro_f1": 0.8678688116070318,
+    "confusion_matrix": [
+      [
+        929,
+        135,
+        40
+      ],
+      [
+        110,
+        2582,
+        268
+      ],
+      [
+        46,
+        313,
+        2775
+      ]
+    ],
+    "class_labels": [
+      "center",
+      "wall",
+      "corner"
+    ]
+  },
+  {
+    "spike_source": "ground_truth",
+    "source": "ground_truth",
+    "feature_type": "counts",
+    "decode_window_s": 0.25,
+    "update_dt_s": 0.025,
+    "n_units": 200,
+    "target_name": "movement_state",
+    "target_family": "categorical",
+    "decoder_name": "logistic_regression",
+    "n_train_samples": 16793,
+    "n_test_samples": 7198,
+    "accuracy": 0.6954709641567102,
+    "balanced_accuracy": 0.6846266287805368,
+    "macro_f1": 0.5986204999438028,
+    "confusion_matrix": [
+      [
+        2806,
+        814,
+        30
+      ],
+      [
+        746,
+        2018,
+        512
+      ],
+      [
+        2,
+        88,
+        182
+      ]
+    ],
+    "class_labels": [
+      "fast",
+      "slow",
+      "still"
+    ]
+  },
+  {
+    "spike_source": "ground_truth",
+    "source": "ground_truth",
+    "feature_type": "counts",
+    "decode_window_s": 0.25,
+    "update_dt_s": 0.025,
+    "n_units": 200,
+    "target_name": "movement_state",
+    "target_family": "categorical",
+    "decoder_name": "random_forest_classifier",
+    "n_train_samples": 16793,
+    "n_test_samples": 7198,
+    "accuracy": 0.7335370936371214,
+    "balanced_accuracy": 0.570891795776969,
+    "macro_f1": 0.5848254308587224,
+    "confusion_matrix": [
+      [
+        2916,
+        733,
+        1
+      ],
+      [
+        866,
+        2307,
+        103
+      ],
+      [
+        2,
+        213,
+        57
+      ]
+    ],
+    "class_labels": [
+      "fast",
+      "slow",
+      "still"
+    ]
+  },
+  {
+    "spike_source": "ground_truth",
+    "source": "ground_truth",
+    "feature_type": "counts",
+    "decode_window_s": 0.25,
+    "update_dt_s": 0.025,
+    "n_units": 200,
+    "target_name": "wall_distance_bin",
+    "target_family": "categorical",
+    "decoder_name": "logistic_regression",
+    "n_train_samples": 16793,
+    "n_test_samples": 7198,
+    "accuracy": 0.8771881078077244,
+    "balanced_accuracy": 0.8291619362688248,
+    "macro_f1": 0.796380840040825,
+    "confusion_matrix": [
+      [
+        265,
+        65,
+        0
+      ],
+      [
+        114,
+        1126,
+        212
+      ],
+      [
+        12,
+        481,
+        4923
+      ]
+    ],
+    "class_labels": [
+      "center",
+      "middle",
+      "near_wall"
+    ]
+  },
+  {
+    "spike_source": "ground_truth",
+    "source": "ground_truth",
+    "feature_type": "counts",
+    "decode_window_s": 0.25,
+    "update_dt_s": 0.025,
+    "n_units": 200,
+    "target_name": "wall_distance_bin",
+    "target_family": "categorical",
+    "decoder_name": "random_forest_classifier",
+    "n_train_samples": 16793,
+    "n_test_samples": 7198,
+    "accuracy": 0.9291469852736871,
+    "balanced_accuracy": 0.8747714488784718,
+    "macro_f1": 0.8766303551225909,
+    "confusion_matrix": [
+      [
+        275,
+        55,
+        0
+      ],
+      [
+        48,
+        1204,
+        200
+      ],
+      [
+        0,
+        207,
+        5209
+      ]
+    ],
+    "class_labels": [
+      "center",
+      "middle",
+      "near_wall"
+    ]
+  },
+  {
+    "spike_source": "ground_truth",
+    "source": "ground_truth",
+    "feature_type": "counts",
+    "decode_window_s": 0.25,
+    "update_dt_s": 0.025,
+    "n_units": 200,
+    "target_name": "wall_distance_bin",
+    "target_family": "categorical",
+    "decoder_name": "bayesian_place_decoder_derived_context",
+    "n_train_samples": 16793,
+    "n_test_samples": 7198,
+    "accuracy": 0.8676021116976939,
+    "balanced_accuracy": 0.7380665456769928,
+    "macro_f1": 0.7396988023492246,
+    "confusion_matrix": [
+      [
+        5055,
+        361,
+        0
+      ],
+      [
+        338,
+        993,
+        121
+      ],
+      [
+        0,
+        133,
+        197
+      ]
+    ],
+    "class_labels": [
+      "near_wall",
+      "middle",
+      "center"
+    ]
+  },
+  {
+    "spike_source": "ground_truth",
+    "source": "ground_truth",
+    "feature_type": "counts",
+    "decode_window_s": 0.5,
+    "update_dt_s": 0.025,
+    "n_units": 200,
+    "target_name": "position",
+    "target_family": "continuous",
+    "decoder_name": "ridge",
+    "n_train_samples": 16786,
+    "n_test_samples": 7195,
+    "mean_position_error_cm": 7.449316789058671,
+    "median_position_error_cm": 6.628778282905678,
+    "p90_position_error_cm": 13.841884969542198,
+    "r2_x": 0.9603845105219128,
+    "r2_y": 0.9679958618704247
+  },
+  {
+    "spike_source": "ground_truth",
+    "source": "ground_truth",
+    "feature_type": "counts",
+    "decode_window_s": 0.5,
+    "update_dt_s": 0.025,
+    "n_units": 200,
+    "target_name": "position",
+    "target_family": "continuous",
+    "decoder_name": "pca_ridge",
+    "n_train_samples": 16786,
+    "n_test_samples": 7195,
+    "mean_position_error_cm": 7.589076407663057,
+    "median_position_error_cm": 6.732979288585148,
+    "p90_position_error_cm": 13.992765212020254,
+    "r2_x": 0.958352642032499,
+    "r2_y": 0.9670579597846785
+  },
+  {
+    "spike_source": "ground_truth",
+    "source": "ground_truth",
+    "feature_type": "counts",
+    "decode_window_s": 0.5,
+    "update_dt_s": 0.025,
+    "n_units": 200,
+    "target_name": "position",
+    "target_family": "continuous",
+    "decoder_name": "random_forest_regressor",
+    "n_train_samples": 16786,
+    "n_test_samples": 7195,
+    "mean_position_error_cm": 5.130807799499543,
+    "median_position_error_cm": 3.9933610789901293,
+    "p90_position_error_cm": 9.996749203883674,
+    "r2_x": 0.959825479430752,
+    "r2_y": 0.9901517751907036
+  },
+  {
+    "spike_source": "ground_truth",
+    "source": "ground_truth",
+    "feature_type": "counts",
+    "decode_window_s": 0.5,
+    "update_dt_s": 0.025,
+    "n_units": 200,
+    "target_name": "position",
+    "target_family": "continuous",
+    "decoder_name": "bayesian_place_decoder",
+    "n_train_samples": 16786,
+    "n_test_samples": 7195,
+    "mean_position_error_cm": 6.527266177220261,
+    "median_position_error_cm": 5.5583184458674815,
+    "p90_position_error_cm": 12.477760906890277,
+    "r2_x": 0.9569547684194246,
+    "r2_y": 0.9820780207569841
+  },
+  {
+    "spike_source": "ground_truth",
+    "source": "ground_truth",
+    "feature_type": "counts",
+    "decode_window_s": 0.5,
+    "update_dt_s": 0.025,
+    "n_units": 200,
+    "target_name": "speed",
+    "target_family": "continuous",
+    "decoder_name": "ridge",
+    "n_train_samples": 16786,
+    "n_test_samples": 7195,
+    "r2": 0.4528754854124636,
+    "correlation": 0.6764366181893753,
+    "mae": 3.1032162635385476,
+    "rmse": 3.9959082462918056
+  },
+  {
+    "spike_source": "ground_truth",
+    "source": "ground_truth",
+    "feature_type": "counts",
+    "decode_window_s": 0.5,
+    "update_dt_s": 0.025,
+    "n_units": 200,
+    "target_name": "speed",
+    "target_family": "continuous",
+    "decoder_name": "pca_ridge",
+    "n_train_samples": 16786,
+    "n_test_samples": 7195,
+    "r2": 0.47476313719105556,
+    "correlation": 0.690831718128532,
+    "mae": 3.0148161077620137,
+    "rmse": 3.9151645493018203
+  },
+  {
+    "spike_source": "ground_truth",
+    "source": "ground_truth",
+    "feature_type": "counts",
+    "decode_window_s": 0.5,
+    "update_dt_s": 0.025,
+    "n_units": 200,
+    "target_name": "speed",
+    "target_family": "continuous",
+    "decoder_name": "random_forest_regressor",
+    "n_train_samples": 16786,
+    "n_test_samples": 7195,
+    "r2": 0.44655438613784804,
+    "correlation": 0.672873439394447,
+    "mae": 3.1201046728623263,
+    "rmse": 4.018924941345544
+  },
+  {
+    "spike_source": "ground_truth",
+    "source": "ground_truth",
+    "feature_type": "counts",
+    "decode_window_s": 0.5,
+    "update_dt_s": 0.025,
+    "n_units": 200,
+    "target_name": "acceleration",
+    "target_family": "continuous",
+    "decoder_name": "ridge",
+    "n_train_samples": 16786,
+    "n_test_samples": 7195,
+    "r2": 0.0018227750676623744,
+    "correlation": 0.07520071800410046,
+    "mae": 34.94011275590615,
+    "rmse": 59.4460722155483
+  },
+  {
+    "spike_source": "ground_truth",
+    "source": "ground_truth",
+    "feature_type": "counts",
+    "decode_window_s": 0.5,
+    "update_dt_s": 0.025,
+    "n_units": 200,
+    "target_name": "acceleration",
+    "target_family": "continuous",
+    "decoder_name": "pca_ridge",
+    "n_train_samples": 16786,
+    "n_test_samples": 7195,
+    "r2": 0.007196395296460878,
+    "correlation": 0.09039644025678675,
+    "mae": 34.536231596991016,
+    "rmse": 59.285844306557635
+  },
+  {
+    "spike_source": "ground_truth",
+    "source": "ground_truth",
+    "feature_type": "counts",
+    "decode_window_s": 0.5,
+    "update_dt_s": 0.025,
+    "n_units": 200,
+    "target_name": "acceleration",
+    "target_family": "continuous",
+    "decoder_name": "random_forest_regressor",
+    "n_train_samples": 16786,
+    "n_test_samples": 7195,
+    "r2": 0.005692703541936406,
+    "correlation": 0.08317385969608908,
+    "mae": 34.34126680671295,
+    "rmse": 59.33072423285978
+  },
+  {
+    "spike_source": "ground_truth",
+    "source": "ground_truth",
+    "feature_type": "counts",
+    "decode_window_s": 0.5,
+    "update_dt_s": 0.025,
+    "n_units": 200,
+    "target_name": "head_direction",
+    "target_family": "continuous",
+    "decoder_name": "ridge",
+    "n_train_samples": 16786,
+    "n_test_samples": 7195,
+    "mean_circular_error_deg": 17.90540268408769,
+    "median_circular_error_deg": 14.924665721112289,
+    "p90_circular_error_deg": 37.10903134987465
+  },
+  {
+    "spike_source": "ground_truth",
+    "source": "ground_truth",
+    "feature_type": "counts",
+    "decode_window_s": 0.5,
+    "update_dt_s": 0.025,
+    "n_units": 200,
+    "target_name": "head_direction",
+    "target_family": "continuous",
+    "decoder_name": "pca_ridge",
+    "n_train_samples": 16786,
+    "n_test_samples": 7195,
+    "mean_circular_error_deg": 17.65094949206349,
+    "median_circular_error_deg": 14.85027335535259,
+    "p90_circular_error_deg": 36.30940922787449
+  },
+  {
+    "spike_source": "ground_truth",
+    "source": "ground_truth",
+    "feature_type": "counts",
+    "decode_window_s": 0.5,
+    "update_dt_s": 0.025,
+    "n_units": 200,
+    "target_name": "head_direction",
+    "target_family": "continuous",
+    "decoder_name": "random_forest_regressor",
+    "n_train_samples": 16786,
+    "n_test_samples": 7195,
+    "mean_circular_error_deg": 19.248100532943713,
+    "median_circular_error_deg": 16.035699629637374,
+    "p90_circular_error_deg": 39.9504235501966
+  },
+  {
+    "spike_source": "ground_truth",
+    "source": "ground_truth",
+    "feature_type": "counts",
+    "decode_window_s": 0.5,
+    "update_dt_s": 0.025,
+    "n_units": 200,
+    "target_name": "distance_to_wall",
+    "target_family": "continuous",
+    "decoder_name": "ridge",
+    "n_train_samples": 16786,
+    "n_test_samples": 7195,
+    "r2": 0.8560865269974363,
+    "correlation": 0.9262957457411518,
+    "mae_cm": 2.4609394587293982,
+    "rmse_cm": 3.2026825521293047
+  },
+  {
+    "spike_source": "ground_truth",
+    "source": "ground_truth",
+    "feature_type": "counts",
+    "decode_window_s": 0.5,
+    "update_dt_s": 0.025,
+    "n_units": 200,
+    "target_name": "distance_to_wall",
+    "target_family": "continuous",
+    "decoder_name": "pca_ridge",
+    "n_train_samples": 16786,
+    "n_test_samples": 7195,
+    "r2": 0.8716080982531047,
+    "correlation": 0.9341339971109698,
+    "mae_cm": 2.3044453927617723,
+    "rmse_cm": 3.025045997121236
+  },
+  {
+    "spike_source": "ground_truth",
+    "source": "ground_truth",
+    "feature_type": "counts",
+    "decode_window_s": 0.5,
+    "update_dt_s": 0.025,
+    "n_units": 200,
+    "target_name": "distance_to_wall",
+    "target_family": "continuous",
+    "decoder_name": "random_forest_regressor",
+    "n_train_samples": 16786,
+    "n_test_samples": 7195,
+    "r2": 0.8958093830612686,
+    "correlation": 0.9472455223323093,
+    "mae_cm": 1.9174250026294521,
+    "rmse_cm": 2.725068801336143
+  },
+  {
+    "spike_source": "ground_truth",
+    "source": "ground_truth",
+    "feature_type": "counts",
+    "decode_window_s": 0.5,
+    "update_dt_s": 0.025,
+    "n_units": 200,
+    "target_name": "distance_to_wall",
+    "target_family": "continuous",
+    "decoder_name": "bayesian_place_decoder",
+    "n_train_samples": 16786,
+    "n_test_samples": 7195,
+    "r2": 0.837990994124933,
+    "correlation": 0.92017892282073,
+    "mae_cm": 2.4389110209338654,
+    "rmse_cm": 3.3980733199527884
+  },
+  {
+    "spike_source": "ground_truth",
+    "source": "ground_truth",
+    "feature_type": "counts",
+    "decode_window_s": 0.5,
+    "update_dt_s": 0.025,
+    "n_units": 200,
+    "target_name": "spatial_context",
+    "target_family": "categorical",
+    "decoder_name": "logistic_regression",
+    "n_train_samples": 16786,
+    "n_test_samples": 7195,
+    "accuracy": 0.8794996525364837,
+    "balanced_accuracy": 0.8802107557615244,
+    "macro_f1": 0.8795799002325927,
+    "confusion_matrix": [
+      [
+        976,
+        60,
+        68
+      ],
+      [
+        38,
+        2793,
+        300
+      ],
+      [
+        98,
+        303,
+        2559
+      ]
+    ],
+    "class_labels": [
+      "center",
+      "corner",
+      "wall"
+    ]
+  },
+  {
+    "spike_source": "ground_truth",
+    "source": "ground_truth",
+    "feature_type": "counts",
+    "decode_window_s": 0.5,
+    "update_dt_s": 0.025,
+    "n_units": 200,
+    "target_name": "spatial_context",
+    "target_family": "categorical",
+    "decoder_name": "random_forest_classifier",
+    "n_train_samples": 16786,
+    "n_test_samples": 7195,
+    "accuracy": 0.9227241139680333,
+    "balanced_accuracy": 0.9322167030110388,
+    "macro_f1": 0.9266847898816163,
+    "confusion_matrix": [
+      [
+        1066,
+        17,
+        21
+      ],
+      [
+        48,
+        2802,
+        281
+      ],
+      [
+        46,
+        143,
+        2771
+      ]
+    ],
+    "class_labels": [
+      "center",
+      "corner",
+      "wall"
+    ]
+  },
+  {
+    "spike_source": "ground_truth",
+    "source": "ground_truth",
+    "feature_type": "counts",
+    "decode_window_s": 0.5,
+    "update_dt_s": 0.025,
+    "n_units": 200,
+    "target_name": "spatial_context",
+    "target_family": "categorical",
+    "decoder_name": "bayesian_place_decoder_derived_context",
+    "n_train_samples": 16786,
+    "n_test_samples": 7195,
+    "accuracy": 0.8858929812369701,
+    "balanced_accuracy": 0.8836576475869032,
+    "macro_f1": 0.8825878115197563,
+    "confusion_matrix": [
+      [
+        966,
+        100,
+        38
+      ],
+      [
+        106,
+        2641,
+        213
+      ],
+      [
+        43,
+        321,
+        2767
+      ]
+    ],
+    "class_labels": [
+      "center",
+      "wall",
+      "corner"
+    ]
+  },
+  {
+    "spike_source": "ground_truth",
+    "source": "ground_truth",
+    "feature_type": "counts",
+    "decode_window_s": 0.5,
+    "update_dt_s": 0.025,
+    "n_units": 200,
+    "target_name": "movement_state",
+    "target_family": "categorical",
+    "decoder_name": "logistic_regression",
+    "n_train_samples": 16786,
+    "n_test_samples": 7195,
+    "accuracy": 0.6268241834607367,
+    "balanced_accuracy": 0.593139646907987,
+    "macro_f1": 0.519620718925608,
+    "confusion_matrix": [
+      [
+        2553,
+        955,
+        142
+      ],
+      [
+        866,
+        1814,
+        593
+      ],
+      [
+        8,
+        121,
+        143
+      ]
+    ],
+    "class_labels": [
+      "fast",
+      "slow",
+      "still"
+    ]
+  },
+  {
+    "spike_source": "ground_truth",
+    "source": "ground_truth",
+    "feature_type": "counts",
+    "decode_window_s": 0.5,
+    "update_dt_s": 0.025,
+    "n_units": 200,
+    "target_name": "movement_state",
+    "target_family": "categorical",
+    "decoder_name": "random_forest_classifier",
+    "n_train_samples": 16786,
+    "n_test_samples": 7195,
+    "accuracy": 0.7117442668519806,
+    "balanced_accuracy": 0.5396351272701488,
+    "macro_f1": 0.556991598402381,
+    "confusion_matrix": [
+      [
+        2873,
+        777,
+        0
+      ],
+      [
+        1005,
+        2205,
+        63
+      ],
+      [
+        11,
+        218,
+        43
+      ]
+    ],
+    "class_labels": [
+      "fast",
+      "slow",
+      "still"
+    ]
+  },
+  {
+    "spike_source": "ground_truth",
+    "source": "ground_truth",
+    "feature_type": "counts",
+    "decode_window_s": 0.5,
+    "update_dt_s": 0.025,
+    "n_units": 200,
+    "target_name": "wall_distance_bin",
+    "target_family": "categorical",
+    "decoder_name": "logistic_regression",
+    "n_train_samples": 16786,
+    "n_test_samples": 7195,
+    "accuracy": 0.8697706740792217,
+    "balanced_accuracy": 0.8385174062306556,
+    "macro_f1": 0.8071196988766219,
+    "confusion_matrix": [
+      [
+        287,
+        43,
+        0
+      ],
+      [
+        101,
+        1077,
+        274
+      ],
+      [
+        0,
+        519,
+        4894
+      ]
+    ],
+    "class_labels": [
+      "center",
+      "middle",
+      "near_wall"
+    ]
+  },
+  {
+    "spike_source": "ground_truth",
+    "source": "ground_truth",
+    "feature_type": "counts",
+    "decode_window_s": 0.5,
+    "update_dt_s": 0.025,
+    "n_units": 200,
+    "target_name": "wall_distance_bin",
+    "target_family": "categorical",
+    "decoder_name": "random_forest_classifier",
+    "n_train_samples": 16786,
+    "n_test_samples": 7195,
+    "accuracy": 0.940236275191105,
+    "balanced_accuracy": 0.8599603257606717,
+    "macro_f1": 0.8791423934431609,
+    "confusion_matrix": [
+      [
+        248,
+        82,
+        0
+      ],
+      [
+        31,
+        1239,
+        182
+      ],
+      [
+        0,
+        135,
+        5278
+      ]
+    ],
+    "class_labels": [
+      "center",
+      "middle",
+      "near_wall"
+    ]
+  },
+  {
+    "spike_source": "ground_truth",
+    "source": "ground_truth",
+    "feature_type": "counts",
+    "decode_window_s": 0.5,
+    "update_dt_s": 0.025,
+    "n_units": 200,
+    "target_name": "wall_distance_bin",
+    "target_family": "categorical",
+    "decoder_name": "bayesian_place_decoder_derived_context",
+    "n_train_samples": 16786,
+    "n_test_samples": 7195,
+    "accuracy": 0.878804725503822,
+    "balanced_accuracy": 0.7535169049377268,
+    "macro_f1": 0.7532609322336876,
+    "confusion_matrix": [
+      [
+        5066,
+        347,
+        0
+      ],
+      [
+        273,
+        1061,
+        118
+      ],
+      [
+        0,
+        134,
+        196
+      ]
+    ],
+    "class_labels": [
+      "near_wall",
+      "middle",
+      "center"
+    ]
+  },
+  {
+    "spike_source": "ground_truth",
+    "source": "ground_truth",
+    "feature_type": "counts",
+    "decode_window_s": 1.0,
+    "update_dt_s": 0.025,
+    "n_units": 200,
+    "target_name": "position",
+    "target_family": "continuous",
+    "decoder_name": "ridge",
+    "n_train_samples": 16772,
+    "n_test_samples": 7189,
+    "mean_position_error_cm": 6.4395124707452345,
+    "median_position_error_cm": 5.770336066962164,
+    "p90_position_error_cm": 11.515668542525825,
+    "r2_x": 0.9705161099033845,
+    "r2_y": 0.9767553695562878
+  },
+  {
+    "spike_source": "ground_truth",
+    "source": "ground_truth",
+    "feature_type": "counts",
+    "decode_window_s": 1.0,
+    "update_dt_s": 0.025,
+    "n_units": 200,
+    "target_name": "position",
+    "target_family": "continuous",
+    "decoder_name": "pca_ridge",
+    "n_train_samples": 16772,
+    "n_test_samples": 7189,
+    "mean_position_error_cm": 6.360641671099572,
+    "median_position_error_cm": 5.785256957662425,
+    "p90_position_error_cm": 11.534520979372955,
+    "r2_x": 0.9707254036925855,
+    "r2_y": 0.9778706029713103
+  },
+  {
+    "spike_source": "ground_truth",
+    "source": "ground_truth",
+    "feature_type": "counts",
+    "decode_window_s": 1.0,
+    "update_dt_s": 0.025,
+    "n_units": 200,
+    "target_name": "position",
+    "target_family": "continuous",
+    "decoder_name": "random_forest_regressor",
+    "n_train_samples": 16772,
+    "n_test_samples": 7189,
+    "mean_position_error_cm": 5.748619275241028,
+    "median_position_error_cm": 4.31970845415109,
+    "p90_position_error_cm": 11.13656708462936,
+    "r2_x": 0.9590393951629294,
+    "r2_y": 0.9816690939302134
+  },
+  {
+    "spike_source": "ground_truth",
+    "source": "ground_truth",
+    "feature_type": "counts",
+    "decode_window_s": 1.0,
+    "update_dt_s": 0.025,
+    "n_units": 200,
+    "target_name": "position",
+    "target_family": "continuous",
+    "decoder_name": "bayesian_place_decoder",
+    "n_train_samples": 16772,
+    "n_test_samples": 7189,
+    "mean_position_error_cm": 6.427209552191007,
+    "median_position_error_cm": 5.6323025784664775,
+    "p90_position_error_cm": 12.39660000379376,
+    "r2_x": 0.9586186049009771,
+    "r2_y": 0.9834429803354718
+  },
+  {
+    "spike_source": "ground_truth",
+    "source": "ground_truth",
+    "feature_type": "counts",
+    "decode_window_s": 1.0,
+    "update_dt_s": 0.025,
+    "n_units": 200,
+    "target_name": "speed",
+    "target_family": "continuous",
+    "decoder_name": "ridge",
+    "n_train_samples": 16772,
+    "n_test_samples": 7189,
+    "r2": 0.15851964536765473,
+    "correlation": 0.4704945170077228,
+    "mae": 3.867652106488763,
+    "rmse": 4.956712548398516
+  },
+  {
+    "spike_source": "ground_truth",
+    "source": "ground_truth",
+    "feature_type": "counts",
+    "decode_window_s": 1.0,
+    "update_dt_s": 0.025,
+    "n_units": 200,
+    "target_name": "speed",
+    "target_family": "continuous",
+    "decoder_name": "pca_ridge",
+    "n_train_samples": 16772,
+    "n_test_samples": 7189,
+    "r2": 0.27424843368696716,
+    "correlation": 0.5365515870308408,
+    "mae": 3.512042411001544,
+    "rmse": 4.603262425405583
+  },
+  {
+    "spike_source": "ground_truth",
+    "source": "ground_truth",
+    "feature_type": "counts",
+    "decode_window_s": 1.0,
+    "update_dt_s": 0.025,
+    "n_units": 200,
+    "target_name": "speed",
+    "target_family": "continuous",
+    "decoder_name": "random_forest_regressor",
+    "n_train_samples": 16772,
+    "n_test_samples": 7189,
+    "r2": 0.2900558130912334,
+    "correlation": 0.5388231253926731,
+    "mae": 3.5580933349224853,
+    "rmse": 4.5528552925024535
+  },
+  {
+    "spike_source": "ground_truth",
+    "source": "ground_truth",
+    "feature_type": "counts",
+    "decode_window_s": 1.0,
+    "update_dt_s": 0.025,
+    "n_units": 200,
+    "target_name": "acceleration",
+    "target_family": "continuous",
+    "decoder_name": "ridge",
+    "n_train_samples": 16772,
+    "n_test_samples": 7189,
+    "r2": -0.0038679067617626295,
+    "correlation": 0.06245442666303257,
+    "mae": 35.43895277706027,
+    "rmse": 59.61541300722328
+  },
+  {
+    "spike_source": "ground_truth",
+    "source": "ground_truth",
+    "feature_type": "counts",
+    "decode_window_s": 1.0,
+    "update_dt_s": 0.025,
+    "n_units": 200,
+    "target_name": "acceleration",
+    "target_family": "continuous",
+    "decoder_name": "pca_ridge",
+    "n_train_samples": 16772,
+    "n_test_samples": 7189,
+    "r2": 0.006509635108929546,
+    "correlation": 0.08441336055308811,
+    "mae": 34.257989446211056,
+    "rmse": 59.306473643586436
+  },
+  {
+    "spike_source": "ground_truth",
+    "source": "ground_truth",
+    "feature_type": "counts",
+    "decode_window_s": 1.0,
+    "update_dt_s": 0.025,
+    "n_units": 200,
+    "target_name": "acceleration",
+    "target_family": "continuous",
+    "decoder_name": "random_forest_regressor",
+    "n_train_samples": 16772,
+    "n_test_samples": 7189,
+    "r2": 0.0035061027898406483,
+    "correlation": 0.07515526652573258,
+    "mae": 34.34548675855575,
+    "rmse": 59.39605402068661
+  },
+  {
+    "spike_source": "ground_truth",
+    "source": "ground_truth",
+    "feature_type": "counts",
+    "decode_window_s": 1.0,
+    "update_dt_s": 0.025,
+    "n_units": 200,
+    "target_name": "head_direction",
+    "target_family": "continuous",
+    "decoder_name": "ridge",
+    "n_train_samples": 16772,
+    "n_test_samples": 7189,
+    "mean_circular_error_deg": 24.233349788066125,
+    "median_circular_error_deg": 19.471546240621826,
+    "p90_circular_error_deg": 51.52564121208433
+  },
+  {
+    "spike_source": "ground_truth",
+    "source": "ground_truth",
+    "feature_type": "counts",
+    "decode_window_s": 1.0,
+    "update_dt_s": 0.025,
+    "n_units": 200,
+    "target_name": "head_direction",
+    "target_family": "continuous",
+    "decoder_name": "pca_ridge",
+    "n_train_samples": 16772,
+    "n_test_samples": 7189,
+    "mean_circular_error_deg": 23.130987168758242,
+    "median_circular_error_deg": 19.47551973234082,
+    "p90_circular_error_deg": 48.583801949537
+  },
+  {
+    "spike_source": "ground_truth",
+    "source": "ground_truth",
+    "feature_type": "counts",
+    "decode_window_s": 1.0,
+    "update_dt_s": 0.025,
+    "n_units": 200,
+    "target_name": "head_direction",
+    "target_family": "continuous",
+    "decoder_name": "random_forest_regressor",
+    "n_train_samples": 16772,
+    "n_test_samples": 7189,
+    "mean_circular_error_deg": 23.7143451721071,
+    "median_circular_error_deg": 19.696546941144604,
+    "p90_circular_error_deg": 48.727644149150805
+  },
+  {
+    "spike_source": "ground_truth",
+    "source": "ground_truth",
+    "feature_type": "counts",
+    "decode_window_s": 1.0,
+    "update_dt_s": 0.025,
+    "n_units": 200,
+    "target_name": "distance_to_wall",
+    "target_family": "continuous",
+    "decoder_name": "ridge",
+    "n_train_samples": 16772,
+    "n_test_samples": 7189,
+    "r2": 0.806240028481262,
+    "correlation": 0.901973678103797,
+    "mae_cm": 2.8321885218918172,
+    "rmse_cm": 3.7170227692648097
+  },
+  {
+    "spike_source": "ground_truth",
+    "source": "ground_truth",
+    "feature_type": "counts",
+    "decode_window_s": 1.0,
+    "update_dt_s": 0.025,
+    "n_units": 200,
+    "target_name": "distance_to_wall",
+    "target_family": "continuous",
+    "decoder_name": "pca_ridge",
+    "n_train_samples": 16772,
+    "n_test_samples": 7189,
+    "r2": 0.8381474160436814,
+    "correlation": 0.9162083554133897,
+    "mae_cm": 2.5120599816021096,
+    "rmse_cm": 3.3972148130614865
+  },
+  {
+    "spike_source": "ground_truth",
+    "source": "ground_truth",
+    "feature_type": "counts",
+    "decode_window_s": 1.0,
+    "update_dt_s": 0.025,
+    "n_units": 200,
+    "target_name": "distance_to_wall",
+    "target_family": "continuous",
+    "decoder_name": "random_forest_regressor",
+    "n_train_samples": 16772,
+    "n_test_samples": 7189,
+    "r2": 0.8883862056367321,
+    "correlation": 0.9434815564322216,
+    "mae_cm": 1.979832400102839,
+    "rmse_cm": 2.8211236822280075
+  },
+  {
+    "spike_source": "ground_truth",
+    "source": "ground_truth",
+    "feature_type": "counts",
+    "decode_window_s": 1.0,
+    "update_dt_s": 0.025,
+    "n_units": 200,
+    "target_name": "distance_to_wall",
+    "target_family": "continuous",
+    "decoder_name": "bayesian_place_decoder",
+    "n_train_samples": 16772,
+    "n_test_samples": 7189,
+    "r2": 0.8139623630460996,
+    "correlation": 0.9083380101803712,
+    "mae_cm": 2.617164823745921,
+    "rmse_cm": 3.6421983870512165
+  },
+  {
+    "spike_source": "ground_truth",
+    "source": "ground_truth",
+    "feature_type": "counts",
+    "decode_window_s": 1.0,
+    "update_dt_s": 0.025,
+    "n_units": 200,
+    "target_name": "spatial_context",
+    "target_family": "categorical",
+    "decoder_name": "logistic_regression",
+    "n_train_samples": 16772,
+    "n_test_samples": 7189,
+    "accuracy": 0.8583947697871749,
+    "balanced_accuracy": 0.8628032380206294,
+    "macro_f1": 0.8559516869464326,
+    "confusion_matrix": [
+      [
+        977,
+        53,
+        74
+      ],
+      [
+        47,
+        2875,
+        203
+      ],
+      [
+        164,
+        477,
+        2319
+      ]
+    ],
+    "class_labels": [
+      "center",
+      "corner",
+      "wall"
+    ]
+  },
+  {
+    "spike_source": "ground_truth",
+    "source": "ground_truth",
+    "feature_type": "counts",
+    "decode_window_s": 1.0,
+    "update_dt_s": 0.025,
+    "n_units": 200,
+    "target_name": "spatial_context",
+    "target_family": "categorical",
+    "decoder_name": "random_forest_classifier",
+    "n_train_samples": 16772,
+    "n_test_samples": 7189,
+    "accuracy": 0.9013771039087495,
+    "balanced_accuracy": 0.9114881838360099,
+    "macro_f1": 0.9038000492101167,
+    "confusion_matrix": [
+      [
+        1048,
+        14,
+        42
+      ],
+      [
+        46,
+        2800,
+        279
+      ],
+      [
+        96,
+        232,
+        2632
+      ]
+    ],
+    "class_labels": [
+      "center",
+      "corner",
+      "wall"
+    ]
+  },
+  {
+    "spike_source": "ground_truth",
+    "source": "ground_truth",
+    "feature_type": "counts",
+    "decode_window_s": 1.0,
+    "update_dt_s": 0.025,
+    "n_units": 200,
+    "target_name": "spatial_context",
+    "target_family": "categorical",
+    "decoder_name": "bayesian_place_decoder_derived_context",
+    "n_train_samples": 16772,
+    "n_test_samples": 7189,
+    "accuracy": 0.8796772847405758,
+    "balanced_accuracy": 0.8858631100665884,
+    "macro_f1": 0.8764118861211494,
+    "confusion_matrix": [
+      [
+        1005,
+        58,
+        41
+      ],
+      [
+        172,
+        2533,
+        255
+      ],
+      [
+        42,
+        297,
+        2786
+      ]
+    ],
+    "class_labels": [
+      "center",
+      "wall",
+      "corner"
+    ]
+  },
+  {
+    "spike_source": "ground_truth",
+    "source": "ground_truth",
+    "feature_type": "counts",
+    "decode_window_s": 1.0,
+    "update_dt_s": 0.025,
+    "n_units": 200,
+    "target_name": "movement_state",
+    "target_family": "categorical",
+    "decoder_name": "logistic_regression",
+    "n_train_samples": 16772,
+    "n_test_samples": 7189,
+    "accuracy": 0.5248296007789679,
+    "balanced_accuracy": 0.46986946274373326,
+    "macro_f1": 0.42094817145345537,
+    "confusion_matrix": [
+      [
+        2143,
+        1137,
+        370
+      ],
+      [
+        1034,
+        1534,
+        699
+      ],
+      [
+        42,
+        134,
+        96
+      ]
+    ],
+    "class_labels": [
+      "fast",
+      "slow",
+      "still"
+    ]
+  },
+  {
+    "spike_source": "ground_truth",
+    "source": "ground_truth",
+    "feature_type": "counts",
+    "decode_window_s": 1.0,
+    "update_dt_s": 0.025,
+    "n_units": 200,
+    "target_name": "movement_state",
+    "target_family": "categorical",
+    "decoder_name": "random_forest_classifier",
+    "n_train_samples": 16772,
+    "n_test_samples": 7189,
+    "accuracy": 0.6703296703296703,
+    "balanced_accuracy": 0.47478252375372243,
+    "macro_f1": 0.47781464357059034,
+    "confusion_matrix": [
+      [
+        2733,
+        917,
+        0
+      ],
+      [
+        1177,
+        2075,
+        15
+      ],
+      [
+        34,
+        227,
+        11
+      ]
+    ],
+    "class_labels": [
+      "fast",
+      "slow",
+      "still"
+    ]
+  },
+  {
+    "spike_source": "ground_truth",
+    "source": "ground_truth",
+    "feature_type": "counts",
+    "decode_window_s": 1.0,
+    "update_dt_s": 0.025,
+    "n_units": 200,
+    "target_name": "wall_distance_bin",
+    "target_family": "categorical",
+    "decoder_name": "logistic_regression",
+    "n_train_samples": 16772,
+    "n_test_samples": 7189,
+    "accuracy": 0.865906245653081,
+    "balanced_accuracy": 0.8008386825702764,
+    "macro_f1": 0.7839727948396966,
+    "confusion_matrix": [
+      [
+        265,
+        65,
+        0
+      ],
+      [
+        92,
+        987,
+        373
+      ],
+      [
+        19,
+        415,
+        4973
+      ]
+    ],
+    "class_labels": [
+      "center",
+      "middle",
+      "near_wall"
+    ]
+  },
+  {
+    "spike_source": "ground_truth",
+    "source": "ground_truth",
+    "feature_type": "counts",
+    "decode_window_s": 1.0,
+    "update_dt_s": 0.025,
+    "n_units": 200,
+    "target_name": "wall_distance_bin",
+    "target_family": "categorical",
+    "decoder_name": "random_forest_classifier",
+    "n_train_samples": 16772,
+    "n_test_samples": 7189,
+    "accuracy": 0.9286409792738907,
+    "balanced_accuracy": 0.8272422426935936,
+    "macro_f1": 0.848762803707412,
+    "confusion_matrix": [
+      [
+        229,
+        101,
+        0
+      ],
+      [
+        45,
+        1182,
+        225
+      ],
+      [
+        0,
+        142,
+        5265
+      ]
+    ],
+    "class_labels": [
+      "center",
+      "middle",
+      "near_wall"
+    ]
+  },
+  {
+    "spike_source": "ground_truth",
+    "source": "ground_truth",
+    "feature_type": "counts",
+    "decode_window_s": 1.0,
+    "update_dt_s": 0.025,
+    "n_units": 200,
+    "target_name": "wall_distance_bin",
+    "target_family": "categorical",
+    "decoder_name": "bayesian_place_decoder_derived_context",
+    "n_train_samples": 16772,
+    "n_test_samples": 7189,
+    "accuracy": 0.8767561552371679,
+    "balanced_accuracy": 0.7453749543792755,
+    "macro_f1": 0.7355153673620588,
+    "confusion_matrix": [
+      [
+        4973,
+        434,
+        0
+      ],
+      [
+        160,
+        1159,
+        133
+      ],
+      [
+        0,
+        159,
+        171
+      ]
+    ],
+    "class_labels": [
+      "near_wall",
+      "middle",
+      "center"
+    ]
+  }
+]

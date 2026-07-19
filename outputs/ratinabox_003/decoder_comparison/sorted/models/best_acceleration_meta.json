@@ -1,0 +1,18 @@
+{
+  "spike_source": "sorted",
+  "source": "sorted",
+  "feature_type": "counts",
+  "decode_window_s": 0.25,
+  "update_dt_s": 0.025,
+  "n_units": 200,
+  "target_name": "acceleration",
+  "target_family": "continuous",
+  "decoder_name": "random_forest_regressor",
+  "n_train_samples": 16793,
+  "n_test_samples": 7198,
+  "r2": 0.006305462508621851,
+  "correlation": 0.08137551880125549,
+  "mae": 33.91647145161819,
+  "rmse": 59.30014068026066,
+  "primary_metric_value": 0.006305462508621851
+}

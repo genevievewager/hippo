@@ -1,0 +1,46 @@
+{
+  "spike_source": "sorted",
+  "source": "sorted",
+  "feature_type": "counts",
+  "decode_window_s": 0.1,
+  "update_dt_s": 0.05,
+  "n_units": 200,
+  "manifold_type": "none",
+  "manifold_grouping": null,
+  "manifold_n_components": null,
+  "actual_n_features": 200,
+  "explained_variance_ratio": null,
+  "manifold_transform_path": "outputs/ratinabox_003/decoder_comparison_manifold/models/manifold_transforms/counts_w0100ms",
+  "target_name": "spatial_context",
+  "target_family": "categorical",
+  "decoder_name": "logistic_regression",
+  "n_train_samples": 8398,
+  "n_test_samples": 3600,
+  "primary_metric": "balanced_accuracy",
+  "accuracy": 0.6516666666666666,
+  "balanced_accuracy": 0.6886643797746282,
+  "macro_f1": 0.6602724568064571,
+  "confusion_matrix": [
+    [
+      454,
+      13,
+      85
+    ],
+    [
+      97,
+      919,
+      552
+    ],
+    [
+      202,
+      305,
+      973
+    ]
+  ],
+  "class_labels": [
+    "center",
+    "corner",
+    "wall"
+  ],
+  "primary_metric_value": 0.6886643797746282
+}

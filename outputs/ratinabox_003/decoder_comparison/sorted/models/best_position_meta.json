@@ -1,0 +1,19 @@
+{
+  "spike_source": "sorted",
+  "source": "sorted",
+  "feature_type": "counts",
+  "decode_window_s": 1.0,
+  "update_dt_s": 0.025,
+  "n_units": 200,
+  "target_name": "position",
+  "target_family": "continuous",
+  "decoder_name": "random_forest_regressor",
+  "n_train_samples": 16772,
+  "n_test_samples": 7189,
+  "mean_position_error_cm": 7.47277014713742,
+  "median_position_error_cm": 5.894974014966976,
+  "p90_position_error_cm": 14.422499894227714,
+  "r2_x": 0.9613307908365122,
+  "r2_y": 0.9508507089175897,
+  "primary_metric_value": 7.47277014713742
+}

@@ -1,0 +1,21 @@
+{
+  "spike_source": "sorted",
+  "integration_window_s": 0.25,
+  "update_interval_s": 0.05,
+  "activity_representation": "counts",
+  "n_times": 11995,
+  "n_units": 200,
+  "timing_validation": {
+    "n_timestamps": 12000,
+    "median_dt_s": 0.05000000000000426,
+    "mean_dt_s": 0.05,
+    "expected_dt_s": 0.05,
+    "update_dt_s": 0.05,
+    "n_duplicates": 0,
+    "n_non_monotonic": 0,
+    "max_gap_s": 0.050000000000125056,
+    "ok": true,
+    "messages": [],
+    "max_alignment_error_s": 0.0
+  }
+}

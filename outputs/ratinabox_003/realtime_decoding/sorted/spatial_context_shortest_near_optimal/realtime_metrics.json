@@ -1,0 +1,19 @@
+{
+  "mean_position_error_cm": 11.839296184370214,
+  "median_position_error_cm": 10.904719498316643,
+  "spatial_context_accuracy": 0.8246004169562196,
+  "movement_state_accuracy": 0.7052119527449617,
+  "speed_r2": 0.3851582275459865,
+  "speed_correlation": 0.6403689377864976,
+  "n_decoder_updates": 7195,
+  "n_closed_loop_events": 568,
+  "closed_loop_precision": 1.0,
+  "closed_loop_false_positive_rate": 0.0,
+  "update_dt": 0.025,
+  "decode_window": 0.5,
+  "spike_source": "sorted",
+  "n_units": 200,
+  "decoder_name": "random_forest_classifier",
+  "closed_loop_target": "spatial_context",
+  "feature_type": "counts"
+}

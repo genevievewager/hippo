@@ -1,0 +1,18 @@
+{
+  "spike_source": "sorted",
+  "source": "sorted",
+  "feature_type": "counts",
+  "decode_window_s": 1.0,
+  "update_dt_s": 0.025,
+  "n_units": 200,
+  "target_name": "distance_to_wall",
+  "target_family": "continuous",
+  "decoder_name": "random_forest_regressor",
+  "n_train_samples": 16772,
+  "n_test_samples": 7189,
+  "r2": 0.76148139629013,
+  "correlation": 0.8746859718439264,
+  "mae_cm": 2.844676910439285,
+  "rmse_cm": 4.1240537755663516,
+  "primary_metric_value": 0.76148139629013
+}

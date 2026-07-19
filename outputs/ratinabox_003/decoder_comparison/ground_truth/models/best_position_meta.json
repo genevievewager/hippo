@@ -1,0 +1,19 @@
+{
+  "spike_source": "ground_truth",
+  "source": "ground_truth",
+  "feature_type": "counts",
+  "decode_window_s": 0.5,
+  "update_dt_s": 0.025,
+  "n_units": 200,
+  "target_name": "position",
+  "target_family": "continuous",
+  "decoder_name": "random_forest_regressor",
+  "n_train_samples": 16786,
+  "n_test_samples": 7195,
+  "mean_position_error_cm": 5.130807799499543,
+  "median_position_error_cm": 3.9933610789901293,
+  "p90_position_error_cm": 9.996749203883674,
+  "r2_x": 0.959825479430752,
+  "r2_y": 0.9901517751907036,
+  "primary_metric_value": 5.130807799499543
+}

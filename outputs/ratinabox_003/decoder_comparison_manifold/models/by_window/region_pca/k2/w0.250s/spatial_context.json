@@ -1,0 +1,46 @@
+{
+  "spike_source": "sorted",
+  "source": "sorted",
+  "feature_type": "region_pca",
+  "decode_window_s": 0.25,
+  "update_dt_s": 0.05,
+  "n_units": 200,
+  "manifold_type": "pca",
+  "manifold_grouping": "region",
+  "manifold_n_components": 2,
+  "actual_n_features": 8,
+  "explained_variance_ratio": null,
+  "manifold_transform_path": "outputs/ratinabox_003/decoder_comparison_manifold/models/manifold_transforms/region_pca_k2_w0250ms",
+  "target_name": "spatial_context",
+  "target_family": "categorical",
+  "decoder_name": "random_forest_classifier",
+  "n_train_samples": 8396,
+  "n_test_samples": 3599,
+  "primary_metric": "balanced_accuracy",
+  "accuracy": 0.6418449569324812,
+  "balanced_accuracy": 0.6869212495145461,
+  "macro_f1": 0.6374926096447552,
+  "confusion_matrix": [
+    [
+      472,
+      56,
+      24
+    ],
+    [
+      279,
+      965,
+      323
+    ],
+    [
+      235,
+      372,
+      873
+    ]
+  ],
+  "class_labels": [
+    "center",
+    "corner",
+    "wall"
+  ],
+  "primary_metric_value": 0.6869212495145461
+}

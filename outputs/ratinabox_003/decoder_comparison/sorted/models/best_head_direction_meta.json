@@ -1,0 +1,17 @@
+{
+  "spike_source": "sorted",
+  "source": "sorted",
+  "feature_type": "counts",
+  "decode_window_s": 0.25,
+  "update_dt_s": 0.025,
+  "n_units": 200,
+  "target_name": "head_direction",
+  "target_family": "continuous",
+  "decoder_name": "pca_ridge",
+  "n_train_samples": 16793,
+  "n_test_samples": 7198,
+  "mean_circular_error_deg": 17.470740727224342,
+  "median_circular_error_deg": 14.712536448114722,
+  "p90_circular_error_deg": 35.9705548854553,
+  "primary_metric_value": 17.470740727224342
+}

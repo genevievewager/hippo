@@ -72,11 +72,33 @@ def resolve_experiment_dir(
     raise ValueError("Provide --experiment, --realtime-dir, or --comparison-dir")
 
 
+def plot_realtime_run(
+    run_dir: Path,
+    output_dir: Path,
+    spike_source: str = "sorted",
+) -> None:
+    """Plot figures for one realtime run directory containing decoded_realtime.csv."""
+    _plot_realtime_source(run_dir, output_dir, spike_source)
+
+
+def plot_realtime_source_comparison(
+    realtime_dir: Path,
+    output_dir: Path,
+) -> None:
+    """Plot side-by-side ground-truth vs sorted realtime comparison figures."""
+    _plot_realtime_compare_sources(realtime_dir, output_dir)
+
+
 def plot_realtime_outputs(
     realtime_dir: Path,
     figures_dir: Path,
 ) -> Path:
-    """Generate realtime decoding figures under figures_dir/realtime_decoding/."""
+    """Generate realtime decoding figures under figures_dir/realtime_decoding/.
+
+    Supports flat layouts (``realtime_decoding/{sorted,ground_truth}/``) and
+    nested best-decoder layouts
+    (``realtime_decoding/{source}/{target}_{policy}/``).
+    """
     realtime_dir = Path(realtime_dir)
     out_root = Path(figures_dir) / "realtime_decoding"
     out_root.mkdir(parents=True, exist_ok=True)
@@ -86,14 +108,24 @@ def plot_realtime_outputs(
     wrote_any = False
 
     if gt.exists() and sorted_csv.exists():
-        _plot_realtime_compare_sources(realtime_dir, out_root / "comparison")
+        plot_realtime_source_comparison(realtime_dir, out_root / "comparison")
         wrote_any = True
 
     for source in ("sorted", "ground_truth"):
         source_dir = realtime_dir / source
         if (source_dir / "decoded_realtime.csv").exists():
-            _plot_realtime_source(source_dir, out_root / source, source)
+            plot_realtime_run(source_dir, out_root / source, source)
             wrote_any = True
+
+    # Nested best-decoder runs: */decoded_realtime.csv under source/target_policy/
+    for decoded in sorted(realtime_dir.rglob("decoded_realtime.csv")):
+        run_dir = decoded.parent
+        if run_dir.name in ("sorted", "ground_truth") and run_dir.parent == realtime_dir:
+            continue  # already handled as flat source dir
+        rel = run_dir.relative_to(realtime_dir)
+        spike_source = rel.parts[0] if rel.parts else "sorted"
+        plot_realtime_run(run_dir, out_root / rel.as_posix(), spike_source)
+        wrote_any = True
 
     if not wrote_any:
         raise FileNotFoundError(
@@ -131,6 +163,13 @@ def plot_decoder_comparison_outputs(
         raise FileNotFoundError(
             f"No decoder comparison outputs found under {comparison_dir}"
         )
+
+    try:
+        from visualization.manifold_plots import plot_manifold_comparison_outputs
+        plot_manifold_comparison_outputs(comparison_dir, out_root)
+    except Exception as exc:
+        print(f"  warning: manifold plots skipped ({exc})")
+
     return out_root
 
 

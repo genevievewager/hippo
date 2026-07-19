@@ -1,9 +1,7 @@
 """Real-time causal closed-loop decoding from hippocampal spike activity.
 
-Pipeline scripts:
-  run_decoder_comparison.py  — model/window optimization (run first)
-  run_realtime_decoding.py   — single closed-loop replay
-  run_decoder_visualization.py — plot-only (run last)
+Public entry point: ``run_full_decoder_workflow.py``
+(orchestration lives in ``realtime.workflow``).
 """
 
 from realtime.realtime_decoder import RealTimeDecoder

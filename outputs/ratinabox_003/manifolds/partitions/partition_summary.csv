@@ -1,0 +1,10 @@
+partition,group,n_units
+all_units,all,200
+subfield,CA1,80
+subfield,CA2,40
+subfield,CA3,40
+subfield,DG,40
+layer,granule,40
+layer,pyramidal,160
+ca1_deep_superficial,CA1_intermediate,80
+cell_class,excitatory,200

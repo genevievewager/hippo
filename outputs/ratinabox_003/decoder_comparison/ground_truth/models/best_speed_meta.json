@@ -1,0 +1,18 @@
+{
+  "spike_source": "ground_truth",
+  "source": "ground_truth",
+  "feature_type": "counts",
+  "decode_window_s": 0.1,
+  "update_dt_s": 0.025,
+  "n_units": 200,
+  "target_name": "speed",
+  "target_family": "continuous",
+  "decoder_name": "pca_ridge",
+  "n_train_samples": 16798,
+  "n_test_samples": 7199,
+  "r2": 0.6990122314036722,
+  "correlation": 0.836674885314884,
+  "mae": 2.3008092273870466,
+  "rmse": 2.962876790818223,
+  "primary_metric_value": 0.6990122314036722
+}

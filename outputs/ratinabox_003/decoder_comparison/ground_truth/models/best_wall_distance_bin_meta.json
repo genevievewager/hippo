@@ -1,0 +1,39 @@
+{
+  "spike_source": "ground_truth",
+  "source": "ground_truth",
+  "feature_type": "counts",
+  "decode_window_s": 0.25,
+  "update_dt_s": 0.025,
+  "n_units": 200,
+  "target_name": "wall_distance_bin",
+  "target_family": "categorical",
+  "decoder_name": "random_forest_classifier",
+  "n_train_samples": 16793,
+  "n_test_samples": 7198,
+  "accuracy": 0.9291469852736871,
+  "balanced_accuracy": 0.8747714488784718,
+  "macro_f1": 0.8766303551225909,
+  "confusion_matrix": [
+    [
+      275,
+      55,
+      0
+    ],
+    [
+      48,
+      1204,
+      200
+    ],
+    [
+      0,
+      207,
+      5209
+    ]
+  ],
+  "class_labels": [
+    "center",
+    "middle",
+    "near_wall"
+  ],
+  "primary_metric_value": 0.8747714488784718
+}

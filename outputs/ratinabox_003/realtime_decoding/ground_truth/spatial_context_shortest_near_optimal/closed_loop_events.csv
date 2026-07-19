@@ -1,0 +1,1 @@
+time,event_type,closed_loop_target,decoded_spatial_context,spatial_context_confidence,decoded_movement_state,movement_state_confidence,true_spatial_context,true_movement_state,correct_trigger

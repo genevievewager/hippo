@@ -1,0 +1,39 @@
+{
+  "spike_source": "sorted",
+  "source": "sorted",
+  "feature_type": "counts",
+  "decode_window_s": 1.0,
+  "update_dt_s": 0.025,
+  "n_units": 200,
+  "target_name": "wall_distance_bin",
+  "target_family": "categorical",
+  "decoder_name": "random_forest_classifier",
+  "n_train_samples": 16772,
+  "n_test_samples": 7189,
+  "accuracy": 0.8977604673807206,
+  "balanced_accuracy": 0.7678752995598163,
+  "macro_f1": 0.8004761819505566,
+  "confusion_matrix": [
+    [
+      195,
+      135,
+      0
+    ],
+    [
+      29,
+      1102,
+      321
+    ],
+    [
+      0,
+      250,
+      5157
+    ]
+  ],
+  "class_labels": [
+    "center",
+    "middle",
+    "near_wall"
+  ],
+  "primary_metric_value": 0.7678752995598163
+}

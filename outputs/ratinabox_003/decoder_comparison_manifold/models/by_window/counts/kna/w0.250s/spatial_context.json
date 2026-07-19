@@ -1,0 +1,46 @@
+{
+  "spike_source": "sorted",
+  "source": "sorted",
+  "feature_type": "counts",
+  "decode_window_s": 0.25,
+  "update_dt_s": 0.05,
+  "n_units": 200,
+  "manifold_type": "none",
+  "manifold_grouping": null,
+  "manifold_n_components": null,
+  "actual_n_features": 200,
+  "explained_variance_ratio": null,
+  "manifold_transform_path": "outputs/ratinabox_003/decoder_comparison_manifold/models/manifold_transforms/counts_w0250ms",
+  "target_name": "spatial_context",
+  "target_family": "categorical",
+  "decoder_name": "random_forest_classifier",
+  "n_train_samples": 8396,
+  "n_test_samples": 3599,
+  "primary_metric": "balanced_accuracy",
+  "accuracy": 0.7363156432342317,
+  "balanced_accuracy": 0.7701327767100081,
+  "macro_f1": 0.7496220231591838,
+  "confusion_matrix": [
+    [
+      492,
+      6,
+      54
+    ],
+    [
+      49,
+      1040,
+      478
+    ],
+    [
+      133,
+      229,
+      1118
+    ]
+  ],
+  "class_labels": [
+    "center",
+    "corner",
+    "wall"
+  ],
+  "primary_metric_value": 0.7701327767100081
+}

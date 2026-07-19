@@ -1,445 +1,210 @@
-# Hippocampal Neuropixels Simulation
+# Hippocampal Neuropixels Simulation and Decoding
 
-Simulates realistic hippocampal single-unit activity during 10-minute open-field navigation, recorded through a Neuropixels 1.0 single-shank probe (384 channels), with Neuropixels-like recording degradation and Kilosort-like spike re-extraction.
+Simulate hippocampal single-unit activity during open-field navigation, record it through a Neuropixels-like probe, spike-sort with realistic degradation, then decode behavior from **causal** spike counts.
 
-## Quick start
+## Public workflow
 
 ```bash
 source .hippo/bin/activate
 pip install -r requirements.txt
-python run_simulation.py --output outputs/run_001 --seed 1
-```
 
-### Detached run (survives terminal close)
-
-```bash
-mkdir -p outputs/run_001
-nohup .hippo/bin/python run_simulation.py --output outputs/run_001 \
-  > outputs/run_001/simulation.log 2>&1 &
-echo $! > outputs/run_001/simulation.pid
-tail -f outputs/run_001/simulation.log
-```
-
-## Pipeline
-
-1. **Behavior** — RatInABox square open field (thigmotaxis, stalls, smooth turns) at **20 Hz** (50 ms steps)
-2. **Features** — place, head direction, speed, acceleration, boundary, theta phase, ripple
-3. **Rate equations** — CA1, CA2, CA3 pyramidal + DG granule with drift
-4. **Spikes** — ground-truth Poisson spike times
-5. **Recording** — multi-channel templates, noise, motion amplitude drift, collisions
-6. **Sorting** — Kilosort-like re-extraction with misses, jitter, contamination
-
-## Outputs
-
-| File | Description |
-|------|-------------|
-| `behavior.csv` | Position, speed, head direction over time |
-| `anatomy_regions.csv` | Region geometry and channel mapping |
-| `units.csv` | Per-unit metadata (type, region, channel, place field) |
-| `spikes_ground_truth.csv` | True spike times |
-| `spikes_sorted.csv` | Re-extracted spike times after degradation |
-| `summary.json` | Run statistics |
-
----
-
-## Table 1: Rate Equations, Parameters, and Driver Features
-
-### Rate equations by cell type
-
-| Cell type | Rate equation | Driver features |
-|-----------|---------------|-----------------|
-| **CA1_pyr** | `τ dR/dt = −R + target` where `target = [b + A·f_place·(1 + w_hd·f_hd)·(1 + w_speed·f_speed)·(1 + 0.2·f_acc)·f_θ + w_bnd·A·f_bnd + w_ripple·A·f_ripple] · ξ_state · gain` | place, HD, speed, accel, boundary, theta, ripple |
-| **CA2_pyr** | Same as CA1 with lower ripple/theta weights and sharper place fields (σ = 8 cm) | place, HD, speed, accel, boundary, theta |
-| **CA3_pyr** | Same as CA1 plus recurrent term `+ w_rec · R̄_pop` | place, HD, speed, recurrent, ripple |
-| **DG_granule** | Same structure with sparsity gate: if `f_place·(1 + w_speed·f_speed) < θ_sparse` then `target ≈ 0.1·b` | place, speed, boundary |
-
-### Driver feature definitions
-
-| Feature | Type | Mathematical definition |
-|---------|------|-------------------------|
-| **Place** (exteroceptive) | Allocentric | `f_place = exp(−‖p − p₀‖² / 2σ²)` |
-| **Head direction** (proprioceptive) | Egocentric | `f_hd = exp(κ cos(θ − θ_pref)) / (exp(κ)/I₀(κ))` |
-| **Speed** (proprioceptive) | Egocentric | `f_speed = max(0, v − v_thresh) / (30 − v_thresh)` |
-| **Acceleration** (proprioceptive) | Egocentric | `f_acc = clip(|dv/dt| / 50, 0, 1)` |
-| **Boundary** (exteroceptive) | Allocentric | `f_bnd = exp(−d_wall² / 2σ_bnd²)` |
-| **Theta phase** (proprioceptive) | Internal | `f_θ = 1 + w_θ cos(2π f_θ t)` |
-| **Ripple** (internal) | CA1-biased | Sparse 80 ms bursts, `sin(π·phase)` envelope |
-
-### Drift terms
-
-| Process | Equation | Timescale |
-|---------|----------|-----------|
-| Place-field drift | `p₀ ← p₀ + N(0, σ_drift)` every 30 s | slow (minutes) |
-| State drift (arousal) | OU: `dξ = −ξ/τ · dt + σ · dW`, `target × exp(ξ)` | τ = 120 s |
-| Gain drift | OU on per-unit gain `g` | τ = 180 s |
-
-### Parameter values
-
-| Parameter | CA1_pyr | CA2_pyr | CA3_pyr | DG_granule | Units |
-|-----------|---------|---------|---------|------------|-------|
-| τ | 0.05 | 0.05 | 0.06 | 0.08 | s |
-| b (baseline) | 0.5 | 0.4 | 0.3 | 0.05 | Hz |
-| A (amplitude) | 12.0 | 10.0 | 8.0 | 15.0 | Hz |
-| σ_place | 10.0 | 8.0 | 12.0 | 6.0 | cm |
-| w_hd | 0.4 | 0.35 | 0.2 | 0.1 | — |
-| κ_hd | 2.0 | 2.5 | 1.5 | 1.0 | — |
-| w_speed | 0.3 | 0.25 | 0.2 | 0.5 | — |
-| v_thresh | 2.0 | 2.0 | 2.0 | 3.0 | cm/s |
-| w_θ | 0.25 | 0.15 | 0.1 | 0.05 | — |
-| f_θ | 8.0 | 8.0 | 8.0 | 8.0 | Hz |
-| w_ripple | 0.5 | 0.1 | 0.6 | 0.0 | — |
-| w_boundary | 0.2 | 0.15 | 0.1 | 0.3 | — |
-| w_recurrent | — | — | 0.15 | — | — |
-| θ_sparse | — | — | — | 0.3 | — |
-
-| Drift parameter | Value | Units |
-|-----------------|-------|-------|
-| Behavior / rate update rate | 20 | Hz |
-| Place drift σ | 0.8 | cm/min |
-| Place update interval | 30 | s |
-| State drift τ | 120 | s |
-| State drift σ | 0.15 | — |
-| Gain drift τ | 180 | s |
-| Gain drift σ | 0.1 | — |
-
-| Recording parameter | Value |
-|---------------------|-------|
-| Channels | 384 |
-| Site pitch | 20 µm |
-| Sample rate | 30 kHz |
-| Template span | 3–10 channels |
-| Amplitude range | 20–200 µV |
-| Noise σ | 15 µV |
-| Miss rate | 12% |
-| Jitter | 0.3 ms |
-
----
-
-## Table 2: Anatomical Regions and Probe Geometry
-
-Neuropixels 1.0 single-shank, 384 channels, 20 µm pitch, 1D depth axis (dorsal hippocampus).
-
-| Region | Layer | Depth start (µm) | Depth end (µm) | Channels | Cell types | Density (units/channel) |
-|--------|-------|------------------|----------------|----------|------------|-------------------------|
-| CA1 | oriens | 0 | 200 | 1–10 | CA1_pyr | 2.0 |
-| CA1 | pyramidal | 200 | 400 | 11–20 | CA1_pyr | 8.0 |
-| CA1 | radiatum | 400 | 600 | 21–30 | CA1_pyr | 5.0 |
-| CA2 | pyramidal | 600 | 800 | 31–40 | CA2_pyr | 6.0 |
-| CA3 | pyramidal | 800 | 1400 | 41–70 | CA3_pyr | 7.0 |
-| DG | granule | 1400 | 1800 | 71–90 | DG_granule | 10.0 |
-| DG | hilus | 1800 | 2000 | 91–100 | DG_granule | 3.0 |
-
-Channel counts are approximate; exact mapping is written to `anatomy_regions.csv` per run.
-
-## Previous models
-
-Adapted from:
-- `previous_models/CA1.m` — Gaussian place fields, ensemble drift, Poisson spikes
-- `previous_models/hw2simulationmethodinneuroscience.ipynb` — rate equation notation, drift parameters
-
-## Neural activity backends
-
-The simulator supports two neural activity backends.
-
-### 1. Custom hippocampal rate equations
-
-This backend uses explicit CA1, CA2, CA3, and DG rate equations driven by behavioral features including position, head direction, speed, acceleration, boundary distance, theta phase, ripple state, and drift.
-
-Run:
-
-```bash
+# 1. Simulate
 python run_simulation.py \
-    --output outputs/run_custom_001 \
-    --seed 1 \
-    --neural-backend custom_rate_equations
-```
-
-### 2. RatInABox neurons
-
-This backend uses RatInABox neural classes to generate spatially and/or velocity-modulated firing rates from the same RatInABox trajectory. The rates are converted into ground-truth Poisson spike trains so that the rest of the Neuropixels recording, sorting, visualization, and decoding pipeline remains unchanged.
-
-Run:
-
-```bash
-python run_simulation.py \
-    --output outputs/ratinabox_003 \
-    --seed 1 \
+    --output outputs/ratinabox_002 \
+    --seed 2 \
     --neural-backend ratinabox_neurons
-```
 
-The RatInABox backend saves `rate_model` and `ratinabox_class` columns in `units.csv` and `spikes_ground_truth.csv`, allowing spike rasters to be sorted by the neural model that generated each unit.
-
-## License
-
-Research / educational use.
-
-## Visualization Suite
-
-The simulation includes a visualization suite for inspecting behavior, neural driver features, ground-truth Poisson spike trains, sorted-spike degradation, and hippocampal probe geometry.
-
-Run:
-
-```bash
-python run_visualizations.py \
-    --input outputs/ratinabox_003 \
-    --output outputs/ratinabox_003/figures
-```
-
-Main outputs include:
-
-* behavioral trajectory and occupancy maps
-* behavioral feature traces over time
-* neural driver feature traces
-* ground-truth spike rasters sorted by cell class and rate equation
-* population activity by cell class
-* sorted versus ground-truth spike comparisons
-* simulated Neuropixels probe geometry
-* a combined report summary figure
-
-## Real-Time Decoding Workflow
-
-The decoder pipeline turns hippocampal spike activity into latent behavioral state estimates using **causal population spike-count features**. It has two computation modes and one plotting mode.
-
-```text
-Simulation output
-      ↓
-causal spike-count features
-      ↓
-decoder model(s)
-      ↓
-decoded latent behavioral state
-      ↓
-closed-loop trigger and/or evaluation
-      ↓
-visualization
-```
-
-At each decoder update time `t`, the decoder constructs a causal population spike-count vector:
-
-`X(t) = spike counts from [t - decode_window, t)`
-
-The decoder never uses future spikes. The default `update_dt` is 25 ms. The default causal history `decode_window` is 250 ms.
-
-Short windows reduce latency but contain fewer spikes. Long windows improve spike-count reliability but increase effective decoding latency. The decoder comparison module tests this tradeoff directly.
-
-**Scientific framing:** The simulator knows the true behavior. The decoder only sees hippocampal spike counts. `spike_source=ground_truth` represents ideal neural information; `spike_source=sorted` represents information available after Neuropixels degradation and spike sorting. Comparing causal windows tells us how much recent neural history is needed to decode behavioral, exteroceptive, and proprioceptive variables. Comparing decoder models tells us which model class best extracts those latent variables from population activity. Closed-loop replay tests whether decoded state estimates are accurate enough to trigger interventions in real time.
-
-### Step 1: Choose whether to optimize or replay
-
-If you do not know the best decoder model and `decode_window` yet, run **decoder comparison** first.
-
-If you already know the settings and want to simulate **closed-loop replay**, run **single-run realtime decoding**.
-
-### Step 2A: Decoder comparison and causal window optimization
-
-**Script:** `run_decoder_comparison.py`
-
-Use this before closed-loop replay when you want to determine which decoder and causal history window work best. It tests multiple decoder models and multiple `decode_window` values, evaluates latent behavioral / exteroceptive / proprioceptive targets, reports the best model/window per target, and reports the shortest near-optimal causal window. Use `--compare-sources` to compare ground-truth versus sorted spikes.
-
-```bash
-python run_decoder_comparison.py \
+# 2. Decode (compare windows/models → best closed-loop replay → optional figures)
+python run_full_decoder_workflow.py \
     --input outputs/ratinabox_002 \
-    --output outputs/ratinabox_002/decoder_comparison \
+    --output outputs/ratinabox_002 \
     --compare-sources \
-    --decode-windows 0.025 0.050 0.100 0.250 0.500 1.000
-```
-
-Single spike source only:
-
-```bash
-python run_decoder_comparison.py \
-    --input outputs/ratinabox_002 \
-    --output outputs/ratinabox_002/decoder_comparison \
-    --spike-source sorted \
-    --decode-windows 0.025 0.050 0.100 0.250 0.500 1.000
-```
-
-### Step 2B: Single realtime closed-loop replay
-
-**Script:** `run_realtime_decoding.py`
-
-Use this when you want to replay the session causally with one decoder setup and optionally generate closed-loop events.
-
-There are two modes.
-
-#### Manual mode
-
-Use this when you already know the decoder, spike source, and causal history window.
-
-```bash
-python run_realtime_decoding.py \
-    --input outputs/ratinabox_002 \
-    --output outputs/ratinabox_002/realtime_decoding \
-    --spike-source sorted \
-    --decoder-name random_forest_classifier \
-    --closed-loop-target spatial_context \
-    --decode-window 0.250
-```
-
-#### Automatic best-decoder mode
-
-Use this after Step 2A. The script reads `best_decoder_by_target.csv` from the decoder comparison output and automatically selects the best decoder and causal history window for the requested target.
-
-```bash
-python run_realtime_decoding.py \
-    --input outputs/ratinabox_002 \
-    --output outputs/ratinabox_002/realtime_decoding \
-    --comparison-dir outputs/ratinabox_002/decoder_comparison \
-    --use-best-decoder \
     --closed-loop-target spatial_context \
     --selection-policy shortest_near_optimal \
-    --spike-source sorted
+    --compile-pdf
+
+# 3. Visualize anytime (reads saved outputs only; never retrains)
+python run_visualizations.py \
+    --experiment outputs/ratinabox_002 \
+    --all \
+    --compile-pdf
 ```
 
-`--selection-policy best_accuracy` uses the most accurate window.
-`--selection-policy shortest_near_optimal` uses the shortest window that reaches near-best performance, which is usually better for realtime closed-loop intervention.
+| Goal | Command |
+|------|---------|
+| Simulate data | `run_simulation.py` |
+| Run full decoder workflow | `run_full_decoder_workflow.py` |
+| Generate all available visualizations | `run_visualizations.py --experiment ... --all --compile-pdf` |
 
-Outputs are saved under:
+---
+
+## Installation
+
+```bash
+cd ~/projects/hippo
+python3 -m venv .hippo
+source .hippo/bin/activate
+pip install -r requirements.txt
+python -m pytest tests/ -q
+```
+
+Python 3.10+ (developed on 3.12). Dependencies: see `requirements.txt`.
+
+---
+
+## Causal decoding (core rule)
+
+At each behavioral frame time \(t\), features are spike counts from **\([t - W,\, t)\)** only — never spikes at or after \(t\).
+
+| Parameter | Default | Meaning |
+|-----------|---------|---------|
+| `update_dt` | 0.050 s (20 Hz) | One prediction per behavioral frame |
+| `decode_window` (`W`) | searched over 0.05–1.0 s | Causal neural integration window |
+| `spike_source` | `sorted` | `sorted` or `ground_truth` spikes |
+| `--compare-sources` | off | Run both spike sources and compare |
+
+Pipeline inside `run_full_decoder_workflow.py`:
+
+1. Decoder comparison across models and windows (`decoder_comparison/`)
+2. Best decoder/window selection (`--selection-policy`)
+3. Causal closed-loop realtime replay (`realtime_decoding/`)
+4. Optional figures + `figures/output.pdf` (`--compile-pdf`)
+
+---
+
+## Visualizations
+
+`run_visualizations.py` is the only public plotting entry point. Pass `--experiment` and it detects what exists:
+
+- simulation → trajectory, occupancy, features, rasters, probe geometry
+- `decoder_comparison/` → window/model comparison figures
+- `realtime_decoding/` → closed-loop replay figures
+- `--compile-pdf` → sectioned `figures/output.pdf`
+
+```bash
+# Everything available (default when only --experiment is set)
+python run_visualizations.py --experiment outputs/ratinabox_002 --all --compile-pdf
+
+# Subsets
+python run_visualizations.py --experiment outputs/ratinabox_002 --include-simulation
+python run_visualizations.py --experiment outputs/ratinabox_002 --include-comparison --include-realtime
+```
+
+Figures always land under `outputs/<run>/figures/` (with `decoder_comparison/` and `realtime_decoding/` subfolders). Plotting **never** retrains decoders.
+
+---
+
+## Simulation backends
+
+```bash
+# RatInABox neurons (default recommendation)
+python run_simulation.py --output outputs/ratinabox_002 --seed 2 --neural-backend ratinabox_neurons
+
+# Custom CA1/CA2/CA3/DG rate equations
+python run_simulation.py --output outputs/run_custom_001 --seed 1 --neural-backend custom_rate_equations
+```
+
+Behavior is generated at **20 Hz** in a square open field. Pipeline: behavior → rates → ground-truth spikes → Neuropixels-like recording → sorting simulation.
+
+### Custom rate equation (matches `hippo_sim/rate_equations.py`)
+
+\[
+\tau \frac{dR}{dt} = -R + \lambda^{\mathrm{target}}(t)
+\]
+
+with multiplicative place × HD × speed × acceleration × theta drive, plus boundary and ripple terms; CA3 adds recurrent population mean; DG applies a sparsity gate. Place-field drift SD = **0.1 cm/min**. Full parameter tables live in `hippo_sim/config.py`.
+
+---
+
+## Output layout
 
 ```text
-realtime_decoding/{spike_source}/{closed_loop_target}_{selection_policy}/
+outputs/<run>/
+  behavior.csv
+  units.csv
+  spikes_ground_truth.csv
+  spikes_sorted.csv
+  summary.json
+  decoder_comparison/          # from run_full_decoder_workflow.py
+  realtime_decoding/           # closed-loop replay
+  figures/                     # from workflow and/or run_visualizations.py
+    decoder_comparison/
+    realtime_decoding/
+    output.pdf                 # with --compile-pdf
 ```
 
-including `selected_realtime_decoder_config.json`.
+---
 
-Optional one-shot workflow:
+## Decoder CLI (public)
 
 ```bash
 python run_full_decoder_workflow.py \
     --input outputs/ratinabox_002 \
     --output outputs/ratinabox_002 \
     --compare-sources \
-    --closed-loop-target spatial_context \
-    --selection-policy shortest_near_optimal
-```
-
-### Step 3: Decoder visualization
-
-**Script:** `run_decoder_visualization.py`
-
-Use this only after computation. It reads saved CSV/JSON/prediction outputs, makes figures, and does not retrain decoders or recompute comparisons. All decoder figures are written into the experiment's shared `figures/` folder (alongside simulation visualizations).
-
-```bash
-python run_decoder_visualization.py \
-    --experiment outputs/ratinabox_002
-```
-
-Compile every PNG under `figures/` into one sectioned PDF (`figures/output.pdf`):
-
-```bash
-python run_compile_figures_pdf.py \
-    --experiment outputs/ratinabox_002
-```
-
-Or regenerate decoder figures and compile the PDF in one step:
-
-```bash
-python run_decoder_visualization.py \
-    --experiment outputs/ratinabox_002 \
-    --compile-pdf
-```
-
-Section title pages separate:
-
-* simulation visualizations (root of `figures/`)
-* realtime decoding (comparison / ground truth / sorted)
-* decoder comparison (summary / ground truth / sorted)
-
-### Recommended order
-
-Recommended decoder workflow:
-
-1. Run decoder comparison.
-2. Inspect `best_decoder_by_target.csv`.
-3. Run realtime closed-loop replay with `--use-best-decoder`.
-4. Generate decoder visualizations.
-
-```bash
-python run_simulation.py \
-    --output outputs/ratinabox_002 \
-    --seed 2 \
-    --neural-backend ratinabox_neurons
-```
-
-```bash
-python run_decoder_comparison.py \
-    --input outputs/ratinabox_002 \
-    --output outputs/ratinabox_002/decoder_comparison \
-    --compare-sources \
-    --decode-windows 0.025 0.050 0.100 0.250 0.500 1.000
-```
-
-```bash
-python run_realtime_decoding.py \
-    --input outputs/ratinabox_002 \
-    --output outputs/ratinabox_002/realtime_decoding \
-    --comparison-dir outputs/ratinabox_002/decoder_comparison \
-    --use-best-decoder \
+    --spike-source sorted \
+    --decode-windows 0.05 0.1 0.25 0.5 1.0 \
     --closed-loop-target spatial_context \
     --selection-policy shortest_near_optimal \
-    --spike-source sorted
-```
-
-```bash
-python run_decoder_visualization.py \
-    --experiment outputs/ratinabox_002 \
     --compile-pdf
 ```
-### Which script should I run?
 
-| Goal | Script |
-|---|---|
-| Test one realtime decoder setup | `run_realtime_decoding.py` |
-| Compare many decoders and windows | `run_decoder_comparison.py` |
-| Compare sorted spikes to ground-truth spikes | `--compare-sources` with either computation script |
-| Generate figures from saved decoder results | `run_decoder_visualization.py` |
-| Compile all figures into one sectioned PDF | `run_compile_figures_pdf.py` |
-| Choose the best causal history window | `run_decoder_comparison.py` |
-| Simulate closed-loop triggers | `run_realtime_decoding.py` |
-| Auto-select best decoder/window from comparison | `run_realtime_decoding.py --use-best-decoder` |
-| Run compare → best replay → visualize | `run_full_decoder_workflow.py` |
+Useful options:
 
-### Output layout
+| Flag | Purpose |
+|------|---------|
+| `--compare-sources` | Ground-truth vs sorted |
+| `--closed-loop-target` | Target for realtime replay (e.g. `spatial_context`) |
+| `--selection-policy` | `shortest_near_optimal` or `best_accuracy` |
+| `--decode-windows` | Causal windows \(W\) to search |
+| `--feature-modes` | e.g. `counts global_pca region_pca` |
+| `--skip-visualization` | Skip figure generation |
+| `--compile-pdf` | Write `figures/output.pdf` |
+| `--enable-temporal-manifold` | Optional W×L temporal comparison |
 
-```text
-outputs/run_001/
-    figures/                    # ALL visualizations for this experiment
-        output.pdf              # sectioned PDF of every PNG under figures/
-        ...                     # simulation figures (run_visualizations.py)
-        realtime_decoding/      # closed-loop replay figures
-        decoder_comparison/     # model/window optimization figures
+---
 
-    realtime_decoding/          # computation only: CSVs, JSON, models
-        sorted/
-        ground_truth/           # when --compare-sources
-        source_comparison_metrics.csv
+## Advanced / developer utilities
 
-    decoder_comparison/         # computation only: metrics, models, predictions
-        sorted/
-        ground_truth/           # when --compare-sources
-        source_comparison_metrics.csv
-```
+Lower-level scripts and modules exist for debugging and custom experiments. **Most users should not need them.**
 
-**Terminology:** `decode_window` = causal spike-history window; `update_dt` = decoder update interval; `spike_source` = `ground_truth` or `sorted`; **single-run realtime decoding** = one decoder/window configuration; **decoder comparison** = many decoder/window configurations; **closed-loop replay** = causal decoding plus trigger logic. Both computation scripts use causal realtime-compatible features.
+| Utility | Role |
+|---------|------|
+| `run_decoder_comparison.py` | Comparison step only |
+| `run_realtime_decoding.py` | Replay step only |
+| `run_full_workflow.py` | Staged simulate / manifolds / partitions / decode |
+| `realtime/`, `visualization/`, `hippo/` | Importable package APIs |
 
-### Shared code modules
+Manifold partitions, temporal history (`L`), and communication analyses are documented in package modules and optional flags; they are not required for the standard workflow above.
 
-Both computation scripts share:
+---
 
-| Module | Role |
-|---|---|
-| `realtime/data_loading.py` | Load simulation outputs |
-| `realtime/spike_features.py` | Causal spike-count feature construction |
-| `realtime/decoder_models.py` | Decoder model zoo (sklearn pipelines) |
-| `realtime/train_decoder.py` | Training for single-run replay |
-| `realtime/decoder_comparison.py` | Multi-model/window evaluation |
-| `visualization/decoder_plots.py` | All decoder figures (plot-only script) |
+## Tests
 
-# Github 
 ```bash
-cd ~/projects/hippo
-git status
-git add -A
-git commit -m "Update project files"
-git push
+python -m pytest tests/ -q
 ```
+
+---
+
+## Troubleshooting
+
+| Issue | Fix |
+|-------|-----|
+| Missing RatInABox | `pip install -r requirements.txt` inside `.hippo` |
+| No figures / empty PDF | Ensure simulation (and optionally decoder) outputs exist; re-run `run_visualizations.py --all --compile-pdf` |
+| Timestamp / alignment errors | Behavior is 20 Hz (`behavior_dt=0.05`); check `summary.json` |
+| Want plots without re-decoding | Use `run_visualizations.py` only |
+
+---
+
+## Limitations
+
+- Simulated anatomy and rate models are configurable hypotheses, not recovered biology.
+- Sorted spikes lose some ground-truth metadata (e.g. true cell identity).
+- Realtime-compatible methods must not use future information.
+- Results from simulation need experimental validation.
+
+## License
+
+Research / educational use.
