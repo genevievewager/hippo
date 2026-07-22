@@ -1,7 +1,7 @@
-"""Ground-truth spike, rate-equation, and raster visualizations.
+"""Ground-truth spike, population-rate, and raster visualizations.
 
-Ground-truth Poisson spike trains are generated from known rate equations and
-provide the true neural activity before Neuropixels recording degradation.
+Ground-truth Poisson spike trains are generated from RatInABox firing rates
+and provide the true neural activity before Neuropixels recording degradation.
 """
 
 from __future__ import annotations
@@ -18,7 +18,7 @@ from visualization.load_outputs import (
     SimulationOutputs,
     downsample_series,
     sort_units_by_class_and_rate,
-    sort_units_by_rate_equation,
+    sort_units_by_rate_model,
 )
 
 
@@ -48,7 +48,7 @@ def _population_activity(
     return t_centers, pop_rate
 
 
-def plot_rate_equation_population_rates(
+def plot_population_rates_over_time(
     data: SimulationOutputs, output_dir: Path, bin_size: float = 0.250,
 ) -> None:
     t_edges = np.arange(0, data.session_duration_s + bin_size, bin_size)
@@ -75,11 +75,11 @@ def plot_rate_equation_population_rates(
     ax.set_title("Population firing rate by cell class (ground truth)")
     ax.legend(loc="upper right", fontsize=8)
     fig.tight_layout()
-    fig.savefig(output_dir / "rate_equation_population_rates_over_time.png", dpi=FIGURE_DPI)
+    fig.savefig(output_dir / "population_rates_over_time.png", dpi=FIGURE_DPI)
     plt.close(fig)
 
 
-def plot_rate_equation_cell_class_rate_distributions(data: SimulationOutputs, output_dir: Path) -> None:
+def plot_cell_class_rate_distributions(data: SimulationOutputs, output_dir: Path) -> None:
     n = len(data.cell_class_order)
     fig, axes = plt.subplots(1, n, figsize=(4 * n, 3.5), sharey=False)
     if n == 1:
@@ -94,11 +94,11 @@ def plot_rate_equation_cell_class_rate_distributions(data: SimulationOutputs, ou
     axes[0].set_ylabel("Unit count")
     fig.suptitle("Mean firing rate distributions by cell class", y=1.02)
     fig.tight_layout()
-    fig.savefig(output_dir / "rate_equation_cell_class_rate_distributions.png", dpi=FIGURE_DPI, bbox_inches="tight")
+    fig.savefig(output_dir / "cell_class_rate_distributions.png", dpi=FIGURE_DPI, bbox_inches="tight")
     plt.close(fig)
 
 
-def plot_rate_equation_example_units(data: SimulationOutputs, output_dir: Path) -> None:
+def plot_example_units(data: SimulationOutputs, output_dir: Path) -> None:
     for ct in data.cell_class_order:
         uids = data.units.loc[data.units["cell_type"] == ct, "unit_id"]
         rates = data.unit_mean_rates_gt.reindex(uids).dropna()
@@ -218,12 +218,12 @@ def plot_ground_truth_rasters(data: SimulationOutputs, output_dir: Path) -> None
             class_boundaries=False,
         )
 
-    sorted_eq = sort_units_by_rate_equation(data.units, data.unit_mean_rates_gt)
+    sorted_eq = sort_units_by_rate_model(data.units, data.unit_mean_rates_gt)
     sorted_eq.attrs["session_duration"] = data.session_duration_s
     _plot_raster(
         data.spikes_gt, sorted_eq,
         "Ground-truth Poisson spike trains by rate model",
-        output_dir / "ground_truth_spike_raster_by_rate_equation.png",
+        output_dir / "ground_truth_spike_raster_by_rate_model.png",
         class_boundaries=False,
     )
 
@@ -299,8 +299,28 @@ def plot_ground_truth_spike_summaries(
 def generate_neural_plots(
     data: SimulationOutputs, output_dir: Path, rate_bin_size: float = 0.250,
 ) -> None:
-    plot_rate_equation_population_rates(data, output_dir, rate_bin_size)
-    plot_rate_equation_cell_class_rate_distributions(data, output_dir)
-    plot_rate_equation_example_units(data, output_dir)
-    plot_ground_truth_rasters(data, output_dir)
-    plot_ground_truth_spike_summaries(data, output_dir, rate_bin_size)
+    """Generate compressed publication-style neural population figures."""
+    output_dir = Path(output_dir)
+    output_dir.mkdir(parents=True, exist_ok=True)
+
+    # Remove older single-panel neural PNGs so the folder stays publication-clean.
+    legacy_prefixes = (
+        "population_activity_by_",
+        "population_rates_over_time",
+        "population_rate_heatmap",
+        "circuit_population_activity",
+        "mean_rate_by_",
+        "cell_class_rate_distributions",
+        "example_units_",
+        "ground_truth_",
+        "rate_equation_",
+    )
+    for png in output_dir.glob("*.png"):
+        if png.name.startswith("fig_"):
+            continue
+        if any(png.name.startswith(p) for p in legacy_prefixes):
+            png.unlink(missing_ok=True)
+
+    from visualization.population_activity_plots import generate_population_activity_plots
+
+    generate_population_activity_plots(data, output_dir, rate_bin_size=rate_bin_size)

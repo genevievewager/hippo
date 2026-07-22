@@ -43,6 +43,7 @@ from realtime.decoder_models import (
     continuous_model_names,
     default_model_params,
     is_bayesian_model,
+    is_nonlinear_decoder,
     make_categorical_pipeline,
     make_continuous_pipeline,
 )
@@ -52,8 +53,11 @@ from realtime.decoding_targets import (
     circular_error_deg,
 )
 from realtime.manifold_features import (
+    DEFAULT_ISOMAP_N_NEIGHBORS,
+    OFFLINE_ONLY_FEATURE_MODES,
     QUICK_FEATURE_MODES,
     is_manifold_feature_mode,
+    is_realtime_compatible_feature_mode,
     load_feature_transformer,
     make_feature_transformer,
     manifold_transform_dirname,
@@ -111,12 +115,17 @@ class ComparisonRunConfig:
     train_frac: float = 0.70
     feature_modes: tuple[str, ...] = QUICK_FEATURE_MODES
     manifold_n_components: tuple[int, ...] = DEFAULT_MANIFOLD_N_COMPONENTS
+    isomap_n_neighbors: tuple[int, ...] = (DEFAULT_ISOMAP_N_NEIGHBORS,)
+    isomap_pre_pca_enabled: bool = True
+    isomap_pre_pca_n_components: int = 50
+    isomap_require_connected_graph: bool = True
     max_models: str = "quick"
     n_jobs: int = -1
     seed: int = 42
     align_to_behavior: bool = True
     region_ablation: bool = False
     layer_ablation: bool = False
+    adaptive_windows: bool = False
 
 
 def _get_y(behavior: pd.DataFrame, target: str) -> np.ndarray:
@@ -268,15 +277,24 @@ def _near_optimal(value: float, best: float, direction: str) -> bool:
 def _expand_feature_jobs(
     feature_modes: tuple[str, ...],
     manifold_n_components: tuple[int, ...],
-) -> list[tuple[str, int | None]]:
-    """Return (feature_mode, n_components_or_None) jobs."""
-    jobs: list[tuple[str, int | None]] = []
+    isomap_n_neighbors: tuple[int, ...] = (DEFAULT_ISOMAP_N_NEIGHBORS,),
+) -> list[tuple[str, int | None, int | None]]:
+    """Return (feature_mode, n_components_or_None, n_neighbors_or_None) jobs."""
+    jobs: list[tuple[str, int | None, int | None]] = []
     for mode in feature_modes:
-        if is_manifold_feature_mode(mode):
+        if (
+            mode in ("global_isomap", "global_isomap_distilled")
+            or mode.endswith("_isomap")
+            or mode.endswith("_isomap_distilled")
+        ):
             for k in manifold_n_components:
-                jobs.append((mode, int(k)))
+                for nn in isomap_n_neighbors:
+                    jobs.append((mode, int(k), int(nn)))
+        elif is_manifold_feature_mode(mode):
+            for k in manifold_n_components:
+                jobs.append((mode, int(k), None))
         else:
-            jobs.append((mode, None))
+            jobs.append((mode, None, None))
     return jobs
 
 
@@ -304,7 +322,11 @@ def run_decoder_comparison(config: ComparisonRunConfig) -> pd.DataFrame:
     )
 
     feature_modes = resolve_feature_modes(config.feature_modes, max_models=config.max_models)
-    feature_jobs = _expand_feature_jobs(feature_modes, tuple(config.manifold_n_components))
+    feature_jobs = _expand_feature_jobs(
+        feature_modes,
+        tuple(config.manifold_n_components),
+        tuple(config.isomap_n_neighbors),
+    )
 
     rows: list[dict[str, Any]] = []
     explained_rows: list[dict[str, Any]] = []
@@ -314,7 +336,15 @@ def run_decoder_comparison(config: ComparisonRunConfig) -> pd.DataFrame:
     best_by_window: dict[tuple[str, float, str, str], FitResult] = {}
     best_by_window_meta: dict[tuple[str, float, str, str], dict[str, Any]] = {}
 
-    for decode_window in config.decode_windows:
+    window_queue = list(dict.fromkeys(float(w) for w in config.decode_windows))
+    tested_windows: list[float] = []
+    refined_once = False
+    wi = 0
+    while wi < len(window_queue):
+        decode_window = float(window_queue[wi])
+        wi += 1
+        print(f"  window W={decode_window:.3f}s "
+              f"({len(tested_windows) + 1}/{len(window_queue)} queued)...")
         decode_times = make_decode_times(
             data["session_duration"],
             decode_window,
@@ -334,7 +364,7 @@ def run_decoder_comparison(config: ComparisonRunConfig) -> pd.DataFrame:
         beh_train = aligned.loc[train_mask].reset_index(drop=True)
         beh_test = aligned.loc[test_mask].reset_index(drop=True)
 
-        for feature_mode, n_components in feature_jobs:
+        for feature_mode, n_components, n_neighbors in feature_jobs:
             transformer = make_feature_transformer(
                 feature_mode,
                 decode_window=decode_window,
@@ -342,6 +372,11 @@ def run_decoder_comparison(config: ComparisonRunConfig) -> pd.DataFrame:
                 units_df=data["units_df"],
                 unit_ids=data["unit_ids"],
                 random_state=config.seed,
+                n_neighbors=n_neighbors or DEFAULT_ISOMAP_N_NEIGHBORS,
+                isomap_pre_pca_enabled=config.isomap_pre_pca_enabled,
+                isomap_pre_pca_n_components=config.isomap_pre_pca_n_components,
+                isomap_require_connected_graph=config.isomap_require_connected_graph,
+                n_jobs=config.n_jobs,
             )
             if transformer is None:
                 print(f"  skip {feature_mode} (missing unit metadata)")
@@ -350,13 +385,44 @@ def run_decoder_comparison(config: ComparisonRunConfig) -> pd.DataFrame:
             # Fit manifold / identity transform on TRAIN only, then transform both.
             X_train_raw = X_counts[train_mask]
             X_test_raw = X_counts[test_mask]
-            transformer.fit(X_train_raw)
+            try:
+                transformer.fit(X_train_raw)
+            except Exception as exc:
+                # Disconnected Isomap graphs (and similar) must not silently continue.
+                from realtime.manifolds.isomap_diagnostics import DisconnectedGraphError
+
+                if isinstance(exc, DisconnectedGraphError) or "disconnected" in str(exc).lower():
+                    print(
+                        f"  exclude {feature_mode} k={n_components} "
+                        f"nn={n_neighbors}: {exc}"
+                    )
+                    rows.append({
+                        **_base_row(config, data, feature_mode, decode_window, update_dt),
+                        "manifold_type": manifold_type_for_feature_mode(feature_mode),
+                        "manifold_grouping": None,
+                        "manifold_n_components": n_components,
+                        "n_neighbors": n_neighbors,
+                        "actual_n_features": None,
+                        "explained_variance_ratio": None,
+                        "manifold_transform_path": None,
+                        "target_name": None,
+                        "target_family": None,
+                        "decoder_name": None,
+                        "exclusion_reason": str(exc),
+                        "graph_connected": False,
+                        "realtime_compatible": False,
+                        "n_train_samples": int(train_mask.sum()),
+                        "n_test_samples": int(test_mask.sum()),
+                    })
+                    continue
+                raise
+
             X_train = transformer.transform(X_train_raw)
             X_test = transformer.transform(X_test_raw)
             meta = transformer.get_metadata()
 
             transform_name = manifold_transform_dirname(
-                feature_mode, decode_window, n_components,
+                feature_mode, decode_window, n_components, n_neighbors,
             )
             transform_path = manifold_dir / transform_name
             transformer.save(transform_path)
@@ -376,16 +442,32 @@ def run_decoder_comparison(config: ComparisonRunConfig) -> pd.DataFrame:
                     ),
                 })
 
+            geo = meta.get("geometry_metrics") or {}
+            diag = meta.get("graph_diagnostics") or {}
             feature_row_extras = {
                 "manifold_type": meta.get("manifold_type") or manifold_type_for_feature_mode(feature_mode),
                 "manifold_grouping": meta.get("manifold_grouping"),
                 "manifold_n_components": n_components,
+                "n_neighbors": n_neighbors if n_neighbors is not None else meta.get("n_neighbors"),
+                "pre_pca_enabled": meta.get("pre_pca_enabled"),
+                "pre_pca_dim": meta.get("pre_pca_dim"),
                 "actual_n_features": meta.get("actual_n_features"),
                 "explained_variance_ratio": (
                     json.dumps(meta.get("explained_variance_ratio"))
                     if meta.get("explained_variance_ratio") is not None else None
                 ),
                 "manifold_transform_path": str(transform_path),
+                "realtime_compatible": bool(
+                    meta.get(
+                        "realtime_compatible",
+                        is_realtime_compatible_feature_mode(feature_mode),
+                    )
+                ),
+                "graph_connected": diag.get("graph_connected"),
+                "largest_component_fraction": diag.get("largest_component_fraction"),
+                "trustworthiness": geo.get("trustworthiness"),
+                "residual_variance": geo.get("residual_variance"),
+                "geodesic_distance_correlation": geo.get("geodesic_distance_correlation"),
             }
 
             for target in CONTINUOUS_TARGETS:
@@ -400,6 +482,7 @@ def run_decoder_comparison(config: ComparisonRunConfig) -> pd.DataFrame:
                         "target_name": target,
                         "target_family": TARGET_FAMILY[target],
                         "decoder_name": decoder_name,
+                        "decoder_nonlinear": is_nonlinear_decoder(decoder_name),
                         "n_train_samples": int(train_mask.sum()),
                         "n_test_samples": int(test_mask.sum()),
                         "primary_metric": PRIMARY_METRIC[target][0],
@@ -423,6 +506,7 @@ def run_decoder_comparison(config: ComparisonRunConfig) -> pd.DataFrame:
                         "target_name": target,
                         "target_family": TARGET_FAMILY[target],
                         "decoder_name": decoder_name,
+                        "decoder_nonlinear": is_nonlinear_decoder(decoder_name),
                         "n_train_samples": int(train_mask.sum()),
                         "n_test_samples": int(test_mask.sum()),
                         "primary_metric": PRIMARY_METRIC[target][0],
@@ -434,6 +518,28 @@ def run_decoder_comparison(config: ComparisonRunConfig) -> pd.DataFrame:
                         best_by_window, best_by_window_meta, target, row, fit,
                     )
 
+        tested_windows.append(decode_window)
+        if (
+            config.adaptive_windows
+            and not refined_once
+            and wi >= len(window_queue)
+        ):
+            from realtime.adaptive_windows import propose_refined_windows
+
+            best_ws = [
+                float(meta["decode_window_s"])
+                for meta in best_meta.values()
+                if "decode_window_s" in meta
+            ]
+            extras = propose_refined_windows(tested_windows, best_ws)
+            if extras:
+                print(
+                    "  adaptive refine: adding windows "
+                    + ", ".join(f"{w:.3f}s" for w in extras)
+                )
+                window_queue.extend(float(w) for w in extras)
+            refined_once = True
+
     metrics_df = pd.DataFrame(rows)
     metrics_df.to_csv(output_dir / "decoder_comparison_metrics.csv", index=False)
     with open(output_dir / "decoder_comparison_metrics.json", "w") as f:
@@ -443,27 +549,33 @@ def run_decoder_comparison(config: ComparisonRunConfig) -> pd.DataFrame:
     if not explained_df.empty:
         explained_df.to_csv(output_dir / "manifold_explained_variance.csv", index=False)
 
+    # Exclusion rows (e.g. disconnected Isomap) lack targets; keep them in metrics
+    # but exclude from best-model selection / summaries.
+    scored_df = metrics_df
+    if "target_name" in metrics_df.columns:
+        scored_df = metrics_df[metrics_df["target_name"].notna()].copy()
+
     _save_windowed_models(best_by_window, best_by_window_meta, models_dir)
-    best_df = _build_best_decoder_table(metrics_df, best_fits, models_dir, config)
+    best_df = _build_best_decoder_table(scored_df, best_fits, models_dir, config)
     from realtime.manifold_summaries import (
         build_best_manifold_decoder_table,
         build_manifold_vs_counts_summary,
         enrich_best_decoder_table,
         write_manifold_decoder_report,
     )
-    best_df = enrich_best_decoder_table(best_df, metrics_df)
+    best_df = enrich_best_decoder_table(best_df, scored_df)
     best_df.to_csv(output_dir / "best_decoder_by_target.csv", index=False)
     with open(output_dir / "best_decoder_by_target.json", "w") as f:
         json.dump(_json_safe(best_df.to_dict(orient="records")), f, indent=2)
 
-    best_manifold = build_best_manifold_decoder_table(metrics_df)
+    best_manifold = build_best_manifold_decoder_table(scored_df)
     if not best_manifold.empty:
         best_manifold.to_csv(output_dir / "best_manifold_decoder_by_target.csv", index=False)
-    vs_counts = build_manifold_vs_counts_summary(metrics_df)
+    vs_counts = build_manifold_vs_counts_summary(scored_df)
     if not vs_counts.empty:
         vs_counts.to_csv(output_dir / "manifold_vs_counts_summary.csv", index=False)
     write_manifold_decoder_report(
-        output_dir, metrics_df, vs_counts, best_manifold, explained_df,
+        output_dir, scored_df, vs_counts, best_manifold, explained_df,
     )
 
     if config.region_ablation:
@@ -760,27 +872,56 @@ def _build_best_decoder_table(
             best_idx = target_df[metric_key].idxmax()
         best_row = target_df.loc[best_idx]
         best_value = float(best_row[metric_key])
-        recommended_window = _recommended_window(target_df, metric_key, direction, best_value)
         feature_type = str(best_row["feature_type"])
         n_comp = best_row.get("manifold_n_components")
 
+        # Prefer realtime-compatible feature modes for closed-loop recommendations.
+        # Standard Isomap is offline_analysis_only.
+        rt_pool = target_df
+        if "realtime_compatible" in target_df.columns:
+            rt_ok = target_df["realtime_compatible"].fillna(True).astype(bool)
+            if rt_ok.any():
+                rt_pool = target_df[rt_ok]
+        if feature_type in OFFLINE_ONLY_FEATURE_MODES and not rt_pool.empty:
+            # Best offline result may be Isomap; recommend a realtime-capable alternative.
+            if direction == "lower":
+                rt_best_idx = rt_pool[metric_key].idxmin()
+            else:
+                rt_best_idx = rt_pool[metric_key].idxmax()
+            rt_best_row = rt_pool.loc[rt_best_idx]
+            rt_best_value = float(rt_best_row[metric_key])
+            recommended_window = _recommended_window(
+                rt_pool, metric_key, direction, rt_best_value,
+            )
+            rt_feature = str(rt_best_row["feature_type"])
+            rt_n_comp = rt_best_row.get("manifold_n_components")
+        else:
+            recommended_window = _recommended_window(
+                rt_pool if not rt_pool.empty else target_df,
+                metric_key, direction, best_value,
+            )
+            rt_feature = feature_type
+            rt_n_comp = n_comp
+
         model_path = models_dir / f"best_{target}_decoder.joblib"
         realtime_path = windowed_model_path(
-            models_dir, target, recommended_window, feature_type, n_comp,
+            models_dir, target, recommended_window, rt_feature, rt_n_comp,
         )
         best_window_path = windowed_model_path(
             models_dir, target, float(best_row["decode_window_s"]), feature_type, n_comp,
         )
 
         rt_row = _best_row_at_window(
-            target_df, recommended_window, feature_type, metric_key, direction, n_comp,
+            rt_pool if not rt_pool.empty else target_df,
+            recommended_window, rt_feature, metric_key, direction, rt_n_comp,
         )
         realtime_decoder_name = (
             str(rt_row["decoder_name"]) if rt_row is not None
             else str(best_row["decoder_name"])
         )
-        rt_n_comp = rt_row.get("manifold_n_components") if rt_row is not None else n_comp
-        rt_feature = str(rt_row["feature_type"]) if rt_row is not None else feature_type
+        if rt_row is not None:
+            rt_n_comp = rt_row.get("manifold_n_components")
+            rt_feature = str(rt_row["feature_type"])
 
         decoder_config = _build_decoder_config(
             str(best_row["decoder_name"]),
@@ -944,11 +1085,13 @@ def run_compare_sources(
     train_frac: float = 0.70,
     feature_modes: tuple[str, ...] = QUICK_FEATURE_MODES,
     manifold_n_components: tuple[int, ...] = DEFAULT_MANIFOLD_N_COMPONENTS,
+    isomap_n_neighbors: tuple[int, ...] = (DEFAULT_ISOMAP_N_NEIGHBORS,),
     max_models: str = "quick",
     n_jobs: int = -1,
     seed: int = 42,
     region_ablation: bool = False,
     layer_ablation: bool = False,
+    adaptive_windows: bool = False,
 ) -> pd.DataFrame:
     """Run decoder comparison for ground_truth and sorted spikes."""
     output_dir = Path(output_dir)
@@ -964,11 +1107,13 @@ def run_compare_sources(
             train_frac=train_frac,
             feature_modes=feature_modes,
             manifold_n_components=manifold_n_components,
+            isomap_n_neighbors=isomap_n_neighbors,
             max_models=max_models,
             n_jobs=n_jobs,
             seed=seed,
             region_ablation=region_ablation,
             layer_ablation=layer_ablation,
+            adaptive_windows=adaptive_windows,
         ))
         best_path = output_dir / source / "best_decoder_by_target.csv"
         if best_path.exists():

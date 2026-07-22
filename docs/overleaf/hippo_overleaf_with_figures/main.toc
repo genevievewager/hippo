@@ -1,0 +1,48 @@
+\contentsline {section}{\numberline {1}Introduction and scientific framing}{3}{section.1}%
+\contentsline {section}{\numberline {2}Public software workflow}{3}{section.2}%
+\contentsline {section}{\numberline {3}Simulation pipeline}{4}{section.3}%
+\contentsline {subsection}{\numberline {3.1}Neural backends}{4}{subsection.3.1}%
+\contentsline {section}{\numberline {4}Neural rate model}{4}{section.4}%
+\contentsline {subsection}{\numberline {4.1}Dynamics}{5}{subsection.4.1}%
+\contentsline {subsection}{\numberline {4.2}Target drive}{5}{subsection.4.2}%
+\contentsline {subsection}{\numberline {4.3}Default parameters}{5}{subsection.4.3}%
+\contentsline {section}{\numberline {5}Maximally hippocampal RatInABox populations}{5}{section.5}%
+\contentsline {section}{\numberline {6}Probe anatomy and region contact}{6}{section.6}%
+\contentsline {subsection}{\numberline {6.1}Cell type $\leftrightarrow $ probe contact}{7}{subsection.6.1}%
+\contentsline {section}{\numberline {7}Hippocampal dynamics overlays}{8}{section.7}%
+\contentsline {subsection}{\numberline {7.1}Shared global features}{8}{subsection.7.1}%
+\contentsline {subsection}{\numberline {7.2}Per-group overlays}{8}{subsection.7.2}%
+\contentsline {subsection}{\numberline {7.3}CA1 interneuron equation}{8}{subsection.7.3}%
+\contentsline {section}{\numberline {8}Inter-region coupling: implemented and planned}{9}{section.8}%
+\contentsline {subsection}{\numberline {8.1}What is implemented today}{9}{subsection.8.1}%
+\contentsline {subsection}{\numberline {8.2}Derived target: trisynaptic feedforward}{9}{subsection.8.2}%
+\contentsline {subsection}{\numberline {8.3}Decoder-facing consequence}{9}{subsection.8.3}%
+\contentsline {section}{\numberline {9}Causal decoding}{9}{section.9}%
+\contentsline {subsection}{\numberline {9.1}Observation model}{9}{subsection.9.1}%
+\contentsline {subsection}{\numberline {9.2}Timing symbols}{10}{subsection.9.2}%
+\contentsline {subsection}{\numberline {9.3}Architectural separation}{10}{subsection.9.3}%
+\contentsline {subsection}{\numberline {9.4}Decoding targets}{10}{subsection.9.4}%
+\contentsline {section}{\numberline {10}Decoder model zoo}{10}{section.10}%
+\contentsline {subsection}{\numberline {10.1}Quick mode (default)}{11}{subsection.10.1}%
+\contentsline {subsection}{\numberline {10.2}Full mode}{11}{subsection.10.2}%
+\contentsline {subsection}{\numberline {10.3}Selection policies and deployment rule}{11}{subsection.10.3}%
+\contentsline {paragraph}{Deployment rule.}{11}{section*.10}%
+\contentsline {section}{\numberline {11}Bayesian place decoder}{11}{section.11}%
+\contentsline {section}{\numberline {12}Manifold features}{11}{section.12}%
+\contentsline {subsection}{\numberline {12.1}Static manifold-informed decoding}{11}{subsection.12.1}%
+\contentsline {subsection}{\numberline {12.2}Optional temporal manifold decoding}{12}{subsection.12.2}%
+\contentsline {subsection}{\numberline {12.3}Offline Isomap and realtime distillation}{12}{subsection.12.3}%
+\contentsline {paragraph}{Parametric approximation.}{12}{section*.12}%
+\contentsline {section}{\numberline {13}Representative results from the latest run}{13}{section.13}%
+\contentsline {subsection}{\numberline {13.1}Simulation and recording summary}{13}{subsection.13.1}%
+\contentsline {subsection}{\numberline {13.2}Manifold-informed decoding}{15}{subsection.13.2}%
+\contentsline {subsection}{\numberline {13.3}Deployable offline selection (sorted spikes)}{17}{subsection.13.3}%
+\contentsline {subsection}{\numberline {13.4}Oracle diagnostics (ground-truth spikes)}{18}{subsection.13.4}%
+\contentsline {subsection}{\numberline {13.5}Causal realtime replay}{20}{subsection.13.5}%
+\contentsline {section}{\numberline {14}Outputs and visualization}{21}{section.14}%
+\contentsline {section}{\numberline {15}Future RatInABox behavior extensions}{22}{section.15}%
+\contentsline {subsection}{\numberline {15.1}Alignment with RatInABox}{22}{subsection.15.1}%
+\contentsline {subsection}{\numberline {15.2}Real trajectory implementation (\texttt {import\_trajectory})}{22}{subsection.15.2}%
+\contentsline {subsection}{\numberline {15.3}RL-based reward simulation}{22}{subsection.15.3}%
+\contentsline {section}{\numberline {16}Limitations}{23}{section.16}%
+\contentsline {section}{\numberline {17}Repository map (selected)}{23}{section.17}%

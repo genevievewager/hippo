@@ -14,7 +14,11 @@ import numpy as np
 import pandas as pd
 
 from hippo_sim.config import RATE_PARAMS, RIPPLE_PARAMS
-from visualization.constants import CELL_CLASS_ORDER, REGION_ORDER
+from visualization.constants import (
+    CELL_CLASS_ORDER,
+    RATE_MODEL_ORDER,
+    REGION_ORDER,
+)
 
 
 def _pick_column(df: pd.DataFrame, candidates: list[str], label: str) -> str:
@@ -193,6 +197,8 @@ class SimulationOutputs:
     session_duration_s: float = 600.0
     unit_mean_rates_gt: pd.Series = field(default_factory=pd.Series)
     unit_mean_rates_sorted: pd.Series = field(default_factory=pd.Series)
+    rates_hz: np.ndarray | None = None  # (n_units, n_steps) from rates.npy
+    rate_times_s: np.ndarray | None = None
 
     @property
     def cell_class_order(self) -> list[str]:
@@ -201,6 +207,17 @@ class SimulationOutputs:
     @property
     def region_order(self) -> list[str]:
         return [r for r in REGION_ORDER if r in self.units["region"].unique()]
+
+    @property
+    def rate_model_order(self) -> list[str]:
+        present = set(self.units["rate_model"].astype(str).unique())
+        ordered = [m for m in RATE_MODEL_ORDER if m in present]
+        extras = sorted(present - set(ordered))
+        return ordered + extras
+
+    @property
+    def has_ground_truth_rates(self) -> bool:
+        return self.rates_hz is not None and self.rate_times_s is not None
 
 
 def load_simulation_outputs(input_dir: Path) -> SimulationOutputs:
@@ -243,6 +260,31 @@ def load_simulation_outputs(input_dir: Path) -> SimulationOutputs:
     sorted_counts = spikes_sorted.groupby("unit_id").size()
     unit_mean_rates_sorted = sorted_counts / duration
 
+    rates_hz = None
+    rate_times_s = None
+    rates_path = input_dir / "rates.npy"
+    if rates_path.exists():
+        rates_hz = np.load(rates_path)
+        if rates_hz.ndim != 2:
+            raise ValueError(f"rates.npy must be 2-D (n_units, n_steps); got {rates_hz.shape}")
+        # Ensure unit axis matches units.csv order by unit_id.
+        n_units = len(units)
+        if rates_hz.shape[0] == n_units:
+            pass
+        elif rates_hz.shape[1] == n_units:
+            rates_hz = rates_hz.T
+        else:
+            raise ValueError(
+                f"rates.npy shape {rates_hz.shape} incompatible with n_units={n_units}"
+            )
+        n_steps = rates_hz.shape[1]
+        rate_times_s = np.arange(n_steps, dtype=float) * behavior_dt
+        # Prefer rate-derived mean rates when available (includes feedforward).
+        unit_mean_rates_gt = pd.Series(
+            rates_hz.mean(axis=1),
+            index=units["unit_id"].to_numpy(),
+        )
+
     return SimulationOutputs(
         input_dir=input_dir,
         behavior=behavior,
@@ -256,6 +298,8 @@ def load_simulation_outputs(input_dir: Path) -> SimulationOutputs:
         session_duration_s=session_duration,
         unit_mean_rates_gt=unit_mean_rates_gt,
         unit_mean_rates_sorted=unit_mean_rates_sorted,
+        rates_hz=rates_hz,
+        rate_times_s=rate_times_s,
     )
 
 
@@ -273,12 +317,18 @@ def sort_units_by_class_and_rate(
     return units.sort_values(["class_rank", "mean_rate_hz"], ascending=[True, False])
 
 
-def sort_units_by_rate_equation(
+def sort_units_by_rate_model(
     units: pd.DataFrame,
     mean_rates: pd.Series,
 ) -> pd.DataFrame:
-    """Sort units by rate_model (or rate_equation) then mean firing rate."""
+    """Sort units by rate_model then mean firing rate."""
     units = units.copy()
     units["mean_rate_hz"] = units["unit_id"].map(mean_rates).fillna(0.0)
-    sort_col = "rate_model" if "rate_model" in units.columns else "rate_equation"
+    sort_col = "rate_model" if "rate_model" in units.columns else "ratinabox_class"
+    if sort_col not in units.columns:
+        sort_col = "cell_type"
     return units.sort_values([sort_col, "mean_rate_hz"], ascending=[True, False])
+
+
+# Backward-compatible alias
+sort_units_by_rate_equation = sort_units_by_rate_model

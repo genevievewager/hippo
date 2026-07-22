@@ -7,23 +7,33 @@ from pathlib import Path
 import matplotlib.pyplot as plt
 from matplotlib.backends.backend_pdf import PdfPages
 
-from visualization.figure_captions import caption_for, title_for
+from visualization.figure_captions import caption_for
 
 SECTION_TITLES: dict[str, str] = {
-    ".": "Simulation visualizations",
-    "realtime_decoding": "Realtime closed-loop decoding",
+    "behavior": "Behavior — spatial overview and dynamics",
+    "features": "Behavioral covariates and neural drivers",
+    "neural": "Neural activity — rates, rasters, and example units",
+    "sorting": "Sorting vs ground truth and probe anatomy",
+    "report": "Simulation report summary",
+    "decoder_comparison": "Decoding and manifolds",
+    "decoder_comparison/ground_truth": "Decoder comparison — ground-truth spikes (legacy)",
+    "decoder_comparison/sorted": "Decoder comparison — Neuropixels sorted (legacy)",
+    "realtime_decoding": "Closed-loop realtime decoding",
     "realtime_decoding/comparison": "Realtime decoding — ground truth vs sorted comparison",
-    "realtime_decoding/ground_truth": "Realtime decoding — ground-truth spikes",
-    "realtime_decoding/sorted": "Realtime decoding — Neuropixels (sorted)",
-    "decoder_comparison": "Decoder comparison — source summary",
-    "decoder_comparison/ground_truth": "Decoder comparison — ground-truth spikes",
-    "decoder_comparison/sorted": "Decoder comparison — Neuropixels (sorted)",
-    "temporal_decoding": "Temporal manifold decoding",
+    "realtime_decoding/ground_truth": "Realtime decoding — ground-truth spikes (legacy)",
+    "realtime_decoding/sorted": "Realtime decoding — Neuropixels sorted (legacy)",
+    "deployment_decoder_selection": "Deployment decoder selection",
+    "latency": "Causal-update latency budget",
+    "temporal_decoding": "Temporal manifold decoding (W × L)",
 }
 
-# Preferred section order; any other relative dirs are appended alphabetically.
+# Preferred section order: simulation → decoding → manifolds → realtime → latency.
 SECTION_ORDER = [
-    ".",
+    "behavior",
+    "features",
+    "neural",
+    "sorting",
+    "report",
     "decoder_comparison",
     "decoder_comparison/ground_truth",
     "decoder_comparison/sorted",
@@ -31,6 +41,8 @@ SECTION_ORDER = [
     "realtime_decoding/comparison",
     "realtime_decoding/ground_truth",
     "realtime_decoding/sorted",
+    "deployment_decoder_selection",
+    "latency",
     "temporal_decoding",
 ]
 
@@ -39,14 +51,11 @@ def _section_key(figures_dir: Path, png_path: Path) -> str:
     """Map a PNG path to a section key, collapsing known nested run folders."""
     rel = png_path.parent.relative_to(figures_dir)
     if str(rel) == ".":
-        return "."
+        # Legacy flat layout; keep as its own catch-all section.
+        return "misc"
     key = rel.as_posix()
     # Prefer the longest known section prefix (e.g. realtime_decoding/sorted/...).
-    known = sorted(
-        (k for k in SECTION_TITLES if k != "."),
-        key=len,
-        reverse=True,
-    )
+    known = sorted(SECTION_TITLES, key=len, reverse=True)
     for prefix in known:
         if key == prefix or key.startswith(prefix + "/"):
             return prefix
@@ -131,13 +140,13 @@ def _add_image_page(
     caption_wrapped = _wrap_caption(caption)
 
     # Landscape letter page: image above, caption below (article style).
+    # No page title — panel letters live in the PNG; the caption is the only text label.
     fig = plt.figure(figsize=(11, 8.5))
     fig.patch.set_facecolor("white")
 
-    ax_img = fig.add_axes([0.05, 0.22, 0.90, 0.70])
+    ax_img = fig.add_axes([0.05, 0.22, 0.90, 0.74])
     ax_img.imshow(img)
     ax_img.axis("off")
-    ax_img.set_title(title_for(image_path), fontsize=11, pad=6)
 
     ax_cap = fig.add_axes([0.07, 0.04, 0.86, 0.16])
     ax_cap.axis("off")

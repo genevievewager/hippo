@@ -26,19 +26,29 @@ MANIFOLD_FEATURE_MODES = (
     "layer_pca",
     "cell_type_pca",
     "rate_model_pca",
+    "global_isomap",
+    "global_isomap_distilled",
 )
 ALL_FEATURE_MODES = IDENTITY_FEATURE_MODES + MANIFOLD_FEATURE_MODES
+
+# Offline-only static modes: evaluated in comparison, not auto-deployed realtime.
+# Distilled Isomap is realtime-eligible when latency/distortion gates pass.
+OFFLINE_ONLY_FEATURE_MODES = frozenset({"global_isomap"})
 
 QUICK_FEATURE_MODES = ("counts", "global_pca", "region_pca")
 FULL_FEATURE_MODES = ALL_FEATURE_MODES
 
 GROUPING_COLUMN = {
     "global_pca": None,
+    "global_isomap": None,
+    "global_isomap_distilled": None,
     "region_pca": "region",
     "layer_pca": "layer",
     "cell_type_pca": "cell_type",
     "rate_model_pca": "rate_model",  # falls back to ratinabox_class
 }
+
+DEFAULT_ISOMAP_N_NEIGHBORS = 10
 
 
 def is_manifold_feature_mode(feature_mode: str) -> bool:
@@ -67,7 +77,18 @@ def manifold_type_for_feature_mode(feature_mode: str) -> str:
         return "none"
     if feature_mode.endswith("_pca") or feature_mode == "global_pca":
         return "pca"
+    if feature_mode == "global_isomap_distilled" or feature_mode.endswith(
+        "_isomap_distilled"
+    ):
+        return "isomap_distilled"
+    if feature_mode.endswith("_isomap") or feature_mode == "global_isomap":
+        return "isomap"
     return feature_mode
+
+
+def is_realtime_compatible_feature_mode(feature_mode: str) -> bool:
+    """Return False for offline-only modes such as standard Isomap."""
+    return feature_mode not in OFFLINE_ONLY_FEATURE_MODES
 
 
 class IdentityFeatures(BaseEstimator, TransformerMixin):
@@ -374,23 +395,118 @@ class UMAPManifold(BaseEstimator, TransformerMixin):
 
 
 class IsomapManifold(BaseEstimator, TransformerMixin):
-    """Optional Isomap; primarily for offline visualization (weak out-of-sample transform)."""
+    """Static-decoding Isomap wrapper (offline analysis only).
 
-    def __init__(self, n_components: int = 3, n_neighbors: int = 10):
+    Delegates to ``IsomapManifoldEncoder`` with training-only preprocessing
+    (sqrt counts + standardization + optional PCA precompression). Tagged
+    ``realtime_compatible=False`` — do not auto-deploy into closed-loop replay.
+    """
+
+    realtime_compatible = False
+    deployment_tag = "offline_analysis_only"
+
+    def __init__(
+        self,
+        n_components: int = 3,
+        n_neighbors: int = DEFAULT_ISOMAP_N_NEIGHBORS,
+        *,
+        transform: str = "sqrt_counts",
+        standardize: bool = True,
+        pre_pca_enabled: bool = True,
+        pre_pca_n_components: int = 50,
+        require_connected_graph: bool = True,
+        allow_largest_component_only: bool = False,
+        minimum_largest_component_fraction: float = 0.95,
+        n_jobs: int | None = -1,
+        random_state: int = 42,
+    ):
         self.n_components = int(n_components)
         self.n_neighbors = int(n_neighbors)
-        self._isomap = None
+        self.transform_name = transform
+        self.standardize = bool(standardize)
+        self.pre_pca_enabled = bool(pre_pca_enabled)
+        self.pre_pca_n_components = int(pre_pca_n_components)
+        self.require_connected_graph = bool(require_connected_graph)
+        self.allow_largest_component_only = bool(allow_largest_component_only)
+        self.minimum_largest_component_fraction = float(
+            minimum_largest_component_fraction
+        )
+        self.n_jobs = n_jobs
+        self.random_state = int(random_state)
+        self._encoder = None
 
     def fit(self, X: np.ndarray, y: Any = None):
-        from sklearn.manifold import Isomap
-        self._isomap = Isomap(n_components=self.n_components, n_neighbors=self.n_neighbors)
-        self._isomap.fit(np.asarray(X, dtype=float))
+        from realtime.manifolds.isomap import IsomapManifoldEncoder
+
+        self._encoder = IsomapManifoldEncoder(
+            n_components=self.n_components,
+            n_neighbors=self.n_neighbors,
+            transform=self.transform_name,
+            standardize=self.standardize,
+            pre_pca_enabled=self.pre_pca_enabled,
+            pre_pca_n_components=self.pre_pca_n_components,
+            require_connected_graph=self.require_connected_graph,
+            allow_largest_component_only=self.allow_largest_component_only,
+            minimum_largest_component_fraction=self.minimum_largest_component_fraction,
+            n_jobs=self.n_jobs,
+            random_state=self.random_state,
+        )
+        self._encoder.fit(np.asarray(X, dtype=float))
         return self
 
     def transform(self, X: np.ndarray) -> np.ndarray:
-        if self._isomap is None:
+        if self._encoder is None:
             raise RuntimeError("IsomapManifold must be fit before transform")
-        return self._isomap.transform(np.asarray(X, dtype=float))
+        return self._encoder.transform(np.asarray(X, dtype=float))
+
+    def get_metadata(self) -> dict[str, Any]:
+        if self._encoder is None:
+            return {
+                "manifold_type": "isomap",
+                "manifold_grouping": None,
+                "manifold_n_components": self.n_components,
+                "actual_n_features": None,
+                "n_neighbors": self.n_neighbors,
+                "realtime_compatible": self.realtime_compatible,
+                "deployment_tag": self.deployment_tag,
+                "explained_variance_ratio": None,
+                "groups": [],
+            }
+        return self._encoder.get_metadata()
+
+    def save(self, output_dir: Path) -> None:
+        if self._encoder is None:
+            raise RuntimeError("IsomapManifold must be fit before save")
+        output_dir = Path(output_dir)
+        self._encoder.save(output_dir)
+        # Overlay static class_name for load_feature_transformer dispatch.
+        with open(output_dir / "meta.json") as f:
+            meta = json.load(f)
+        meta["class_name"] = "IsomapManifold"
+        meta["feature_mode"] = "global_isomap"
+        with open(output_dir / "meta.json", "w") as f:
+            json.dump(meta, f, indent=2)
+
+    @classmethod
+    def load(cls, input_dir: Path) -> IsomapManifold:
+        from realtime.manifolds.isomap import IsomapManifoldEncoder
+
+        enc = IsomapManifoldEncoder.load(input_dir)
+        obj = cls(
+            n_components=enc.n_components,
+            n_neighbors=enc.n_neighbors,
+            transform=enc.transform_name,
+            standardize=enc.standardize,
+            pre_pca_enabled=enc.pre_pca_enabled,
+            pre_pca_n_components=enc.pre_pca_n_components,
+            require_connected_graph=enc.require_connected_graph,
+            allow_largest_component_only=enc.allow_largest_component_only,
+            minimum_largest_component_fraction=enc.minimum_largest_component_fraction,
+            n_jobs=enc.n_jobs,
+            random_state=enc.random_state,
+        )
+        obj._encoder = enc
+        return obj
 
 
 def _group_labels_from_units(
@@ -425,6 +541,11 @@ def make_feature_transformer(
     units_df: pd.DataFrame | None = None,
     unit_ids: list[int] | np.ndarray | None = None,
     random_state: int = 42,
+    n_neighbors: int = DEFAULT_ISOMAP_N_NEIGHBORS,
+    isomap_pre_pca_enabled: bool = True,
+    isomap_pre_pca_n_components: int = 50,
+    isomap_require_connected_graph: bool = True,
+    n_jobs: int | None = -1,
 ) -> Any:
     """
     Construct an unfitted feature transformer for a feature mode.
@@ -436,6 +557,30 @@ def make_feature_transformer(
 
     if feature_mode == "global_pca":
         return GlobalPCAManifold(n_components=n_components, random_state=random_state)
+
+    if feature_mode == "global_isomap":
+        return IsomapManifold(
+            n_components=n_components,
+            n_neighbors=n_neighbors,
+            pre_pca_enabled=isomap_pre_pca_enabled,
+            pre_pca_n_components=isomap_pre_pca_n_components,
+            require_connected_graph=isomap_require_connected_graph,
+            n_jobs=n_jobs,
+            random_state=random_state,
+        )
+
+    if feature_mode == "global_isomap_distilled":
+        from realtime.manifolds.isomap_distilled_features import IsomapDistilledManifold
+
+        return IsomapDistilledManifold(
+            n_components=n_components,
+            n_neighbors=n_neighbors,
+            pre_pca_enabled=isomap_pre_pca_enabled,
+            pre_pca_n_components=isomap_pre_pca_n_components,
+            require_connected_graph=isomap_require_connected_graph,
+            n_jobs=n_jobs,
+            random_state=random_state,
+        )
 
     grouping = grouping_for_feature_mode(feature_mode)
     if grouping is None:
@@ -459,7 +604,7 @@ def make_feature_transformer(
 
 
 def load_feature_transformer(input_dir: Path) -> Any:
-    """Load a saved Identity / GlobalPCA / GroupwisePCA transformer."""
+    """Load a saved Identity / GlobalPCA / GroupwisePCA / Isomap transformer."""
     input_dir = Path(input_dir)
     with open(input_dir / "meta.json") as f:
         meta = json.load(f)
@@ -470,6 +615,12 @@ def load_feature_transformer(input_dir: Path) -> Any:
         return GlobalPCAManifold.load(input_dir)
     if name == "GroupwisePCAManifold":
         return GroupwisePCAManifold.load(input_dir)
+    if name in ("IsomapManifold", "IsomapManifoldEncoder"):
+        return IsomapManifold.load(input_dir)
+    if name == "IsomapDistilledManifold":
+        from realtime.manifolds.isomap_distilled_features import IsomapDistilledManifold
+
+        return IsomapDistilledManifold.load(input_dir)
     raise ValueError(f"Unknown manifold class in {input_dir}: {name}")
 
 
@@ -477,9 +628,16 @@ def manifold_transform_dirname(
     feature_mode: str,
     decode_window: float,
     n_components: int | None,
+    n_neighbors: int | None = None,
 ) -> str:
     """Stable directory name for a fitted manifold transform."""
     w_ms = int(round(float(decode_window) * 1000))
     if n_components is None:
         return f"{feature_mode}_w{w_ms:04d}ms"
+    if n_neighbors is not None and (
+        feature_mode in ("global_isomap", "global_isomap_distilled")
+        or feature_mode.endswith("_isomap")
+        or feature_mode.endswith("_isomap_distilled")
+    ):
+        return f"{feature_mode}_k{int(n_components)}_nn{int(n_neighbors)}_w{w_ms:04d}ms"
     return f"{feature_mode}_k{int(n_components)}_w{w_ms:04d}ms"

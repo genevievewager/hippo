@@ -4,6 +4,10 @@
 Runs comparison → best-window selection → causal closed-loop replay →
 optional figures/PDF. Prefer this over ``run_decoder_comparison.py`` or
 ``run_realtime_decoding.py``.
+
+Default ``--profile standard`` uses a lean adaptive W search with counts +
+PCA manifold features (so manifold usefulness is still reported). Research
+sweeps use ``--profile full`` and optional ``--enable-temporal-manifold``.
 """
 
 from __future__ import annotations
@@ -11,16 +15,10 @@ from __future__ import annotations
 import argparse
 from pathlib import Path
 
-from realtime.decoder_comparison import (
-    DEFAULT_DECODE_WINDOWS,
-    DEFAULT_MANIFOLD_N_COMPONENTS,
-)
-from realtime.manifold_features import ALL_FEATURE_MODES, QUICK_FEATURE_MODES
-from realtime.timing import (
-    DEFAULT_LATENT_HISTORY_FRAMES,
-    DEFAULT_UPDATE_DT_S,
-)
+from realtime.manifold_features import ALL_FEATURE_MODES
+from realtime.timing import DEFAULT_UPDATE_DT_S
 from realtime.workflow import run_full_decoder_workflow
+from realtime.workflow_profiles import PROFILES
 
 
 def parse_args() -> argparse.Namespace:
@@ -28,7 +26,8 @@ def parse_args() -> argparse.Namespace:
         description=(
             "Full decoder workflow: compare models/windows, select the best "
             "setup, run causal closed-loop replay, optionally visualize. "
-            "Default update interval matches 20 Hz behavior (0.050 s)."
+            "Default profile=standard is lean (adaptive W, sorted spikes, "
+            "manifold vs counts reported). Use --profile full for research grids."
         ),
     )
     parser.add_argument("--input", type=Path, required=True, help="Simulation output directory")
@@ -36,21 +35,79 @@ def parse_args() -> argparse.Namespace:
         "--output", type=Path, required=True,
         help="Experiment directory (writes decoder_comparison/, realtime_decoding/, figures/)",
     )
-    parser.add_argument("--compare-sources", action="store_true")
-    parser.add_argument("--spike-source", choices=["sorted", "ground_truth"], default="sorted")
     parser.add_argument(
-        "--decode-windows", type=float, nargs="+",
-        default=list(DEFAULT_DECODE_WINDOWS),
-        help="Neural integration windows W in seconds",
+        "--profile",
+        choices=sorted(PROFILES.keys()),
+        default="standard",
+        help=(
+            "Workflow profile: quick (coarse W), standard (coarse+refine, default), "
+            "full (dense research grid). Explicit flags below override the profile."
+        ),
     )
-    parser.add_argument("--max-models", choices=["quick", "full"], default="quick")
+    parser.add_argument("--compare-sources", action="store_true", default=None,
+                        help="Deprecated alias: prefer --include-ground-truth-diagnostics")
+    parser.add_argument("--no-compare-sources", action="store_true",
+                        help="Force sorted-only even if a flag would compare sources")
+    parser.add_argument(
+        "--deployment-only",
+        action="store_true",
+        default=True,
+        help="Select deployable models from sorted spikes only (default)",
+    )
+    parser.add_argument(
+        "--no-deployment-only",
+        action="store_true",
+        help="Allow non-default spike_source behavior (advanced)",
+    )
+    parser.add_argument(
+        "--include-ground-truth-diagnostics",
+        action="store_true",
+        help=(
+            "Also run ground-truth oracle comparisons (non-deployable). "
+            "Deployable models are still selected from sorted spikes only."
+        ),
+    )
+    parser.add_argument("--spike-source", choices=["sorted", "ground_truth"], default="sorted",
+                        help="Ignored for deployment selection (always sorted)")
+    parser.add_argument(
+        "--decode-windows", type=float, nargs="+", default=None,
+        help=(
+            "Neural integration windows W in seconds "
+            "(default standard profile: 0.050 0.100 0.250 0.500 1.000)"
+        ),
+    )
+    parser.add_argument(
+        "--adaptive-windows", action="store_true", default=None,
+        help="After coarse W pass, densify near per-target optima",
+    )
+    parser.add_argument(
+        "--no-adaptive-windows", action="store_true",
+        help="Disable adaptive W refine",
+    )
+    parser.add_argument("--max-models", choices=["quick", "full"], default=None)
     parser.add_argument(
         "--feature-modes", nargs="+", default=None, choices=list(ALL_FEATURE_MODES),
-        help="Feature modes (default quick: counts global_pca region_pca)",
+        help="Feature modes (default from profile: counts + global_pca + region_pca)",
     )
     parser.add_argument("--manifold-n-components", type=int, default=3)
     parser.add_argument(
         "--manifold-components-list", type=int, nargs="+", default=None,
+    )
+    parser.add_argument(
+        "--isomap-neighbors", type=int, nargs="+", default=None,
+        help="Isomap n_neighbors grid for global_isomap (default: 10)",
+    )
+    parser.add_argument(
+        "--isomap-latent-dim", type=int, default=None,
+        help="Latent dim for Isomap / distilled Isomap (default: 8)",
+    )
+    parser.add_argument(
+        "--enable-isomap-distillation",
+        action="store_true",
+        help=(
+            "Include offline global_isomap and realtime-eligible "
+            "global_isomap_distilled in the feature-mode comparison"
+        ),
     )
     parser.add_argument("--region-ablation", action="store_true")
     parser.add_argument("--layer-ablation", action="store_true")
@@ -73,6 +130,11 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--skip-visualization", action="store_true")
     parser.add_argument(
+        "--skip-comparison",
+        action="store_true",
+        help="Reuse existing decoder_comparison/ outputs (skip Step 1)",
+    )
+    parser.add_argument(
         "--include-simulation-figures",
         action="store_true",
         help="Also regenerate simulation figures during the workflow viz step",
@@ -81,28 +143,23 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--enable-temporal-manifold",
         action="store_true",
-        help="Run Phase-1 joint W×L temporal manifold comparison under decoding/",
+        default=None,
+        help="Run Phase-1 W×L temporal comparison (lean grid unless --profile full)",
     )
     parser.add_argument(
-        "--representations", nargs="+", default=["raw", "pca"],
-        help="Manifold representations for temporal comparison",
+        "--representations", nargs="+", default=None,
+        help="Temporal manifold representations (default: pca for quick/standard)",
     )
     parser.add_argument(
-        "--latent-history-frames", type=int, nargs="+",
-        default=list(DEFAULT_LATENT_HISTORY_FRAMES),
-        help="Latent history lengths L in video frames",
+        "--latent-history-frames", type=int, nargs="+", default=None,
+        help="Latent history lengths L in video frames (default from profile)",
     )
     parser.add_argument(
-        "--temporal-models", nargs="+",
-        default=[
-            "raw_static", "static_latent", "flattened_history",
-            "shuffled_sequence", "averaged_history",
-        ],
-        help="Temporal model classes (Phase 1; GRU/TCN in later phases)",
+        "--temporal-models", nargs="+", default=None,
+        help="Temporal model classes (default: core 3; full adds shuffle/average controls)",
     )
     parser.add_argument(
-        "--prediction-lags", type=float, nargs="+",
-        default=[0.0],
+        "--prediction-lags", type=float, nargs="+", default=None,
         help="Neural-to-behavior prediction lags tau in seconds (tau >= 0)",
     )
     return parser.parse_args()
@@ -114,21 +171,48 @@ def main() -> None:
     if args.behavior_rate and abs(args.update_dt - DEFAULT_UPDATE_DT_S) < 1e-12:
         update_dt = 1.0 / float(args.behavior_rate)
 
-    if args.feature_modes is None:
-        feature_modes = QUICK_FEATURE_MODES
-    else:
-        feature_modes = tuple(args.feature_modes)
     if args.manifold_components_list:
         n_comps = tuple(args.manifold_components_list)
     else:
         n_comps = (int(args.manifold_n_components),)
 
+    compare_sources: bool | None
+    if args.no_compare_sources:
+        compare_sources = False
+    elif args.compare_sources or args.include_ground_truth_diagnostics:
+        compare_sources = True
+    else:
+        compare_sources = None
+
+    adaptive_windows: bool | None
+    if args.no_adaptive_windows:
+        adaptive_windows = False
+    elif args.adaptive_windows:
+        adaptive_windows = True
+    else:
+        adaptive_windows = None
+
+    deployment_only = not args.no_deployment_only
+    include_gt = bool(args.include_ground_truth_diagnostics or args.compare_sources)
+
+    feature_modes = tuple(args.feature_modes) if args.feature_modes else None
+    if args.enable_isomap_distillation:
+        base = list(feature_modes) if feature_modes else ["counts", "global_pca", "region_pca"]
+        for mode in ("global_isomap", "global_isomap_distilled"):
+            if mode not in base:
+                base.append(mode)
+        feature_modes = tuple(base)
+
     result = run_full_decoder_workflow(
         input_dir=args.input,
         output_dir=args.output,
-        compare_sources=args.compare_sources,
+        profile=args.profile,
+        compare_sources=compare_sources,
         spike_source=args.spike_source,
-        decode_windows=tuple(args.decode_windows),
+        deployment_only=deployment_only,
+        include_ground_truth_diagnostics=include_gt,
+        decode_windows=tuple(args.decode_windows) if args.decode_windows else None,
+        adaptive_windows=adaptive_windows,
         max_models=args.max_models,
         closed_loop_target=args.closed_loop_target,
         selection_policy=args.selection_policy,
@@ -138,19 +222,32 @@ def main() -> None:
         seed=args.seed,
         feature_modes=feature_modes,
         manifold_n_components=n_comps,
+        isomap_n_neighbors=(
+            tuple(args.isomap_neighbors) if args.isomap_neighbors else None
+        ),
+        isomap_latent_dim=args.isomap_latent_dim,
         region_ablation=args.region_ablation,
         layer_ablation=args.layer_ablation,
         skip_visualization=args.skip_visualization,
+        skip_comparison=args.skip_comparison,
         compile_pdf=args.compile_pdf,
         include_simulation_figures=args.include_simulation_figures,
-        enable_temporal_manifold=args.enable_temporal_manifold,
-        representations=tuple(args.representations),
-        latent_history_frames=tuple(args.latent_history_frames),
-        prediction_lags=tuple(args.prediction_lags),
-        temporal_models=tuple(args.temporal_models),
+        enable_temporal_manifold=True if args.enable_temporal_manifold else None,
+        representations=tuple(args.representations) if args.representations else None,
+        latent_history_frames=(
+            tuple(args.latent_history_frames) if args.latent_history_frames else None
+        ),
+        prediction_lags=tuple(args.prediction_lags) if args.prediction_lags else None,
+        temporal_models=tuple(args.temporal_models) if args.temporal_models else None,
     )
     print("Full decoder workflow complete.")
+    if result.profile:
+        print(f"  profile:    {result.profile}")
     print(f"  comparison: {result.comparison_dir}")
+    if result.deployment_dir is not None:
+        print(f"  deployment: {result.deployment_dir}")
+    if result.best_realtime_json is not None:
+        print(f"  realtime models: {result.best_realtime_json}")
     print(f"  realtime:   {result.realtime_dir}")
     if result.temporal_dir is not None:
         print(f"  temporal:   {result.temporal_dir}")

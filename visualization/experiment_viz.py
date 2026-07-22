@@ -11,9 +11,12 @@ from pathlib import Path
 
 from visualization.behavior_plots import generate_behavior_plots
 from visualization.cell_class_plots import generate_cell_class_plots
-from visualization.decoder_plots import (
-    plot_decoder_comparison_outputs,
-    plot_realtime_outputs,
+from visualization.constants import (
+    FIGURE_SUBDIR_BEHAVIOR,
+    FIGURE_SUBDIR_FEATURES,
+    FIGURE_SUBDIR_NEURAL,
+    FIGURE_SUBDIR_REPORT,
+    FIGURE_SUBDIR_SORTING,
 )
 from visualization.feature_plots import generate_feature_plots
 from visualization.load_outputs import load_simulation_outputs
@@ -67,13 +70,28 @@ def generate_simulation_figures(
     figures_dir: Path,
     rate_bin_size: float = 0.250,
 ) -> None:
-    """Generate simulation behavior/neural/probe figures into figures_dir."""
+    """Generate simulation figures into categorized subfolders under figures_dir.
+
+    Layout (figures root contains only subfolders + output.pdf)::
+
+        figures/
+          behavior/   features/   neural/   sorting/   report/
+          decoder_comparison/   realtime_decoding/   temporal_decoding/
+          output.pdf
+    """
     data = load_simulation_outputs(experiment_dir)
-    generate_behavior_plots(data, figures_dir)
-    generate_feature_plots(data, figures_dir)
-    generate_neural_plots(data, figures_dir, rate_bin_size=rate_bin_size)
-    generate_cell_class_plots(data, figures_dir, rate_bin_size=rate_bin_size)
-    generate_report_figures(data, figures_dir, rate_bin_size=rate_bin_size)
+    figures_dir = Path(figures_dir)
+    generate_behavior_plots(data, figures_dir / FIGURE_SUBDIR_BEHAVIOR)
+    generate_feature_plots(data, figures_dir / FIGURE_SUBDIR_FEATURES)
+    generate_neural_plots(
+        data, figures_dir / FIGURE_SUBDIR_NEURAL, rate_bin_size=rate_bin_size,
+    )
+    generate_cell_class_plots(
+        data, figures_dir / FIGURE_SUBDIR_SORTING, rate_bin_size=rate_bin_size,
+    )
+    generate_report_figures(
+        data, figures_dir / FIGURE_SUBDIR_REPORT, rate_bin_size=rate_bin_size,
+    )
 
 
 def generate_experiment_figures(
@@ -103,27 +121,43 @@ def generate_experiment_figures(
         generate_simulation_figures(experiment_dir, figures_dir, rate_bin_size=rate_bin_size)
         result.simulation = True
 
-    comparison_dir = experiment_dir / "decoder_comparison"
+    # Publication multi-panel suite: decoding, manifolds/Isomap, closed-loop,
+    # deployment, latency, optional temporal W×L (replaces legacy single-panel sprawl).
+    needs_publication = False
     if include_comparison and has_decoder_comparison(experiment_dir):
-        print(f"Generating decoder comparison figures from {comparison_dir}...")
-        plot_decoder_comparison_outputs(comparison_dir, figures_dir)
+        needs_publication = True
         result.comparison = True
-
-    realtime_dir = experiment_dir / "realtime_decoding"
+    deploy_dir = experiment_dir / "deployment_decoder_selection"
+    scores_sorted = (
+        experiment_dir / "decoder_comparison" / "sorted" / "all_window_scores_sorted.csv"
+    )
+    if include_comparison and (deploy_dir.exists() or scores_sorted.exists()):
+        needs_publication = True
     if include_realtime and has_realtime_decoding(experiment_dir):
-        print(f"Generating realtime decoding figures from {realtime_dir}...")
-        plot_realtime_outputs(realtime_dir, figures_dir)
+        needs_publication = True
         result.realtime = True
-
     temporal_dir = experiment_dir / "decoding"
     if include_comparison and (temporal_dir / "comparison").exists():
-        try:
-            from visualization.temporal_plots import plot_temporal_comparison_outputs
+        needs_publication = True
+    lat_dir = experiment_dir / "latency_profiling"
+    rt_has_latency = False
+    if (experiment_dir / "realtime_decoding").exists():
+        rt_has_latency = any(
+            (experiment_dir / "realtime_decoding").rglob("latency/latency_by_stage.csv")
+        )
+    if lat_dir.exists() or rt_has_latency:
+        needs_publication = True
 
-            print(f"Generating temporal decoding figures from {temporal_dir}...")
-            plot_temporal_comparison_outputs(temporal_dir, figures_dir)
+    if needs_publication:
+        try:
+            from visualization.publication_decoding_plots import (
+                generate_publication_decoding_figures,
+            )
+
+            print(f"Generating publication decoding/manifold figures from {experiment_dir}...")
+            generate_publication_decoding_figures(experiment_dir, figures_dir)
         except Exception as exc:
-            print(f"  warning: temporal plots skipped ({exc})")
+            print(f"  warning: publication decoding figures skipped ({exc})")
 
     if compile_pdf:
         print(f"Compiling PDF under {figures_dir}...")

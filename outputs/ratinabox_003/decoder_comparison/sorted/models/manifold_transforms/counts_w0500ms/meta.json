@@ -1,7 +1,0 @@
-{
-  "class_name": "IdentityFeatures",
-  "feature_mode": "counts",
-  "decode_window": 0.5,
-  "n_features_in": 200,
-  "n_features_out": 200
-}

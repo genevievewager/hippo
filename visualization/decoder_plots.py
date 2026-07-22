@@ -15,6 +15,7 @@ import pandas as pd
 from sklearn.metrics import confusion_matrix
 
 from realtime.constants import SOURCE_LABELS
+from visualization.constants import FIGURE_SUBDIR_DECODER, FIGURE_SUBDIR_REALTIME
 
 FIGURE_DPI = 150
 
@@ -95,39 +96,20 @@ def plot_realtime_outputs(
 ) -> Path:
     """Generate realtime decoding figures under figures_dir/realtime_decoding/.
 
-    Supports flat layouts (``realtime_decoding/{sorted,ground_truth}/``) and
-    nested best-decoder layouts
-    (``realtime_decoding/{source}/{target}_{policy}/``).
+    Default: publication multi-panel ``fig_closed_loop``. Legacy per-run
+    single-panel helpers remain available as ``plot_realtime_run``.
     """
     realtime_dir = Path(realtime_dir)
-    out_root = Path(figures_dir) / "realtime_decoding"
+    out_root = Path(figures_dir) / FIGURE_SUBDIR_REALTIME
     out_root.mkdir(parents=True, exist_ok=True)
 
-    gt = realtime_dir / "ground_truth" / "decoded_realtime.csv"
-    sorted_csv = realtime_dir / "sorted" / "decoded_realtime.csv"
-    wrote_any = False
+    experiment_dir = (
+        realtime_dir.parent if realtime_dir.name == "realtime_decoding" else realtime_dir
+    )
+    from visualization.publication_decoding_plots import plot_fig_closed_loop
 
-    if gt.exists() and sorted_csv.exists():
-        plot_realtime_source_comparison(realtime_dir, out_root / "comparison")
-        wrote_any = True
-
-    for source in ("sorted", "ground_truth"):
-        source_dir = realtime_dir / source
-        if (source_dir / "decoded_realtime.csv").exists():
-            plot_realtime_run(source_dir, out_root / source, source)
-            wrote_any = True
-
-    # Nested best-decoder runs: */decoded_realtime.csv under source/target_policy/
-    for decoded in sorted(realtime_dir.rglob("decoded_realtime.csv")):
-        run_dir = decoded.parent
-        if run_dir.name in ("sorted", "ground_truth") and run_dir.parent == realtime_dir:
-            continue  # already handled as flat source dir
-        rel = run_dir.relative_to(realtime_dir)
-        spike_source = rel.parts[0] if rel.parts else "sorted"
-        plot_realtime_run(run_dir, out_root / rel.as_posix(), spike_source)
-        wrote_any = True
-
-    if not wrote_any:
+    path = plot_fig_closed_loop(experiment_dir, figures_dir)
+    if path is None and not any(realtime_dir.rglob("decoded_realtime.csv")):
         raise FileNotFoundError(
             f"No realtime decoding outputs found under {realtime_dir}"
         )
@@ -138,38 +120,44 @@ def plot_decoder_comparison_outputs(
     comparison_dir: Path,
     figures_dir: Path,
 ) -> Path:
-    """Generate decoder comparison figures under figures_dir/decoder_comparison/."""
+    """Generate decoder comparison figures under figures_dir/decoder_comparison/.
+
+    Default path emits publication multi-panel ``fig_*`` figures via
+    ``publication_decoding_plots`` / ``publication_isomap_plots``. Legacy
+    single-panel writers remain as private helpers for ad-hoc use.
+    """
     comparison_dir = Path(comparison_dir)
-    out_root = Path(figures_dir) / "decoder_comparison"
+    out_root = Path(figures_dir) / FIGURE_SUBDIR_DECODER
     out_root.mkdir(parents=True, exist_ok=True)
 
-    gt_metrics = comparison_dir / "ground_truth" / "decoder_comparison_metrics.csv"
-    sorted_metrics = comparison_dir / "sorted" / "decoder_comparison_metrics.csv"
-    wrote_any = False
+    # Resolve experiment root that owns decoder_comparison/
+    experiment_dir = comparison_dir.parent if comparison_dir.name == "decoder_comparison" else comparison_dir
+    if not (experiment_dir / "decoder_comparison").exists():
+        experiment_dir = comparison_dir
 
-    if gt_metrics.exists() and sorted_metrics.exists():
-        _plot_decoder_comparison_source_summary(comparison_dir, out_root)
-        for source in ("ground_truth", "sorted"):
-            _plot_decoder_comparison_single(
-                comparison_dir / source,
-                out_root / source,
-            )
-        wrote_any = True
-    elif (comparison_dir / "decoder_comparison_metrics.csv").exists():
-        _plot_decoder_comparison_single(comparison_dir, out_root)
-        wrote_any = True
+    from visualization.publication_decoding_plots import (
+        plot_fig_decoding_performance,
+        plot_fig_manifold_decoding,
+    )
+    from visualization.publication_isomap_plots import generate_publication_isomap_figures
 
-    if not wrote_any:
+    wrote = False
+    for fn in (plot_fig_decoding_performance, plot_fig_manifold_decoding):
+        try:
+            if fn(experiment_dir, figures_dir) is not None:
+                wrote = True
+        except Exception as exc:
+            print(f"  warning: {fn.__name__} skipped ({exc})")
+    try:
+        generate_publication_isomap_figures(experiment_dir, figures_dir)
+        wrote = True
+    except Exception as exc:
+        print(f"  warning: isomap publication figures skipped ({exc})")
+
+    if not wrote and not list(comparison_dir.rglob("decoder_comparison_metrics.csv")):
         raise FileNotFoundError(
             f"No decoder comparison outputs found under {comparison_dir}"
         )
-
-    try:
-        from visualization.manifold_plots import plot_manifold_comparison_outputs
-        plot_manifold_comparison_outputs(comparison_dir, out_root)
-    except Exception as exc:
-        print(f"  warning: manifold plots skipped ({exc})")
-
     return out_root
 
 

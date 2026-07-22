@@ -1,21 +1,30 @@
-"""Registry for manifold encoders (Phase 1: raw, pca)."""
+"""Registry for manifold encoders (raw, pca, isomap)."""
 
 from __future__ import annotations
 
 from typing import Any
 
 from realtime.manifolds.base import ManifoldEncoder
+from realtime.manifolds.isomap import IsomapManifoldEncoder
 from realtime.manifolds.pca import PCAManifoldEncoder
 from realtime.manifolds.raw import RawManifoldEncoder
 
 _REGISTRY = {
     "raw": RawManifoldEncoder,
     "pca": PCAManifoldEncoder,
+    "isomap": IsomapManifoldEncoder,
 }
+
+# Offline-only methods that must not auto-deploy into realtime replay.
+OFFLINE_ONLY_MANIFOLDS = frozenset({"isomap"})
 
 
 def available_manifolds() -> list[str]:
     return sorted(_REGISTRY)
+
+
+def is_realtime_compatible_manifold(name: str) -> bool:
+    return name.lower() not in OFFLINE_ONLY_MANIFOLDS
 
 
 def make_manifold_encoder(name: str, **kwargs: Any) -> ManifoldEncoder:

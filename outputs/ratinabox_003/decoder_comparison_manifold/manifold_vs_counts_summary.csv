@@ -1,9 +1,0 @@
-spike_source,target_name,primary_metric,best_counts_feature_type,best_counts_decoder,best_counts_window_s,best_counts_metric_value,best_manifold_feature_type,best_manifold_decoder,best_manifold_window_s,best_manifold_n_components,best_manifold_metric_value,performance_difference,interpretation
-sorted,position,mean_position_error_cm,counts,random_forest_regressor,0.25,13.10575441826282,region_pca,random_forest_regressor,0.25,3.0,10.162883478569807,2.9428709396930124,manifold improves decoding
-sorted,speed,r2,counts,pca_ridge,0.25,0.5567016900007351,region_pca,ridge,0.25,2.0,0.575604961081785,0.018903271081049944,manifold comparable to raw counts
-sorted,acceleration,r2,counts,random_forest_regressor,0.1,0.016784316748451378,region_pca,ridge,0.1,2.0,0.025730566695445156,0.008946249946993778,manifold improves decoding
-sorted,head_direction,mean_circular_error_deg,counts,pca_ridge,0.25,16.993915563030676,region_pca,pca_ridge,0.25,2.0,16.369114073413133,0.6248014896175427,manifold comparable to raw counts
-sorted,distance_to_wall,r2,counts,random_forest_regressor,0.25,0.6461683111134526,region_pca,random_forest_regressor,0.25,3.0,0.5978891381452229,-0.0482791729682297,manifold reduces decoding
-sorted,spatial_context,balanced_accuracy,counts,random_forest_classifier,0.25,0.7701327767100081,region_pca,random_forest_classifier,0.25,3.0,0.7914165115422017,0.02128373483219359,manifold comparable to raw counts
-sorted,movement_state,balanced_accuracy,counts,logistic_regression,0.1,0.6087988653550632,region_pca,logistic_regression,0.25,3.0,0.705361339946352,0.09656247459128875,manifold improves decoding
-sorted,wall_distance_bin,balanced_accuracy,counts,random_forest_classifier,0.25,0.7193938173191564,region_pca,random_forest_classifier,0.25,3.0,0.7756243786054448,0.05623056128628834,manifold improves decoding

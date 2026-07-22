@@ -72,7 +72,14 @@ METADATA_STATUS = {
 
 def _derive_cell_class(cell_type: str) -> str:
     ct = str(cell_type).lower()
-    if "inh" in ct or "inter" in ct or "pv" in ct or "som" in ct:
+    if (
+        "inh" in ct
+        or "inter" in ct
+        or ct.endswith("_int")
+        or "_int_" in ct
+        or "pv" in ct
+        or "som" in ct
+    ):
         return "inhibitory"
     return "excitatory"
 

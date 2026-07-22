@@ -1,7 +1,7 @@
 """Behavioral and neural driver feature visualization.
 
-Latent navigation variables (position, speed, heading) drive hippocampal
-rate equations; these plots show how those features evolve over time.
+Latent navigation variables (position, speed, heading) drive RatInABox
+neural populations; these plots show how those features evolve over time.
 """
 
 from __future__ import annotations
@@ -200,7 +200,16 @@ def plot_neural_driver_features_by_cell_class(data: SimulationOutputs, output_di
 
 
 def generate_feature_plots(data: SimulationOutputs, output_dir: Path) -> None:
-    plot_behavior_features_over_time(data, output_dir)
-    plot_behavior_feature_distributions(data, output_dir)
-    plot_neural_driver_features_over_time(data, output_dir)
-    plot_neural_driver_features_by_cell_class(data, output_dir)
+    """Generate compressed publication-style feature / driver figures."""
+    output_dir = Path(output_dir)
+    output_dir.mkdir(parents=True, exist_ok=True)
+    from visualization.publication_behavior_plots import (
+        plot_fig_behavior_features,
+        plot_fig_neural_drivers,
+        _cleanup_legacy_pngs,
+    )
+
+    plot_fig_behavior_features(data, output_dir)
+    plot_fig_neural_drivers(data, output_dir)
+    _cleanup_legacy_pngs(output_dir)
+

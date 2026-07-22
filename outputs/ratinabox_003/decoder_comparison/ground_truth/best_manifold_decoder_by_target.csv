@@ -1,9 +1,0 @@
-target_name,primary_metric,best_feature_type,best_manifold_type,best_manifold_grouping,best_manifold_n_components,best_decode_window_s,best_decoder_name,best_metric_value,spike_source,actual_n_features
-position,mean_position_error_cm,region_pca,pca,region,3.0,0.5,random_forest_regressor,4.132931678676671,ground_truth,12
-speed,r2,region_pca,pca,region,3.0,0.1,ridge,0.6652082214210336,ground_truth,12
-acceleration,r2,region_pca,pca,region,3.0,0.1,ridge,0.03051996605230123,ground_truth,12
-head_direction,mean_circular_error_deg,region_pca,pca,region,3.0,0.1,ridge,12.695915172471862,ground_truth,12
-distance_to_wall,r2,region_pca,pca,region,3.0,0.5,random_forest_regressor,0.9051487262867765,ground_truth,12
-spatial_context,balanced_accuracy,region_pca,pca,region,3.0,0.5,random_forest_classifier,0.9187782587421426,ground_truth,12
-movement_state,balanced_accuracy,region_pca,pca,region,3.0,0.1,logistic_regression,0.7510381920869512,ground_truth,12
-wall_distance_bin,balanced_accuracy,region_pca,pca,region,3.0,0.25,random_forest_classifier,0.8690962261259024,ground_truth,12
