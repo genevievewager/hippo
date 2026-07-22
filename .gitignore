@@ -1,0 +1,7 @@
+.hippo/
+__pycache__/
+*.pyc
+.pytest_cache/
+outputs/
+*.pdf
+*.zip

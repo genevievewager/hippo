@@ -209,8 +209,17 @@ def run_realtime_pipeline(
         primary_target=closed_loop_target if primary_model is not None else None,
         feature_transformer=feature_transformer,
     )
-    decoded_df = rt_decoder.replay(data["spikes_df"], beh_test)
+    replay_out = rt_decoder.replay(
+        data["spikes_df"], beh_test, profile_latency=True,
+    )
+    decoded_df, latency_samples = replay_out
 
+    import time as _time
+
+    from realtime.latency_profiler import save_latency_artifacts
+
+    # Time closed-loop policy separately (vectorized over decoded frames).
+    t_cl0 = _time.perf_counter()
     closed_loop_df = evaluate_closed_loop(
         decoded_df,
         closed_loop_target=closed_loop_target,
@@ -225,6 +234,30 @@ def run_realtime_pipeline(
         trigger_hd_width_deg=trigger_hd_width_deg,
         arena_bounds=arena_bounds,
     )
+    closed_loop_total_ms = (_time.perf_counter() - t_cl0) * 1000.0
+    per_frame_cl_ms = closed_loop_total_ms / max(len(decoded_df), 1)
+    for sample in latency_samples:
+        sample.stages_ms["closed_loop_policy"] = per_frame_cl_ms
+        # Recompute total including closed-loop share
+        sample.stages_ms["total_update"] = (
+            sample.stages_ms.get("total_update", 0.0) + per_frame_cl_ms
+        )
+
+    latency_summary = save_latency_artifacts(
+        latency_samples,
+        output_dir / "latency",
+        update_budget_ms=float(update_dt) * 1000.0,
+        extra_meta={
+            "spike_source": spike_source,
+            "feature_type": feature_type,
+            "decode_window_s": float(decode_window),
+            "update_dt_s": float(update_dt),
+            "closed_loop_target": closed_loop_target,
+            "decoder_name": decoder_name,
+            "closed_loop_total_ms": closed_loop_total_ms,
+            "closed_loop_per_frame_ms": per_frame_cl_ms,
+        },
+    )
 
     metrics = compute_realtime_metrics(
         decoded_df=decoded_df,
@@ -238,6 +271,14 @@ def run_realtime_pipeline(
         feature_type=feature_type,
     )
     metrics["models_reused_from_comparison"] = pretrained_decoders is not None
+    metrics["latency"] = {
+        "mean_total_ms": latency_summary.get("mean_total_ms"),
+        "median_total_ms": latency_summary.get("median_total_ms"),
+        "p95_total_ms": latency_summary.get("p95_total_ms"),
+        "within_budget_frac": latency_summary.get("within_budget_frac"),
+        "update_budget_ms": latency_summary.get("update_budget_ms"),
+        "n_updates": latency_summary.get("n_updates"),
+    }
 
     decoded_df.to_csv(output_dir / "decoded_realtime.csv", index=False)
     closed_loop_df.to_csv(output_dir / "closed_loop_events.csv", index=False)
@@ -334,18 +375,74 @@ def run_realtime_with_best_decoder(
     trigger_zone: str | None = "wall",
     trigger_hd_center_deg: float | None = 90.0,
     trigger_hd_width_deg: float | None = 30.0,
+    experiment_dir: Path | None = None,
 ) -> PipelineResult:
     """Select best decoder/window from comparison results and run closed-loop replay.
 
-    Reuses models already fit during comparison at the selected causal window
-    (no retrain) when windowed artifacts are available.
+    Prefer ``models/best_realtime_decoders.json`` (sorted / deployable only) when
+    present under ``experiment_dir``. Never loads ground-truth models for
+    deployment. Reuses models already fit during comparison at the selected
+    causal window (no retrain) when windowed artifacts are available.
     """
-    selected, from_file = select_best_decoder_row(
-        comparison_dir=comparison_dir,
-        spike_source=spike_source,
-        closed_loop_target=closed_loop_target,
-        selection_policy=selection_policy,
-    )
+    if spike_source != "sorted":
+        raise ValueError(
+            f"Realtime deployment requires spike_source='sorted' "
+            f"(got {spike_source!r}). Ground-truth models are oracle-only."
+        )
+
+    decode_window = None
+    feature_type = None
+    decoder_name = None
+    n_comp = None
+    transform_path = None
+    model_path = None
+    decoder_cfg: dict = {}
+    from_file = None
+    registry = None
+
+    exp = Path(experiment_dir) if experiment_dir is not None else Path(comparison_dir).parent
+    try:
+        from realtime.deployment_selection import load_best_realtime_decoders
+        registry = load_best_realtime_decoders(exp)
+        tgt = registry["targets"].get(closed_loop_target)
+        if tgt is None:
+            raise KeyError(
+                f"Target {closed_loop_target!r} missing from best_realtime_decoders.json"
+            )
+        decode_window = float(tgt["selected_causal_window_s"])
+        feature_type = str(tgt["selected_feature_mode"])
+        decoder_name = str(tgt["selected_decoder"])
+        n_comp = tgt.get("manifold_n_components")
+        transform_path = tgt.get("manifold_transform_path")
+        model_path = tgt.get("model_artifact_path")
+        decoder_cfg = tgt.get("decoder_config") or {}
+        from_file = exp / "models" / "best_realtime_decoders.json"
+        print(
+            f"  loaded deployable registry: {closed_loop_target} → "
+            f"{decoder_name} @ W={decode_window:.3f}s feature={feature_type}"
+        )
+    except FileNotFoundError:
+        registry = None
+
+    if registry is None:
+        selected, from_file = select_best_decoder_row(
+            comparison_dir=comparison_dir,
+            spike_source=spike_source,
+            closed_loop_target=closed_loop_target,
+            selection_policy=selection_policy,
+        )
+        decode_window = float(selected["selected_decode_window_s"])
+        feature_type = str(selected["selected_feature_type"])
+        decoder_name = str(selected["selected_decoder_name"])
+        models_dir = Path(selected["comparison_models_dir"])
+        n_comp = selected.get("selected_manifold_n_components")
+        transform_path = selected.get("selected_manifold_transform_path")
+        model_path = selected.get("selected_model_path")
+        decoder_cfg = selected.get("decoder_config") or {}
+    else:
+        models_dir = Path(comparison_dir) / spike_source / "models"
+        if not models_dir.exists():
+            models_dir = Path(comparison_dir) / "models"
 
     run_dir = (
         Path(output_dir)
@@ -353,16 +450,10 @@ def run_realtime_with_best_decoder(
         / f"{closed_loop_target}_{selection_policy}"
     )
 
-    decode_window = float(selected["selected_decode_window_s"])
-    feature_type = str(selected["selected_feature_type"])
-    models_dir = Path(selected["comparison_models_dir"])
-    n_comp = selected.get("selected_manifold_n_components")
     if n_comp is not None and not (isinstance(n_comp, float) and np.isnan(n_comp)):
         n_comp = int(n_comp)
     else:
         n_comp = None
-    transform_path = selected.get("selected_manifold_transform_path")
-    decoder_cfg = selected.get("decoder_config") or {}
 
     selected_config = {
         "selection_mode": "use_best_decoder",
@@ -370,23 +461,22 @@ def run_realtime_with_best_decoder(
         "closed_loop_target": closed_loop_target,
         "spike_source": spike_source,
         "selection_policy": selection_policy,
-        "selected_decoder_name": selected["selected_decoder_name"],
+        "selected_decoder_name": decoder_name,
         "selected_decode_window_s": decode_window,
         "feature_type": feature_type,
         "selected_feature_type": feature_type,
-        "manifold_type": decoder_cfg.get("manifold_type") or selected.get("best_manifold_type"),
-        "manifold_grouping": (
-            decoder_cfg.get("manifold_grouping") or selected.get("best_manifold_grouping")
-        ),
+        "manifold_type": decoder_cfg.get("manifold_type"),
+        "manifold_grouping": decoder_cfg.get("manifold_grouping"),
         "manifold_n_components": n_comp,
         "manifold_transform_path": transform_path,
-        "decoder_model_path": selected.get("selected_model_path"),
-        "selected_model_path": selected.get("selected_model_path"),
-        "source_metric": selected.get("primary_metric"),
-        "source_metric_value": selected.get("best_metric_value"),
-        "from_file": str(from_file),
+        "decoder_model_path": model_path,
+        "selected_model_path": model_path,
+        "from_file": str(from_file) if from_file else None,
         "decoder_config": decoder_cfg,
         "models_reused_from_comparison": False,
+        "deployable": True,
+        "update_dt_s": float(update_dt),
+        "update_rate_hz": float(1.0 / update_dt),
     }
 
     from realtime.manifold_features import load_feature_transformer
@@ -411,7 +501,7 @@ def run_realtime_with_best_decoder(
             decode_window,
             feature_type,
             closed_loop_target,
-            primary_model_path=Path(selected["selected_model_path"]),
+            primary_model_path=Path(model_path) if model_path else None,
             n_components=n_comp,
             manifold_transform_path=(
                 Path(transform_path) if transform_path else None
@@ -445,7 +535,7 @@ def run_realtime_with_best_decoder(
         trigger_zone=trigger_zone,
         trigger_hd_center_deg=trigger_hd_center_deg,
         trigger_hd_width_deg=trigger_hd_width_deg,
-        decoder_name=str(selected["selected_decoder_name"]),
+        decoder_name=str(decoder_name),
         feature_type=feature_type,
         selected_config=selected_config,
         pretrained_decoders=pretrained,

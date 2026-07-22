@@ -8,24 +8,17 @@ import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 
+from visualization.constants import FIGURE_SUBDIR_TEMPORAL
+
 
 def plot_temporal_comparison_outputs(temporal_dir: Path, figures_dir: Path) -> None:
-    """Plot heatmaps and model comparisons from decoding/comparison outputs."""
+    """Plot temporal W×L figures (publication multi-panel by default)."""
     temporal_dir = Path(temporal_dir)
-    figures_dir = Path(figures_dir) / "temporal_decoding"
-    figures_dir.mkdir(parents=True, exist_ok=True)
+    # Resolve experiment root: .../decoding → experiment
+    experiment_dir = temporal_dir.parent if temporal_dir.name == "decoding" else temporal_dir
+    from visualization.publication_decoding_plots import plot_fig_temporal_wl
 
-    for csv_path in sorted(temporal_dir.rglob("all_configurations.csv")):
-        df = pd.read_csv(csv_path)
-        if df.empty:
-            continue
-        rel = csv_path.parent.relative_to(temporal_dir)
-        out = figures_dir / rel.as_posix()
-        out.mkdir(parents=True, exist_ok=True)
-        _plot_wl_heatmaps(df, out)
-        _plot_model_class_comparison(df, out)
-        _plot_latency(df, out)
-        _plot_timing_overview(csv_path.parent, out)
+    plot_fig_temporal_wl(experiment_dir, figures_dir)
 
 
 def _plot_wl_heatmaps(df: pd.DataFrame, out_dir: Path) -> None:

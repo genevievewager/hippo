@@ -7,11 +7,13 @@ True behavior is retained only for offline evaluation.
 
 from __future__ import annotations
 
+import time
 from typing import Any
 
 import numpy as np
 import pandas as pd
 
+from realtime.latency_profiler import LatencySample
 from realtime.spike_binner import count_spikes_in_window
 from realtime.train_decoder import TrainedDecoders
 
@@ -53,6 +55,29 @@ class RealTimeDecoder:
             return counts / self.decode_window
         return counts
 
+    def _features_profiled(
+        self, spikes_df: pd.DataFrame, t: float
+    ) -> tuple[np.ndarray, dict[str, float]]:
+        stages: dict[str, float] = {}
+        t0 = time.perf_counter()
+        counts = count_spikes_in_window(
+            spikes_df,
+            self.unit_ids,
+            t - self.decode_window,
+            t,
+        ).reshape(1, -1)
+        stages["spike_binning"] = (time.perf_counter() - t0) * 1000.0
+
+        t1 = time.perf_counter()
+        if self.feature_transformer is not None:
+            feats = np.asarray(self.feature_transformer.transform(counts), dtype=float)
+        elif self.feature_type == "rates":
+            feats = counts / self.decode_window
+        else:
+            feats = counts
+        stages["feature_transform"] = (time.perf_counter() - t1) * 1000.0
+        return feats, stages
+
     def decode_at_time(self, spikes_df: pd.DataFrame, t: float) -> dict:
         """
         Use only spikes from [t - decode_window, t).
@@ -60,7 +85,63 @@ class RealTimeDecoder:
         Returns decoded position, context, movement state, speed, and confidences.
         """
         feats = self._features(spikes_df, t)
+        return self._decode_from_features(feats, t)
 
+    def decode_at_time_profiled(
+        self, spikes_df: pd.DataFrame, t: float
+    ) -> tuple[dict, LatencySample]:
+        """Like ``decode_at_time`` but also return per-stage latency (ms)."""
+        t_total0 = time.perf_counter()
+        feats, stages = self._features_profiled(spikes_df, t)
+
+        t0 = time.perf_counter()
+        decoded_xy = self.models.position.predict(feats)[0]
+        stages["decode_position"] = (time.perf_counter() - t0) * 1000.0
+
+        t0 = time.perf_counter()
+        decoded_speed = float(self.models.speed.predict(feats).ravel()[0])
+        stages["decode_speed"] = (time.perf_counter() - t0) * 1000.0
+
+        t0 = time.perf_counter()
+        decoded_context = self.models.spatial_context.predict(feats)[0]
+        context_conf = self._classifier_confidence(
+            self.models.spatial_context, feats, decoded_context
+        )
+        stages["decode_spatial_context"] = (time.perf_counter() - t0) * 1000.0
+
+        t0 = time.perf_counter()
+        decoded_movement = self.models.movement_state.predict(feats)[0]
+        movement_conf = self._classifier_confidence(
+            self.models.movement_state, feats, decoded_movement
+        )
+        stages["decode_movement_state"] = (time.perf_counter() - t0) * 1000.0
+
+        result = {
+            "time": t,
+            "decode_time": t,
+            "window_start": t - self.decode_window,
+            "window_end": t,
+            "decode_window_s": self.decode_window,
+            "decoded_x": float(decoded_xy[0]),
+            "decoded_y": float(decoded_xy[1]),
+            "decoded_spatial_context": str(decoded_context),
+            "spatial_context_confidence": context_conf,
+            "decoded_movement_state": str(decoded_movement),
+            "movement_state_confidence": movement_conf,
+            "decoded_speed": decoded_speed,
+        }
+
+        if self.primary_model is not None and self.primary_target is not None:
+            t0 = time.perf_counter()
+            result.update(self._apply_primary(feats))
+            stages["decode_primary"] = (time.perf_counter() - t0) * 1000.0
+        else:
+            stages["decode_primary"] = 0.0
+
+        stages["total_update"] = (time.perf_counter() - t_total0) * 1000.0
+        return result, LatencySample(time_s=t, stages_ms=stages)
+
+    def _decode_from_features(self, feats: np.ndarray, t: float) -> dict:
         decoded_xy = self.models.position.predict(feats)[0]
         decoded_speed = float(self.models.speed.predict(feats).ravel()[0])
 
@@ -89,7 +170,6 @@ class RealTimeDecoder:
             "decoded_speed": decoded_speed,
         }
 
-        # Optional primary-model override for closed-loop target
         if self.primary_model is not None and self.primary_target is not None:
             result.update(self._apply_primary(feats))
 
@@ -151,11 +231,14 @@ class RealTimeDecoder:
         self,
         spikes_df: pd.DataFrame,
         aligned_behavior: pd.DataFrame,
-    ) -> pd.DataFrame:
+        *,
+        profile_latency: bool = False,
+    ) -> pd.DataFrame | tuple[pd.DataFrame, list[LatencySample]]:
         """
         Causally decode at each time in aligned_behavior and compare to true state.
 
         aligned_behavior must contain decoder times and ground-truth labels.
+        When ``profile_latency`` is True, also return per-update latency samples.
         """
         # searchsorted-based window counts require monotonically increasing times.
         time_col = "time" if "time" in spikes_df.columns else "spike_time_s"
@@ -163,10 +246,25 @@ class RealTimeDecoder:
         if times.size and np.any(times[:-1] > times[1:]):
             spikes_df = spikes_df.sort_values(time_col, kind="mergesort")
 
+        # Dense per-frame profiling around RF predicts is expensive; subsample.
+        max_profile_updates = 400
+        if profile_latency and len(aligned_behavior) > max_profile_updates:
+            profile_idx = set(
+                np.linspace(0, len(aligned_behavior) - 1, max_profile_updates).astype(int)
+            )
+        else:
+            profile_idx = None
+
         rows = []
-        for _, beh in aligned_behavior.iterrows():
+        samples: list[LatencySample] = []
+        for i, (_, beh) in enumerate(aligned_behavior.iterrows()):
             t = float(beh["time"])
-            decoded = self.decode_at_time(spikes_df, t)
+            do_profile = profile_latency and (profile_idx is None or i in profile_idx)
+            if do_profile:
+                decoded, sample = self.decode_at_time_profiled(spikes_df, t)
+                samples.append(sample)
+            else:
+                decoded = self.decode_at_time(spikes_df, t)
 
             true_x = float(beh["x"])
             true_y = float(beh["y"])
@@ -214,4 +312,7 @@ class RealTimeDecoder:
                 row["true_acceleration"] = float(beh["acceleration"])
             rows.append(row)
 
-        return pd.DataFrame(rows)
+        decoded_df = pd.DataFrame(rows)
+        if profile_latency:
+            return decoded_df, samples
+        return decoded_df

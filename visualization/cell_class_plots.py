@@ -171,6 +171,8 @@ def plot_unit_count_by_region_and_cell_class(data: SimulationOutputs, output_dir
 def generate_cell_class_plots(
     data: SimulationOutputs, output_dir: Path, rate_bin_size: float = 0.250,
 ) -> None:
+    output_dir = Path(output_dir)
+    output_dir.mkdir(parents=True, exist_ok=True)
     plot_sorted_vs_ground_truth_spike_counts(data, output_dir)
     plot_sorted_vs_ground_truth_population_activity(data, output_dir, rate_bin_size)
     plot_sorting_loss_by_cell_class(data, output_dir)

@@ -7,7 +7,7 @@ from visualization.figure_captions import caption_for
 
 
 def test_caption_for_known_stem_is_numbered_and_descriptive():
-    path = Path("figures/behavior_trajectory_xy.png")
+    path = Path("figures/behavior/behavior_trajectory_xy.png")
     text = caption_for(path, figure_number=3)
     assert text.startswith("Figure 3. ")
     assert "trajectory" in text.lower()
@@ -15,7 +15,7 @@ def test_caption_for_known_stem_is_numbered_and_descriptive():
 
 
 def test_caption_for_cell_class_pattern():
-    path = Path("figures/example_units_CA1_pyr.png")
+    path = Path("figures/neural/example_units_CA1_pyr.png")
     text = caption_for(path, figure_number=1)
     assert "CA1 pyramidal" in text
     assert "spike" in text.lower()
@@ -42,3 +42,22 @@ def test_section_key_collapses_nested_realtime_dirs(tmp_path: Path):
     groups = collect_pngs_by_section(figures)
     assert "realtime_decoding/sorted" in groups
     assert groups["realtime_decoding/sorted"] == [png]
+
+
+def test_simulation_pngs_group_by_category_subdir(tmp_path: Path):
+    figures = tmp_path / "figures"
+    for subdir, name in (
+        ("behavior", "behavior_trajectory_xy.png"),
+        ("features", "behavior_features_over_time.png"),
+        ("neural", "ground_truth_spike_raster_all_cell_classes.png"),
+        ("sorting", "sorting_loss_by_cell_class.png"),
+        ("report", "simulation_report_summary.png"),
+    ):
+        folder = figures / subdir
+        folder.mkdir(parents=True)
+        (folder / name).write_bytes(b"")
+
+    groups = collect_pngs_by_section(figures)
+    assert set(groups) == {"behavior", "features", "neural", "sorting", "report"}
+    assert len(groups["behavior"]) == 1
+    assert len(groups["neural"]) == 1

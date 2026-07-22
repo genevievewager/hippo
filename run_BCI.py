@@ -55,17 +55,20 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--output", type=Path, required=True, help="Experiment output directory")
     p.add_argument("--seed", type=int, default=1)
     p.add_argument("--duration", type=float, default=600.0)
-    p.add_argument(
-        "--neural-backend",
-        choices=["custom_rate_equations", "ratinabox_neurons"],
-        default="ratinabox_neurons",
-    )
     p.add_argument("--spike-source", choices=["sorted", "ground_truth"], default="sorted")
     p.add_argument("--compare-sources", action="store_true")
     p.add_argument("--behavior-rate", type=float, default=20.0)
     p.add_argument("--decode-windows", type=float, nargs="+", default=[0.05, 0.1, 0.25, 0.5, 1.0])
     p.add_argument("--feature-modes", nargs="+", default=list(QUICK_FEATURE_MODES))
     p.add_argument("--manifold-components-list", type=int, nargs="+", default=[3])
+    p.add_argument(
+        "--isomap-neighbors",
+        type=int,
+        nargs="+",
+        default=[10],
+        help="Isomap n_neighbors values for global_isomap / temporal isomap",
+    )
+    p.add_argument("--isomap-latent-dim", type=int, default=8)
     p.add_argument("--max-models", choices=["quick", "full"], default="quick")
     p.add_argument("--closed-loop-target", default="spatial_context")
     p.add_argument(
@@ -84,14 +87,15 @@ def parse_args() -> argparse.Namespace:
     p.add_argument(
         "--representations",
         nargs="+",
-        default=["raw", "pca"],
-        help="Temporal manifold representations (decode-temporal)",
+        default=None,
+        help="Temporal manifold representations (default: pca; full adds raw)",
     )
     p.add_argument(
         "--latent-history-frames",
         type=int,
         nargs="+",
-        default=[1, 2, 5, 10, 20],
+        default=None,
+        help="Latent history L (default: 1 5 20)",
     )
     p.add_argument(
         "--prediction-lags",
@@ -123,7 +127,6 @@ def stage_simulate(args: argparse.Namespace) -> Path:
         output_dir=out,
         seed=args.seed,
         session_duration_s=args.duration,
-        neural_backend=args.neural_backend,
     )
     run_pipeline(config)
     print(f"Simulation written to {out}")
@@ -215,7 +218,8 @@ def stage_decode(
     run_full_decoder_workflow(
         input_dir=input_dir,
         output_dir=Path(args.output),
-        compare_sources=args.compare_sources,
+        profile="standard",
+        compare_sources=bool(args.compare_sources) or None,
         spike_source=args.spike_source,
         decode_windows=tuple(args.decode_windows),
         max_models=args.max_models,
@@ -224,11 +228,15 @@ def stage_decode(
         update_dt=update_dt,
         feature_modes=tuple(args.feature_modes),
         manifold_n_components=tuple(args.manifold_components_list),
+        isomap_n_neighbors=tuple(args.isomap_neighbors),
+        isomap_latent_dim=int(args.isomap_latent_dim),
         skip_visualization=skip_viz,
         compile_pdf=args.compile_pdf and not skip_viz,
-        enable_temporal_manifold=enable_temporal,
-        representations=tuple(args.representations),
-        latent_history_frames=tuple(args.latent_history_frames),
+        enable_temporal_manifold=True if enable_temporal else None,
+        representations=tuple(args.representations) if args.representations else None,
+        latent_history_frames=(
+            tuple(args.latent_history_frames) if args.latent_history_frames else None
+        ),
         prediction_lags=tuple(args.prediction_lags),
         n_jobs=args.n_jobs,
     )

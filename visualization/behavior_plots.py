@@ -1,7 +1,7 @@
 """Behavioral trajectory and occupancy figures.
 
 RatInABox generates the simulated locomotor trajectory used to drive
-hippocampal rate equations through spatial and proprioceptive features.
+RatInABox neural populations through spatial and proprioceptive state.
 """
 
 from __future__ import annotations
@@ -168,9 +168,16 @@ def plot_behavior_speed_map(data: SimulationOutputs, output_dir: Path, n_bins: i
 
 
 def generate_behavior_plots(data: SimulationOutputs, output_dir: Path) -> None:
-    plot_behavior_trajectory_xy(data, output_dir)
-    plot_behavior_trajectory_time_colored(data, output_dir)
-    plot_behavior_speed_over_time(data, output_dir)
-    plot_behavior_head_direction_over_time(data, output_dir)
-    plot_behavior_occupancy_heatmap(data, output_dir)
-    plot_behavior_speed_map(data, output_dir)
+    """Generate compressed publication-style behavioral figures."""
+    output_dir = Path(output_dir)
+    output_dir.mkdir(parents=True, exist_ok=True)
+    from visualization.publication_behavior_plots import (
+        plot_fig_behavior_dynamics,
+        plot_fig_behavior_overview,
+        _cleanup_legacy_pngs,
+    )
+
+    plot_fig_behavior_overview(data, output_dir)
+    plot_fig_behavior_dynamics(data, output_dir)
+    _cleanup_legacy_pngs(output_dir)
+

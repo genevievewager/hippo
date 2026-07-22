@@ -8,7 +8,7 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
-from hippo_sim.anatomy import AnatomyMap, build_anatomy
+from hippo_sim.anatomy import AnatomyMap
 from hippo_sim.behavior import simulate_behavior
 from hippo_sim.config import SimConfig
 from hippo_sim.neural_backend import simulate_neural_activity
@@ -54,7 +54,7 @@ def _units_to_dataframe(units: list) -> pd.DataFrame:
             "place_x_cm": u.place_center_cm[0],
             "place_y_cm": u.place_center_cm[1],
             "hd_pref_rad": u.hd_pref_rad,
-            "rate_model": u.rate_model or f"custom_{u.cell_type}_rate_equation",
+            "rate_model": u.rate_model or f"ratinabox_{u.cell_type}",
         }
         if u.ratinabox_class is not None:
             row["ratinabox_class"] = u.ratinabox_class
@@ -108,16 +108,11 @@ def run_pipeline(config: SimConfig) -> dict:
     region_table = _build_region_table(config)
     pd.DataFrame(region_table).to_csv(config.output_dir / "anatomy_regions.csv", index=False)
 
-    anatomy: AnatomyMap | None = None
-    if config.neural_backend == "custom_rate_equations":
-        anatomy = build_anatomy(config, rng)
-
-    print(f"[3/7] Generating neural activity ({config.neural_backend})...", flush=True)
+    print("[3/7] Generating neural activity (RatInABox)...", flush=True)
     units, rates, neural_metadata = simulate_neural_activity(
         config=config,
         behavior=behavior,
         rng=rng,
-        anatomy=anatomy,
         behavior_result=behavior_result,
     )
 
@@ -125,8 +120,7 @@ def run_pipeline(config: SimConfig) -> dict:
     with open(config.output_dir / "neural_backend_metadata.json", "w") as f:
         json.dump(neural_metadata, f, indent=2)
 
-    if config.neural_backend == "ratinabox_neurons":
-        _save_ratinabox_group_outputs(config, units, rates, neural_metadata)
+    _save_ratinabox_group_outputs(config, units, rates, neural_metadata)
 
     units_df = _units_to_dataframe(units)
     units_df.to_csv(config.output_dir / "units.csv", index=False)
@@ -155,7 +149,7 @@ def run_pipeline(config: SimConfig) -> dict:
 
     print("[7/7] Saving summary...", flush=True)
     summary = {
-        "neural_backend": config.neural_backend,
+        "neural_backend": "ratinabox_neurons",
         "n_units": len(units),
         "n_behavior_steps": config.n_behavior_steps,
         "behavior_dt": config.behavior_dt,

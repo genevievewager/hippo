@@ -163,5 +163,7 @@ def plot_simulation_report_summary(
 def generate_report_figures(
     data: SimulationOutputs, output_dir: Path, rate_bin_size: float = 0.250,
 ) -> None:
+    output_dir = Path(output_dir)
+    output_dir.mkdir(parents=True, exist_ok=True)
     build_summary_tables(data, output_dir)
     plot_simulation_report_summary(data, output_dir, rate_bin_size)

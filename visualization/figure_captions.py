@@ -13,6 +13,31 @@ from pathlib import Path
 # Exact stem → caption body (without "Figure N." prefix).
 CAPTIONS: dict[str, str] = {
     # ---- Behavior / simulation ----
+    "fig_behavior_overview": (
+        "Open-field locomotor behavior. "
+        "(A) Trajectory with start (green) and end (red). "
+        "(B) Same trajectory colored by elapsed time. "
+        "(C) Spatial occupancy (dwell time per bin). "
+        "(D) Mean locomotor speed mapped onto arena coordinates."
+    ),
+    "fig_behavior_dynamics": (
+        "Locomotor and postural dynamics over the session. "
+        "(A) Instantaneous speed. "
+        "(B) Head-direction angle. "
+        "(C) Distance to the nearest wall. "
+        "(D) Z-scored distributions of speed, head direction, wall distance, and acceleration."
+    ),
+    "fig_behavior_features": (
+        "Behavioral covariates that drive RatInABox populations and decoding "
+        "targets over the session, including position, speed, heading, wall "
+        "distance, acceleration, and oscillatory channels when present."
+    ),
+    "fig_neural_drivers": (
+        "Neural driver features by cell class. "
+        "(A–C) Population-mean place, head-direction, and speed drive over time. "
+        "(D) Session-mean absolute driver strength (cell class × driver)."
+    ),
+    # Legacy single-panel behavior stems (older PDFs)
     "behavior_trajectory_xy": (
         "Open-field locomotor trajectory in the simulated arena. Green and red "
         "markers indicate start and end positions; dashed lines mark arena "
@@ -27,8 +52,8 @@ CAPTIONS: dict[str, str] = {
         "simulated navigation session."
     ),
     "behavior_head_direction_over_time": (
-        "Head-direction angle over time, used as a proprioceptive driver of "
-        "head-direction-tuned hippocampal rate equations."
+        "Head-direction angle over time, used as a proprioceptive input to "
+        "RatInABox head-direction and place populations."
     ),
     "behavior_occupancy_heatmap": (
         "Spatial occupancy heatmap of the open-field session. Color indicates "
@@ -42,7 +67,7 @@ CAPTIONS: dict[str, str] = {
     "behavior_features_over_time": (
         "Time series of behavioral feature channels (position-derived speed, "
         "acceleration, head direction, and related covariates) that drive the "
-        "hippocampal rate model."
+        "RatInABox neural populations and hippocampal overlays."
     ),
     "behavior_feature_distributions": (
         "Marginal distributions of behavioral feature channels across the "
@@ -52,7 +77,7 @@ CAPTIONS: dict[str, str] = {
     "neural_driver_features_over_time": (
         "Population-mean neural driver features over time, stratified by cell "
         "class. Drivers include place, head-direction, speed, boundary, and "
-        "oscillatory (theta/ripple) components used by the rate equations."
+        "oscillatory (theta/ripple) components used by RatInABox overlays."
     ),
     "neural_driver_features_by_cell_class": (
         "Distribution of neural driver feature values by hippocampal cell "
@@ -66,38 +91,156 @@ CAPTIONS: dict[str, str] = {
         "and probe geometry through hippocampal regions (G)."
     ),
     # ---- Neural / sorting ----
+    "fig_circuit_population": (
+        "Hippocampal circuit population activity. "
+        "(A) Mean rates for circuit nodes overlaid (MEC, DG, CA3, CA2, CA1, INT, SUB). "
+        "(B) Stacked traces emphasizing trisynaptic / entorhinal flow. "
+        "(C) Session-mean rate by circuit node. "
+        "(D) Population size versus mean rate by node."
+    ),
+    "fig_cell_class_population": (
+        "Cell-class population activity. "
+        "(A) Mean rate traces by cell class. "
+        "(B) Mean rate traces by anatomical region. "
+        "(C) Violin distributions of per-unit mean rates by cell class."
+    ),
+    "fig_population_structure": (
+        "Population structure. "
+        "(A) Unit-count crosstab of region × cell class. "
+        "(B) Mean-rate heatmap of region × cell class. "
+        "(C) Ground-truth rate heatmap with units ordered by circuit node."
+    ),
+    "fig_spike_raster_summary": (
+        "Spike raster and sorting yield. "
+        "(A) Compressed ground-truth raster ordered by circuit node. "
+        "(B) Ground-truth versus sorted total spike counts by cell class."
+    ),
+    # ---- Decoding / manifolds / realtime ----
+    "fig_decoding_performance": (
+        "Causal decoding performance on sorted spikes. "
+        "(A) Best primary metric versus causal window W for continuous targets. "
+        "(B) Balanced accuracy versus W for categorical targets. "
+        "(C) Best decoder and metric value by target. "
+        "(D) Selected / recommended realtime window by target."
+    ),
+    "fig_manifold_decoding": (
+        "Manifold versus spike-count decoding. "
+        "(A) Feature-mode × target heatmap of normalized best scores "
+        "(counts, PCA, region PCA, and Isomap when present). "
+        "(B) Signed manifold − counts performance difference by target. "
+        "(C) Best region-PCA score by target. "
+        "(D) Mean explained variance by anatomical group."
+    ),
+    "fig_latent_geometry": (
+        "Latent neural geometry. "
+        "(A) Global PCA embedding (z₁, z₂) colored by position. "
+        "(B) Isomap embedding colored by position when available; otherwise empty. "
+        "(C) Embedding colored by spatial context or speed. "
+        "(D) PCA versus Isomap comparison, or PCA-only when Isomap was not run. "
+        "Held-out (train-fit / test-transform) embeddings are preferred when available."
+    ),
+    "fig_isomap_diagnostics": (
+        "Isomap geometry diagnostics. "
+        "(A) Trustworthiness versus n_neighbors. "
+        "(B) Graph connectivity / largest-component fraction. "
+        "(C) Residual variance versus latent dimension. "
+        "(D) Geodesic-distance correlation and/or knn-overlap / continuity. "
+        "Empty panels indicate that global_isomap was not included in the comparison."
+    ),
+    "fig_isomap_story": (
+        "Isomap decoding and distillation. "
+        "(A) Normalized best scores for counts / PCA / Isomap by target. "
+        "(B) Decoder family × representation matrix. "
+        "(C) Classic offline Isomap versus distilled encoder latency (50 ms budget). "
+        "(D) Distilled versus classic accuracy when both feature modes exist. "
+        "Classic Isomap is offline-only."
+    ),
+    "fig_closed_loop": (
+        "Closed-loop realtime decoding. "
+        "(A) True versus decoded position. "
+        "(B) Position error over time with closed-loop trigger markers. "
+        "(C) Spatial-context confusion matrix (row-normalized). "
+        "(D) Trigger reliability (correct versus incorrect counts)."
+    ),
+    "fig_deployment": (
+        "Deployment decoder selection on sorted spikes. "
+        "(A) Winner summary: decoder, feature mode, and selected window per target. "
+        "(B–C) Decoder × causal-window heatmaps for key deployment targets."
+    ),
+    "fig_latency": (
+        "Causal-update latency budget. "
+        "(A) Feature-transform latencies. "
+        "(B) Realtime decode-stage latencies. "
+        "(C) Classic Isomap teacher versus distilled encoder. "
+        "(D) Top overall latency contributors. "
+        "Dashed line marks the update budget (typically 50 ms); green bars are "
+        "realtime-compatible."
+    ),
+    "fig_temporal_wl": (
+        "Temporal manifold decoding. "
+        "Heatmaps of validation metric over integration window W versus latent "
+        "history frames L for representative target / representation / model slices."
+    ),
+    # Legacy stems kept for older figure directories / PDFs
+    "population_activity_by_cell_class": (
+        "Mean population firing rate over time for each hippocampal / afferent "
+        "cell class (legacy single-panel figure)."
+    ),
+    "population_activity_by_region": (
+        "Mean population firing rate over time stratified by anatomical region "
+        "(legacy single-panel figure)."
+    ),
+    "population_activity_by_rate_model": (
+        "Mean population firing rate for each RatInABox population group "
+        "(legacy single-panel figure)."
+    ),
+    "circuit_population_activity": (
+        "Stacked circuit-node population rates (legacy single-panel figure)."
+    ),
+    "circuit_population_activity_overlay": (
+        "Circuit-node mean rates overlaid (legacy single-panel figure)."
+    ),
+    "population_rate_heatmap": (
+        "Per-unit ground-truth rate heatmap (legacy single-panel figure)."
+    ),
+    "mean_rate_by_cell_class": (
+        "Session-mean firing rate by cell class (legacy single-panel figure)."
+    ),
+    "mean_rate_by_circuit_node": (
+        "Session-mean firing rate by circuit node (legacy single-panel figure)."
+    ),
+    "population_rates_over_time": (
+        "Population-averaged firing rates by cell class (legacy)."
+    ),
+    "cell_class_rate_distributions": (
+        "Mean firing-rate distributions by cell class (legacy)."
+    ),
     "rate_equation_population_rates_over_time": (
-        "Population-averaged firing rates by cell class under the ground-truth "
-        "rate equations, showing how CA1–CA3 pyramidal and DG granule "
-        "populations modulate during navigation."
+        "Legacy population-rate figure stem."
     ),
     "rate_equation_cell_class_rate_distributions": (
-        "Distributions of mean firing rates across units within each cell "
-        "class for the ground-truth rate-equation model."
+        "Legacy cell-class rate distribution figure stem."
     ),
     "ground_truth_spike_counts_by_cell_class": (
-        "Total ground-truth spike counts aggregated by hippocampal cell class "
-        "over the full session."
+        "Total ground-truth spike counts by cell class (legacy)."
     ),
     "ground_truth_mean_rate_by_cell_class": (
-        "Mean firing rate by cell class computed from ground-truth spike times."
+        "Mean firing rate by cell class (legacy)."
     ),
     "ground_truth_rate_distribution_by_cell_class": (
-        "Per-unit firing-rate distributions for each cell class under "
-        "ground-truth spikes."
+        "Per-unit rate distributions by cell class (legacy)."
     ),
     "ground_truth_population_activity_by_cell_class": (
-        "Binned population activity (spike counts) over time for each cell "
-        "class, derived from ground-truth spike times."
+        "Population activity by cell class (legacy)."
     ),
     "ground_truth_spike_raster_all_cell_classes": (
-        "Ground-truth spike raster spanning all recorded cell classes. Each "
-        "row is a unit; ticks mark spike times across the session."
+        "Ground-truth spike raster by cell class (legacy)."
+    ),
+    "ground_truth_spike_raster_by_rate_model": (
+        "Ground-truth spike raster by rate model (legacy)."
     ),
     "ground_truth_spike_raster_by_rate_equation": (
-        "Ground-truth spike raster ordered by rate-equation cell class, "
-        "highlighting differences in temporal structure across hippocampal "
-        "populations."
+        "Ground-truth spike raster by rate model (legacy)."
     ),
     "sorted_vs_ground_truth_spike_counts": (
         "Comparison of total spike counts between ground-truth and "
@@ -144,9 +287,18 @@ CAPTIONS: dict[str, str] = {
         "(e.g., global or region PCA) rather than raw spike counts."
     ),
     "counts_vs_manifold_decoding_summary": (
-        "Summary comparison of spike-count features versus manifold "
-        "embeddings for decoding behavioral targets. Bars report the "
-        "selected metric for each feature mode."
+        "Signed performance difference between the best manifold feature mode "
+        "and the best spike-count decoder for each target (positive = manifold "
+        "helps). Companion detail is in manifold_vs_spikes_onepager."
+    ),
+    "manifold_vs_spikes_onepager": (
+        "One-pager comparing spike-count features versus manifold embeddings for "
+        "sorted / Neuropixels decoding. Top table lists best counts setup, best "
+        "manifold setup, ±5% verdict, and the deployable registry selection per "
+        "target. Lower panels are decoder × feature heatmaps collapsed over "
+        "windows (best W annotated; greener is better). A dashed line separates "
+        "spike features (counts/rates) from manifold modes; gold outline marks "
+        "the deployable selection; hatching marks offline-only features."
     ),
     "region_manifold_decoding_by_target": (
         "Region-wise PCA manifold decoding performance by behavioral target, "
@@ -174,6 +326,49 @@ CAPTIONS: dict[str, str] = {
         "Population-state trajectory in the first two region-PCA manifold "
         "coordinates. Axes are latent neural dimensions rather than "
         "physical position."
+    ),
+    "isomap_vs_pca_decoder_position": (
+        "Position decoding error for counts, global PCA, and global Isomap "
+        "features, broken down by decoder. Lower is better. Panels are "
+        "stratified by spike source so ground-truth and sorted results are "
+        "not mixed."
+    ),
+    "isomap_vs_pca_decoder_position_sorted": (
+        "Position decoding error (sorted spikes) for counts vs PCA vs Isomap "
+        "across decoders. Lower mean position error is better."
+    ),
+    "isomap_position_best_by_representation": (
+        "Best position decoder for each representation (counts, PCA, Isomap) "
+        "on sorted spikes. Highlights whether nonlinear Isomap geometry "
+        "improves allocentric position decoding relative to linear PCA and "
+        "raw counts."
+    ),
+    "isomap_position_best_by_representation_sorted": (
+        "Best position decoder per representation on sorted spikes. "
+        "Isomap should appear as the lowest bar when nonlinear geometry "
+        "improves held-out position decoding."
+    ),
+    "isomap_vs_pca_best_by_target": (
+        "Best counts / PCA / Isomap score for each behavioral target "
+        "(errors are negated so higher bars are better). Stars mark the "
+        "winning representation per target."
+    ),
+    "isomap_vs_pca_best_by_target_sorted": (
+        "Best counts / PCA / Isomap score by target on sorted spikes. "
+        "Stars mark the winning representation; errors are negated so "
+        "higher is better."
+    ),
+    "isomap_trustworthiness_vs_neighbors_sorted": (
+        "Isomap neighborhood trustworthiness as a function of n_neighbors "
+        "on sorted-spike training embeddings."
+    ),
+    "isomap_connectivity_vs_neighbors_sorted": (
+        "Fraction of training samples in the largest Isomap neighbor-graph "
+        "component versus n_neighbors."
+    ),
+    "isomap_residual_variance_vs_dim_sorted": (
+        "Isomap residual variance (1 − R² between geodesic and embedding "
+        "distances) versus latent dimension."
     ),
     # ---- Per-source decoder comparison ----
     "best_decoder_by_target": (
@@ -290,6 +485,46 @@ CAPTIONS: dict[str, str] = {
         "including update interval and causal window / sequence-length "
         "constraints."
     ),
+    # ---- Latency profiling ----
+    "latency_everything": (
+        "Causal update latency for every measured stage: feature transforms "
+        "(counts / PCA / Isomap / distilled Isomap), closed-loop decode stages "
+        "(spike binning, feature map, each decoder head, trigger policy), and "
+        "classic Isomap teacher versus parametric distilled student. The dashed "
+        "line marks the 20 Hz update budget (50 ms). Green bars are "
+        "realtime-compatible; red bars are offline-only."
+    ),
+    "feature_transform_latency": (
+        "Per-update wall-clock cost of each neural feature front-end applied to "
+        "a single causal spike-count vector. Distilled Isomap is the "
+        "streaming-friendly parametric approximation of classic Isomap."
+    ),
+    "isomap_teacher_vs_distilled_latency": (
+        "Direct latency comparison of classic offline Isomap (teacher) versus "
+        "the parametric distilled encoder used for realtime deployment."
+    ),
+    "realtime_stage_latency": (
+        "Breakdown of closed-loop realtime latency by stage on sorted spikes: "
+        "spike binning, feature transform, position / speed / context / "
+        "movement decoders, optional primary override, and closed-loop policy. "
+        "The dashed line is the 50 ms update budget."
+    ),
+    "deployment_model_summary": (
+        "Text summary of the deployable realtime decoder registry: per-target "
+        "selected decoder, causal window, and feature mode from sorted spikes only."
+    ),
+    "deployable_winner_onepager": (
+        "One-pager for sorted / Neuropixels deployable selection. Top table lists "
+        "the registry winner per target (decoder, feature, W, metric). Lower panels "
+        "are decoder × feature heatmaps collapsed over windows (best W annotated in "
+        "each cell; greener is better). Gold outline marks the selected cell; "
+        "hatching marks offline-only features such as classic Isomap."
+    ),
+    "deployable_decoder_x_window_heatmaps": (
+        "Deployable decoder × causal-window heatmaps on sorted spikes. Each cell "
+        "shows the best realtime-compatible feature mode at that window and the "
+        "metric value; gold outline marks the selected (decoder, W) pair."
+    ),
 }
 
 # Regex patterns for parameterized stems → caption template with {match} groups.
@@ -346,11 +581,17 @@ _SOURCE_NOTES = {
 
 _CELL_CLASS_LABELS = {
     "CA1_pyr": "CA1 pyramidal",
+    "CA1_int": "CA1 interneuron",
     "CA2_pyr": "CA2 pyramidal",
     "CA3_pyr": "CA3 pyramidal",
     "DG_granule": "DG granule",
+    "Sub_bvc": "subiculum BVC",
+    "MEC_grid": "MEC grid",
+    "MEC_hd": "MEC head direction",
+    "MEC_speed": "MEC speed",
     "all_cell_classes": "all cell classes",
-    "by_rate_equation": "rate-equation cell classes",
+    "by_rate_model": "rate-model cell classes",
+    "by_rate_equation": "rate-model cell classes",
 }
 
 

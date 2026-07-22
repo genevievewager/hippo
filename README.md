@@ -16,23 +16,25 @@ pip install -r requirements.txt
 
 # 1. Simulate
 python run_simulation.py \
-    --output outputs/ratinabox_002 \
-    --seed 2 \
-    --neural-backend ratinabox_neurons
+    --output outputs/ratinabox_005 \
+    --seed 5
 
-# 2. Decode (compare → select best → closed-loop replay → optional figures)
+# 2. Decode (default --profile standard: sorted spikes only, full W grid,
+#    counts+PCA manifolds, closed-loop replay). Ground-truth is optional.
 python run_decoder.py \
-    --input outputs/ratinabox_003 \
-    --output outputs/ratinabox_003 \
-    --compare-sources \
-    --closed-loop-target spatial_context \
-    --selection-policy shortest_near_optimal \
-    --enable-temporal-manifold
+    --input outputs/ratinabox_005 \
+    --output outputs/ratinabox_005 \
     --compile-pdf
+
+# Optional research extras (not needed for a working decoder):
+#   --include-ground-truth-diagnostics  # oracle GT comparison (non-deployable)
+#   --enable-temporal-manifold          # lean W×L Table 8 (inherits W from Step 1)
+#   --profile full                      # dense research grids + full model zoo
+#   --feature-modes counts global_pca global_isomap   # offline Isomap research
 
 # 3. Visualize anytime (reads saved outputs only; never retrains)
 python run_visualizations.py \
-    --experiment outputs/ratinabox_003 \
+    --experiment outputs/ratinabox_005 \
     --all \
     --compile-pdf
 ```
@@ -40,7 +42,7 @@ python run_visualizations.py \
 | Goal | Command |
 |------|---------|
 | Simulate data | `run_simulation.py` |
-| Full decoder workflow (tune + select + replay) | `run_full_decoder_workflow.py` |
+| Full decoder workflow (tune + select + replay) | `run_decoder.py` |
 | Generate all available visualizations | `run_visualizations.py --experiment ... --all --compile-pdf` |
 
 ### Detached simulation (survives terminal close)
@@ -72,8 +74,8 @@ Python 3.10+ (developed on 3.12). See `requirements.txt`.
 ## Simulation pipeline
 
 1. **Behavior** — RatInABox square open field (thigmotaxis, stalls, smooth turns) at **20 Hz** (50 ms steps)
-2. **Features** — place, head direction, speed, acceleration, boundary, theta phase, ripple
-3. **Rate equations** — CA1, CA2, CA3 pyramidal + DG granule with drift (or RatInABox neurons)
+2. **Features** — theta phase, ripple, speed (used by hippocampal dynamics overlays)
+3. **Neural rates** — RatInABox receptive fields → cell-type overlays → trisynaptic / EC feedforward (MEC→DG→CA3→CA1, INT→CA1)
 4. **Spikes** — ground-truth Poisson spike times
 5. **Recording** — multi-channel templates, noise, motion amplitude drift, collisions
 6. **Sorting** — Kilosort-like re-extraction with misses, jitter, contamination
@@ -84,80 +86,111 @@ Python 3.10+ (developed on 3.12). See `requirements.txt`.
 |------|-------------|
 | `behavior.csv` | Position, speed, head direction over time |
 | `anatomy_regions.csv` | Region geometry and channel mapping |
-| `units.csv` | Per-unit metadata (type, region, channel, place field) |
+| `units.csv` | Per-unit metadata (type, region, channel, place field, `ratinabox_class`) |
 | `spikes_ground_truth.csv` | True spike times |
 | `spikes_sorted.csv` | Re-extracted spike times after degradation |
+| `ratinabox_group_metadata.csv` | Per-population RiaB group summary |
+| `rates.npy` | Firing rates (Hz), shape `(n_units, n_steps)` |
 | `summary.json` | Run statistics |
 
 ---
 
-## Table 1: Rate Equations, Parameters, and Driver Features
+## Table 1: Neural rate model (RatInABox + hippocampal circuit overlays)
 
-Source of truth: `hippo_sim/rate_equations.py`, `hippo_sim/config.py`.
+Neural activity is generated in three stacked stages. Source of truth:
+`hippo_sim/ratinabox_neural_backend.py`, `hippo_sim/feedforward.py`,
+`hippo_sim/hippocampal_populations.py`, `hippo_sim/config.py`.
 
-### Dynamics
+### Stage A — RatInABox receptive fields
+
+For each population group \(G\), RatInABox (or a documented fallback) supplies a
+nonnegative rate \(R_i^{\mathrm{RiaB}}(t)\) from the shared behavioral state
+\((p(t),\theta(t),v(t))\):
+
+| Group | Class | Primary tuning |
+|-------|-------|----------------|
+| CA1_place_pp | PhasePrecessingPlaceCells | place + theta phase precession |
+| CA3 / CA2 / DG place | PlaceCells | Gaussian / thresholded place fields (widths differ) |
+| MEC_grid | GridCells | multi-module grid |
+| MEC_hd | HeadDirectionCells | preferred head direction |
+| Sub_bvc | BoundaryVectorCells | wall distance / angle |
+| MEC_speed | SpeedCells_fallback | linear speed encoding |
+| CA1_int | synthetic | constructed in Stage C |
+
+### Stage B — within-cell-type dynamics overlays
+
+With cell-type parameters \(c\) from `RATE_PARAMS`:
 
 ```text
-τ_i · dR_i/dt  =  −R_i  +  λ_i^target(t)
+R ← R_RiaB
+R ← R · (1 + w_θ cos φ_θ(t))                 # theta (skipped for CA1_place_pp)
+R ← R · (1 + w_speed · f_speed(t))           # speed gain
+R ← R + w_ripple · A · r(t)                  # sharp-wave ripple envelope
+R ← 0.1·b  if  R/max_t(R) < θ_sparse else R  # DG sparsity
+R ← R + w_rec · mean_{j∈G} R_j(t)            # CA3 recurrent (autoassociative)
+R ← max(R, 0)
 ```
 
-### Rate equations by cell type
+where \(f_speed = \max(0,v-v_{thresh})/(30-v_{thresh})\) and \(r(t)\in[0,1]\) is a sparse SWR burst envelope.
 
-| Cell type | Rate equation | Driver features |
-|-----------|---------------|-----------------|
-| **CA1_pyr** | `τ dR/dt = −R + target` where `target = [b + A·f_place·(1 + w_hd·f_hd)·(1 + w_speed·f_speed)·(1 + 0.2·f_acc)·f_θ + w_bnd·A·f_bnd + w_ripple·A·f_ripple] · ξ_state · g` | place, HD, speed, accel, boundary, theta, ripple |
-| **CA2_pyr** | Same as CA1 with lower ripple/theta weights and sharper place fields (`σ = 8` cm) | place, HD, speed, accel, boundary, theta |
-| **CA3_pyr** | Same as CA1 plus recurrent term `+ w_rec · R̄_pop` | place, HD, speed, recurrent, ripple |
-| **DG_granule** | Same structure with sparsity gate: if `f_place·(1 + w_speed·f_speed) < θ_sparse` then `target ≈ 0.1·b` | place, speed, boundary |
+### Stage C — trisynaptic / entorhinal feedforward
 
-### Driver feature definitions
+Define region means (after Stage B):
 
-| Feature | Type | Mathematical definition |
-|---------|------|-------------------------|
-| **Place** (exteroceptive) | Allocentric | `f_place = exp(−‖p − p₀‖² / 2σ²)` |
-| **Head direction** (proprioceptive) | Egocentric | `f_hd = exp(κ cos(θ − θ_pref)) / (exp(κ) / I₀(κ))` |
-| **Speed** (proprioceptive) | Egocentric | `f_speed = max(0, v − v_thresh) / (30 − v_thresh)` |
-| **Acceleration** (proprioceptive) | Egocentric | `f_acc = clip(‖dv/dt‖ / 50, 0, 1)` |
-| **Boundary** (exteroceptive) | Allocentric | `f_bnd = exp(−d_wall² / (2 · 15²))` |
-| **Theta phase** (internal) | Internal | `f_θ = 1 + w_θ cos(φ_θ(t))` |
-| **Ripple** (internal) | CA1-biased | Sparse 80 ms bursts, `sin(π·phase)` envelope |
+```text
+R̄_A(t) = (1/|A|) Σ_{i∈A} R_i(t),   A ∈ {MEC, DG, CA3, CA2, CA1, INT}
+```
 
-### Drift terms
+Optional normalization \(\tilde R_A = R̄_A / \max_t R̄_A\) (default on) makes weights dimensionless. Then, in order:
 
-| Process | Equation | Timescale |
-|---------|----------|-----------|
-| Place-field drift | `p₀ ← p₀ + N(0, σ_drift)` every 30 s | slow (minutes) |
-| State drift (arousal) | OU: `dξ = −ξ/τ · dt + σ · dW`, multiply target by `exp(ξ)` | `τ = 120` s |
-| Gain drift | OU on per-unit gain `g` | `τ = 180` s |
+```text
+DG  ← DG  + w_MEC→DG  · R̃_MEC
+CA3 ← CA3 + w_DG→CA3  · R̃_DG          # CA3↔CA3 recurrence already in Stage B
+CA2 ← CA2 + w_MEC→CA2 · R̃_MEC + w_CA3→CA2 · R̃_CA3
+CA1 ← CA1 + w_CA3→CA1 · R̃_CA3 + w_MEC→CA1 · R̃_MEC
+```
 
-### Parameter values
+Interneurons are then built from post-feedforward CA1:
+
+```text
+R_i^int(t) = g_i · b_int · (1 + w_θ cos 2π f_θ t) · (1 − w_anti · R̃_CA1(t))
+           + w_ripple · A_int · r(t)
+```
+
+and inhibit CA1:
+
+```text
+CA1 ← max( CA1 − w_INT→CA1 · R̃_INT , 0 )
+```
+
+**Default weights** (tunable hypotheses in `ratinabox_params.feedforward`):
+
+| Synapse | Symbol | Default |
+|---------|--------|---------|
+| MEC → DG | `w_mec_to_dg` | 0.20 |
+| DG → CA3 | `w_dg_to_ca3` | 0.25 |
+| CA3 → CA1 | `w_ca3_to_ca1` | 0.20 |
+| MEC → CA1 (direct) | `w_mec_to_ca1` | 0.15 |
+| INT → CA1 | `w_int_to_ca1` | 0.30 |
+| MEC → CA2 | `w_mec_to_ca2` | 0.10 |
+| CA3 → CA2 | `w_ca3_to_ca2` | 0.10 |
+| CA3 recurrent (Stage B) | `w_recurrent` | 0.15 |
+
+Disable with `apply_feedforward: false` in `ratinabox_params`. Metadata is written to `neural_backend_metadata.json` under `feedforward`.
+
+### Overlay / feedforward parameters (principal cells)
 
 | Parameter | CA1_pyr | CA2_pyr | CA3_pyr | DG_granule | Units |
 |-----------|---------|---------|---------|------------|-------|
-| τ | 0.05 | 0.05 | 0.06 | 0.08 | s |
 | b (baseline) | 0.5 | 0.4 | 0.3 | 0.05 | Hz |
 | A (amplitude) | 12.0 | 10.0 | 8.0 | 15.0 | Hz |
-| σ_place | 10.0 | 8.0 | 12.0 | 6.0 | cm |
-| w_hd | 0.4 | 0.35 | 0.2 | 0.1 | — |
-| κ_hd | 2.0 | 2.5 | 1.5 | 1.0 | — |
 | w_speed | 0.3 | 0.25 | 0.2 | 0.5 | — |
 | v_thresh | 2.0 | 2.0 | 2.0 | 3.0 | cm/s |
 | w_θ | 0.25 | 0.15 | 0.1 | 0.05 | — |
 | f_θ | 8.0 | 8.0 | 8.0 | 8.0 | Hz |
 | w_ripple | 0.5 | 0.1 | 0.6 | 0.0 | — |
-| w_boundary | 0.2 | 0.15 | 0.1 | 0.3 | — |
 | w_recurrent | — | — | 0.15 | — | — |
 | θ_sparse | — | — | — | 0.3 | — |
-
-| Drift parameter | Value | Units |
-|-----------------|-------|-------|
-| Behavior / rate update rate | 20 | Hz |
-| Place drift σ | **0.1** | cm/min |
-| Place update interval | 30 | s |
-| State drift τ | 120 | s |
-| State drift σ | 0.15 | — |
-| Gain drift τ | 180 | s |
-| Gain drift σ | 0.1 | — |
 
 | Recording / sorting parameter | Value |
 |-------------------------------|-------|
@@ -176,49 +209,54 @@ Source of truth: `hippo_sim/rate_equations.py`, `hippo_sim/config.py`.
 
 ## Table 2: Anatomical Regions and Probe Geometry
 
-Neuropixels 1.0 single-shank, 384 channels, 20 µm pitch, 1D depth axis (dorsal hippocampus).
+Neuropixels 1.0 single-shank, 384 channels, 20 µm pitch, 1D depth axis (dorsal hippocampus + ventral afferent bands).
 
-| Region | Layer | Depth start (µm) | Depth end (µm) | Channels (approx.) | Cell types | Density (units/channel) |
-|--------|-------|------------------|----------------|--------------------|------------|-------------------------|
-| CA1 | oriens | 0 | 200 | 1–10 | CA1_pyr | 2.0 |
-| CA1 | pyramidal | 200 | 400 | 11–20 | CA1_pyr | 8.0 |
-| CA1 | radiatum | 400 | 600 | 21–30 | CA1_pyr | 5.0 |
-| CA2 | pyramidal | 600 | 800 | 31–40 | CA2_pyr | 6.0 |
-| CA3 | pyramidal | 800 | 1400 | 41–70 | CA3_pyr | 7.0 |
-| DG | granule | 1400 | 1800 | 71–90 | DG_granule | 10.0 |
-| DG | hilus | 1800 | 2000 | 91–100 | DG_granule | 3.0 |
+| Region | Layer | Depth start (µm) | Depth end (µm) | Cell types | Density (units/channel) |
+|--------|-------|------------------|----------------|------------|-------------------------|
+| CA1 | oriens | 0 | 200 | CA1_int | 2.0 |
+| CA1 | pyramidal | 200 | 400 | CA1_pyr | 8.0 |
+| CA1 | radiatum | 400 | 600 | CA1_pyr | 5.0 |
+| CA2 | pyramidal | 600 | 800 | CA2_pyr | 6.0 |
+| CA3 | pyramidal | 800 | 1300 | CA3_pyr | 7.0 |
+| DG | granule | 1300 | 1650 | DG_granule | 10.0 |
+| DG | hilus | 1650 | 1850 | DG_granule | 3.0 |
+| Subiculum | pyramidal | 1850 | 2050 | Sub_bvc | 4.0 |
+| MEC | layer2 | 2050 | 2350 | MEC_grid | 5.0 |
+| MEC | layer3 | 2350 | 2600 | MEC_hd | 4.0 |
 
-Exact mapping is written to `anatomy_regions.csv` per run.
+Exact mapping is written to `anatomy_regions.csv` per run. MEC/Subiculum bands are co-recorded afferent populations (not a claim that one shank spans all of these in vivo).
 
 ---
 
-## Neural activity backends
+## Neural activity (RatInABox)
 
-### 1. Custom hippocampal rate equations
+Maximally hippocampal config: anatomically mapped RatInABox classes, cell-type dynamics overlays, and **trisynaptic / entorhinal feedforward** (MEC→DG→CA3→CA1 plus INT→CA1). Population table:
 
-```bash
-python run_simulation.py \
-    --output outputs/run_custom_001 \
-    --seed 1 \
-    --neural-backend custom_rate_equations
-```
+| Group | n | RiaB class | Region / cell type | Dynamics |
+|-------|---|------------|--------------------|----------|
+| CA1_place_pp | 60 | PhasePrecessingPlaceCells | CA1_pyr | phase precession (built-in), ripples, speed gain |
+| CA3_place | 40 | PlaceCells | CA3_pyr | theta, ripples, recurrent |
+| DG_place | 50 | PlaceCells (narrow) | DG_granule | theta, sparsity, speed gain |
+| CA2_place | 20 | PlaceCells | CA2_pyr | theta, weak ripples |
+| MEC_grid | 40 | GridCells | MEC_grid | theta, speed gain |
+| MEC_hd | 30 | HeadDirectionCells | MEC_hd | theta |
+| Sub_bvc | 30 | BoundaryVectorCells | Sub_bvc | theta |
+| MEC_speed | 20 | SpeedCells_fallback | MEC_speed | speed tuning |
+| CA1_int | 15 | synthetic | CA1_int | theta, ripples, anti-CA1-pyr |
 
-### 2. RatInABox neurons (recommended)
-
-Uses RatInABox `PlaceCells`, head-direction, boundary-vector, and speed cells on the same trajectory; Poisson spikes feed the same recording/sorting/decoding pipeline. Saves `rate_model` and `ratinabox_class` in `units.csv`.
+Source of truth: `hippo_sim/hippocampal_populations.py`. Saves `rate_model` and `ratinabox_class` in `units.csv`.
 
 ```bash
 python run_simulation.py \
     --output outputs/ratinabox_003 \
-    --seed 1 \
-    --neural-backend ratinabox_neurons
+    --seed 1
 ```
 
 ---
 
 ## Table 3: Causal Decoding — Timing and Features
 
-**Scientific framing.** The simulator knows true behavior. The decoder only sees spike counts. `spike_source=ground_truth` is ideal neural information; `spike_source=sorted` is information after Neuropixels degradation and sorting. Window search asks how much recent history is needed; model search asks which estimator extracts latent variables best; closed-loop replay tests realtime triggers.
+**Scientific framing.** The simulator knows true behavior. The decoder only sees spike counts. `spike_source=sorted` is the **deployment-relevant** source after Neuropixels degradation and sorting. `spike_source=ground_truth` is an **oracle** upper bound (optional diagnostics only — never deployable). Window search asks how much recent history each target needs; model search asks which estimator extracts latent variables best; closed-loop replay tests realtime triggers using sorted-selected models.
 
 ### Causal observation
 
@@ -362,77 +400,331 @@ Encoder `E` is fit on **training** activity only, then frozen for test / realtim
 | `layer_pca` | PCA per layer | `layer` | `k` per group |
 | `cell_type_pca` | PCA per cell type | `cell_type` | `k` per group |
 | `rate_model_pca` | PCA per rate model | `rate_model` (fallback `ratinabox_class`) | `k` per group |
+| `global_isomap` | Isomap on all units (√counts + scale + optional pre-PCA) | — | `d` (offline only) |
 
 | Setting | Default |
 |---------|---------|
 | Quick feature modes | `counts`, `global_pca`, `region_pca` |
 | Default `k` list | `(3,)` (override with `--manifold-components-list 2 3 5`) |
+| Isomap neighbors | `--isomap-neighbors` (default `10` when `global_isomap` requested) |
 | Fit data | train split only |
-| Realtime | load saved transform from comparison `models/` |
+| Realtime | load saved transform from comparison `models/` (**not** standard Isomap) |
 
-**Note:** Static manifold PCA in `manifold_features.py` is applied to raw (or rate) count vectors. The optional **temporal** PCA path (`realtime/manifolds/pca.py`) uses `√counts` + `StandardScaler` before PCA — see Table 8.
+**Note:** Static manifold PCA in `manifold_features.py` is applied to raw (or rate) count vectors. The optional **temporal** PCA path (`realtime/manifolds/pca.py`) uses `√counts` + `StandardScaler` before PCA — see Table 8. Static / temporal Isomap both use √counts + standardization + optional pre-PCA and are tagged `offline_analysis_only`.
 
 ---
 
 ## Table 8: Temporal Manifold Decoding (optional)
 
-Enabled with `--enable-temporal-manifold` on `run_full_decoder_workflow.py`. Config reference: `configs/temporal_decoding.yaml`.
+Enabled with `--enable-temporal-manifold` on `run_decoder.py`. Config reference: `configs/temporal_decoding.yaml`.
+
+Under `--profile standard` (default), temporal mode is **lean**: PCA-only latents, `L ∈ {1,5,20}`, core models, and **W inherited from Step 1** (best/recommended windows plus short/long flanks). Use `--profile full` for the dense research grid (`raw`+`pca`, full L list, shuffle/average controls).
 
 ```text
 x_t^(W)  →  z_t  →  Z_t^(L) = [z_{t−L+1}, …, z_t]  →  ŷ_{t+τ}
 ```
 
-| Parameter | Defaults | Meaning |
-|-----------|----------|---------|
-| `W` | same window grid as static | Spike integration |
-| Representations | `raw`, `pca` | Latent encoder |
-| PCA preprocess | `√x` + standardize | Temporal PCA path |
-| Default latent dim (temporal PCA) | 16 | From config |
-| `L` (frames) | 1, 2, 5, 10, 20 | History length |
-| `L` duration @ 20 Hz | 50, 100, 250, 500, 1000 ms | |
-| `τ` | 0.0 (searchable) | Prediction lag |
-| Temporal models | `raw_static`, `static_latent`, `flattened_history` | Phase-1 |
-| Controls | `averaged_history`, `shuffled_sequence` | |
+| Parameter | Standard (lean) | Full |
+|-----------|-----------------|------|
+| `W` | inherited from Step 1 + flanks | explicit `--decode-windows` grid |
+| Representations | `pca` | `raw`, `pca` (+ `isomap` via `--representations`) |
+| PCA preprocess | `√x` + standardize | same |
+| Isomap | opt-in offline | `√x` + standardize + optional pre-PCA; `realtime_compatible=false` |
+| Default latent dim (temporal PCA) | 16 | 16 |
+| Default Isomap latent dim | 8 (`--isomap-latent-dim`) | same |
+| `L` (frames) | 1, 5, 20 | 1, 2, 5, 10, 20 |
+| Temporal models | `raw_static`, `static_latent`, `flattened_history` | + `averaged_history`, `shuffled_sequence` |
 | Split | train / val / test contiguous + leakage gap | Selection on **validation** only |
 
 Planned (not in baseline): causal GRU, TCN, autoencoder, CEBRA.
 
 ---
 
-## Decoder workflow (public script)
+## Isomap nonlinear manifold analysis
 
-`run_full_decoder_workflow.py` runs under the hood:
+Isomap is an **offline** nonlinear manifold encoder. It is **not** a behavioral decoder.
 
-1. **Compare** models × windows × feature modes → `decoder_comparison/`
-2. **Select** best / shortest-near-optimal config per target
-3. **Replay** closed-loop causal decoding → `realtime_decoding/`
-4. **Optional** figures + `figures/output.pdf`
+Architecture (same as other manifold methods):
+
+```text
+x_t^(W)  →  E_Isomap(·)  →  z_t  →  D(·)  →  ŷ_t
+```
+
+or with temporal dynamics kept separate from Isomap geometry:
+
+```text
+x_t^(W)  →  z_t^Isomap  →  Z_t^(L) = [z_{t−L+1}, …, z_t]  →  D_temporal  →  ŷ_{t+τ}
+```
+
+| Concept | Role |
+|---------|------|
+| Manifold extraction `E` | Maps high-D neural activity → low-D coordinates `z_t` |
+| Behavioral decoder `D` | Maps `z_t` (or raw `x_t`) → behavior / memory targets |
+| Isomap | One possible **offline** nonlinear choice for `E` |
+
+Do **not** assume a nonlinear manifold requires a nonlinear decoder. Always compare linear and nonlinear `D` on the same Isomap coordinates (and on PCA / raw).
+
+### Scientific motivation
+
+Hippocampal population activity may lie on a curved, low-dimensional manifold. PCA is a useful linear baseline, but it may need many components to approximate a manifold whose intrinsic dimension is small. Isomap estimates **geodesic** distances along a neighbor graph and embeds them with classical MDS, preserving global nonlinear geometry better than Euclidean PCA when the geometry is curved.
+
+### Algorithm (sklearn `manifold.Isomap`)
+
+Given neural observations `X ∈ R^{T×N}` (rows = time, columns = units):
+
+1. Build a `k`-nearest-neighbor graph on **training** observations only.
+2. Weight edges by pairwise distances between neighbors.
+3. Estimate geodesic distances via shortest paths on the graph.
+4. Apply classical multidimensional scaling (MDS) to the geodesic matrix.
+5. Return coordinates `Z ∈ R^{T×d}`.
+
+Implementation: `realtime/manifolds/isomap.py` (`IsomapManifoldEncoder`), registered as `"isomap"`. Static decoding feature mode: `global_isomap` in `realtime/manifold_features.py`.
+
+### Preprocessing (training-only)
+
+Recommended default:
+
+```text
+spike counts → √counts → StandardScaler (train fit) → optional PCA precompression → Isomap
+```
+
+Config keys (`configs/temporal_decoding.yaml` → `manifold.methods.isomap`):
+
+| Key | Default | Notes |
+|-----|---------|-------|
+| `n_neighbors` | `[5,10,20,30,50]` | Too small → disconnected graph; too large → shortcut edges |
+| `latent_dims` / `n_components` | `[2,3,4,6,8]` | Embedding dimension `d` |
+| `pre_pca.enabled` | `true` | Reduces noise / cost when `N` is large |
+| `pre_pca.n_components` | `50` | Or set variance threshold |
+| `require_connected_graph` | `true` | Reject disconnected configs |
+| `allow_largest_component_only` | `false` | Optional recovery if largest component ≥ 95% |
+| `realtime_compatible` | `false` | Standard Isomap is offline-only |
+
+**Leakage rules:** never fit scaling, PCA, neighbor graphs, or Isomap on validation/test. Held-out coordinates use the training model’s out-of-sample `transform`. Do not concatenate train+val+test before fitting merely for a continuous visualization. Tag any full-session embedding as `exploratory_full_session_embedding` / `not_valid_for_held_out_performance`.
+
+### Graph diagnostics
+
+After fit, diagnostics report:
+
+- connected-component count and largest-component fraction
+- min / median / max / mean node degree
+- `mean_degree / n_train` (dense-graph flag)
+- duplicate-observation fraction
+- geodesic-distance finite fraction
+
+Disconnected graphs raise `DisconnectedGraphError` (or are recorded with `exclusion_reason`) unless `allow_largest_component_only` is enabled.
+
+### Geometry metrics
+
+- Trustworthiness at several `k`
+- k-NN overlap / continuity proxy
+- Geodesic vs embedding distance correlation (sampled pairs)
+- Residual variance `1 − R²(D_G, D_Z)`
+
+Hyperparameters are selected from **held-out validation** decoding / geometry metrics — not from visualization quality.
+
+### Linear vs nonlinear decoders
+
+Recommended Phase-1 comparisons:
+
+```text
+raw + Ridge / Random Forest
+PCA + Ridge / Random Forest
+Isomap + Ridge / Random Forest / k-NN
+```
+
+Full model zoo also includes `rbf_svr` / `rbf_svc` and small MLPs (`--max-models full`). Position uses multi-output regressors and Euclidean position error.
+
+This separates **nonlinear representation** benefit from **nonlinear output mapping** benefit.
+
+### Temporal decoding on Isomap
+
+Isomap geometry and temporal history are kept separate: encode each causal window to `z_t`, then build `Z_t^(L)`. Supported temporal models (existing Table 8 path): `static_latent`, `flattened_history`, plus controls `averaged_history` / `shuffled_sequence`. Pass `--representations isomap` with `--enable-temporal-manifold`.
+
+### Real-time compatibility
+
+| Method | Tag | Auto-deploy in closed-loop? |
+|--------|-----|-------------------------------|
+| `isomap` / `global_isomap` | `offline_analysis_only` | **No** |
+| `isomap_distilled` / `global_isomap_distilled` | parametric approx. of Isomap | **Yes** if latency ≤ 50 ms **and** held-out distortion OK |
+| `pca` / `counts` | realtime-capable | Yes (existing path) |
+
+Best-decoder selection prefers realtime-compatible feature modes for closed-loop recommendations even when offline Isomap wins on accuracy.
+
+Parametric distillation (`realtime/manifolds/isomap_distillation.py`, static mode `global_isomap_distilled`) trains Ridge / kernel Ridge / small MLP so `E_θ(x_t) ≈ z_t^Isomap`. This is **not** exact Isomap. Enable with `--enable-isomap-distillation`.
+
+Every causal-update stage (spike binning, feature transforms including distilled Isomap, each decoder head, closed-loop policy) is timed under `latency_profiling/` and plotted in `figures/latency/` in the compiled PDF.
+
+### Causal update latency (`ratinabox_004`, 50 ms / 20 Hz budget)
+
+| Stage / feature | Mean latency | Realtime? |
+|-----------------|-------------:|:---------:|
+| counts | 0.003 ms | yes |
+| global_pca | 0.089 ms | yes |
+| region_pca | 0.507 ms | yes |
+| classic Isomap (`global_isomap`) | ~10 ms | **no** |
+| distilled Isomap (`global_isomap_distilled`) | ~0.10 ms | **yes** |
+| spike binning | 0.36 ms | — |
+| decode position / speed / movement | ~0.8–1.0 ms each | — |
+| decode spatial_context (RF) | ~55 ms | — |
+| decode_primary (same RF again) | ~54 ms | — |
+| closed-loop policy | 0.01 ms | — |
+| **total update** | **~112 ms** | over budget |
+
+Distilled Isomap is ~100× faster than classic Isomap and well under the update budget. The budget miss is from random-forest classifier heads (context + primary both ~55 ms), not the manifold front-end.
+
+### Commands
 
 ```bash
-python run_full_decoder_workflow.py \
-    --input outputs/ratinabox_002 \
-    --output outputs/ratinabox_002 \
-    --compare-sources \
-    --spike-source sorted \
-    --decode-windows 0.05 0.1 0.25 0.5 1.0 \
-    --feature-modes counts global_pca region_pca \
-    --manifold-components-list 3 \
-    --closed-loop-target spatial_context \
-    --selection-policy shortest_near_optimal \
+# Static: PCA vs Isomap + linear/RF decoders
+python run_decoder.py \
+    --input outputs/ratinabox_004 \
+    --output outputs/ratinabox_004 \
+    --feature-modes counts global_pca global_isomap \
+    --manifold-components-list 2 3 4 6 8 \
+    --isomap-neighbors 5 10 20 30 50 \
+    --max-models quick \
+    --skip-visualization
+
+# Temporal Isomap (offline; inherits W from Step 1 when profile=standard)
+python run_decoder.py \
+    --input outputs/ratinabox_004 \
+    --output outputs/ratinabox_004 \
+    --enable-temporal-manifold \
+    --representations pca isomap \
+    --isomap-neighbors 10 \
+    --isomap-latent-dim 8 \
+    --latent-history-frames 1 2 5 10 20
+
+# Staged BCI workflow (developer): fit datasets + partitions + decode
+python run_BCI.py \
+    --stage decode-temporal \
+    --input outputs/ratinabox_004 \
+    --output outputs/ratinabox_004 \
+    --representations pca isomap \
+    --isomap-neighbors 10 20 \
+    --enable-temporal-manifold
+
+# Figures (reads saved outputs only)
+python run_visualizations.py --experiment outputs/ratinabox_004 --all --compile-pdf
+
+# Tests
+python -m pytest tests/test_isomap_manifold.py tests/test_isomap_decoders.py \
+    tests/test_isomap_distillation.py tests/test_isomap_temporal.py -q
+```
+
+### Outputs
+
+| Path | Contents |
+|------|----------|
+| `decoder_comparison/*/models/manifold_transforms/global_isomap_k*_nn*_w*ms/` | Fitted Isomap + preprocessing (`meta.json`, `isomap.joblib`, `scaler.joblib`, `pre_pca.joblib`, diagnostics) |
+| `decoder_comparison/*/decoder_comparison_metrics.csv` | Rows include `manifold_method`-like fields: `n_neighbors`, `graph_connected`, `trustworthiness`, `residual_variance`, `decoder_nonlinear`, `realtime_compatible` |
+| `decoding/comparison/*/manifolds/isomap/` | Temporal Isomap encoders per `W` |
+| `decoding/comparison/*/all_configurations.csv` | Temporal W×L results with Isomap geometry columns |
+| Distilled models (optional API) | `IsomapDistilledEncoder.save(...)` → `meta.json` + `distiller.joblib` |
+
+### Limitations and troubleshooting
+
+| Issue | Guidance |
+|-------|----------|
+| Disconnected graph | Increase `n_neighbors`; check duplicate population vectors |
+| Shortcut / collapsed geometry | Decrease `n_neighbors`; inspect dense-graph flag |
+| Slow / high memory | Enable pre-PCA; reduce `T` via coarser update; sample distance pairs |
+| Too few units / samples | Isomap needs enough neighbors; prefer PCA or raw |
+| Unstable `n_neighbors` | Report stability across neighbors; select on validation metrics |
+| Poor held-out transform | Expected limitation of inductive Isomap; consider distillation only as approximation |
+| Realtime wants Isomap | Use PCA/counts for closed loop; Isomap informs dimensionality / partition choice only |
+
+Do **not** conclude Isomap is superior because a 2-D plot looks more curved. Use held-out decoding and geometry metrics.
+
+---
+
+## Decoder workflow (public script)
+
+`run_decoder.py` runs under the hood:
+
+1. **Compare** models × windows × feature modes on **sorted spikes only** → `decoder_comparison/sorted/`
+2. **Write deployable registry** → `models/best_realtime_decoders.json` + `deployment_decoder_selection/`
+3. **Replay** closed-loop causal decoding from that registry → `realtime_decoding/sorted/`
+4. **Optional** figures + `figures/output.pdf`
+
+### Deployment vs oracle
+
+| Source | Role |
+|--------|------|
+| **Sorted spikes** (Neuropixels / Open Ephys / Kilosort-like) | **Only** valid model-selection source for realtime deployment |
+| **Ground-truth spikes** | Optional **oracle / non-deployable** diagnostic (`--include-ground-truth-diagnostics`) |
+
+Deployable models must survive missed spikes, jitter, contamination, amplitude drift, collisions, noise, and unit-quality variability. Therefore realtime never loads ground-truth-selected models.
+
+### Causal window selection
+
+- Update rate is fixed at **20 Hz / 50 ms** (`update_dt=0.050`).
+- The **causal integration window `W`** is selected **independently per target** from:
+
+```text
+[0.050, 0.100, 0.250, 0.500, 1.000]
+```
+
+- A common 250 ms window is allowed **only if it wins empirically** for that target — it is **not hard-coded**.
+- After selection, if every target picks the same `W`, the workflow prints a warning and you should inspect `all_sorted_window_scores.csv`.
+
+```bash
+# Happy path — sorted-only deployment selection, full W grid, closed-loop, PDF
+python run_decoder.py \
+    --input outputs/ratinabox_004 \
+    --output outputs/ratinabox_004 \
+    --compile-pdf
+
+# Optional oracle GT diagnostics (still selects deployable models from sorted)
+python run_decoder.py \
+    --input outputs/ratinabox_004 \
+    --output outputs/ratinabox_004 \
+    --include-ground-truth-diagnostics \
+    --compile-pdf
+
+# Research: dense temporal Table 8 on sorted spikes
+python run_decoder.py \
+    --input outputs/ratinabox_004 \
+    --output outputs/ratinabox_004 \
+    --profile full \
+    --enable-temporal-manifold \
     --compile-pdf
 ```
 
 | Flag | Purpose |
 |------|---------|
-| `--compare-sources` | Run both `ground_truth` and `sorted` |
+| `--profile` | `quick` / `standard` (default, full W grid) / `full` |
+| `--deployment-only` | Default: sorted-only deployable selection |
+| `--include-ground-truth-diagnostics` | Also run GT oracle comparisons (non-deployable) |
+| `--compare-sources` | Deprecated alias for GT diagnostics |
 | `--closed-loop-target` | Target for realtime selection / triggers |
 | `--selection-policy` | `shortest_near_optimal` or `best_accuracy` |
-| `--decode-windows` | Values of `W` to search |
-| `--feature-modes` | Observation / manifold modes |
+| `--decode-windows` | Override `W` grid (else full pool from profile) |
+| `--feature-modes` | Observation / manifold modes (default keeps counts + PCA) |
 | `--max-models` | `quick` or `full` model zoo |
 | `--enable-temporal-manifold` | Also run Table 8 W×L comparison |
+| `--skip-comparison` | Reuse existing `decoder_comparison/` |
 | `--skip-visualization` | Skip figure generation |
 | `--compile-pdf` | Write `figures/output.pdf` |
+
+### Deployment outputs to check before realtime
+
+| Path | Contents |
+|------|----------|
+| `models/best_realtime_decoders.json` | **Deployable** per-target decoder, `W`, feature mode, artifact paths |
+| `deployment_decoder_selection/all_sorted_window_scores.csv` | Full target × decoder × window score table |
+| `deployment_decoder_selection/best_decoder_by_target_sorted.csv` | Sorted best table copy |
+| `figures/deployment_decoder_selection/fig_deployment.png` | Publication deployment selection (winners + window×decoder heatmaps) |
+| `figures/decoder_comparison/fig_decoding_performance.png` | Causal decoding performance (Fig 4) |
+| `figures/decoder_comparison/fig_manifold_decoding.png` | Manifold vs counts (Fig 5) |
+| `figures/decoder_comparison/fig_latent_geometry.png` | PCA / Isomap embeddings (Fig 6) |
+| `figures/decoder_comparison/fig_isomap_diagnostics.png` | Isomap geometry diagnostics (Fig 7) |
+| `figures/decoder_comparison/fig_isomap_story.png` | Isomap decoding + distillation (Fig 8) |
+| `figures/realtime_decoding/fig_closed_loop.png` | Closed-loop realtime (Fig 9) |
+| `figures/latency/fig_latency.png` | Latency budget (Fig 11) |
+
+Step 1 prints manifold vs counts interpretations for sorted spikes (`manifold improves / reduces / comparable`).
 
 ---
 
@@ -444,12 +736,50 @@ python run_full_decoder_workflow.py \
 python run_visualizations.py --experiment outputs/ratinabox_002 --all --compile-pdf
 ```
 
+### Paper figure set
+
+Default regeneration writes a **small set of seaborn multi-panel** `fig_*.png` files (matching the neural publication style) instead of dozens of single-panel decoder/manifold PNGs:
+
+| Paper fig | Stem | Content |
+|-----------|------|---------|
+| Fig 1 | `fig_behavior_overview`, `fig_behavior_dynamics` (+ report) | Behavioral spatial overview + dynamics |
+| Fig 2 | `fig_behavior_features`, `fig_neural_drivers`, `fig_circuit_population` | Covariates, drivers, circuit population |
+| Fig 3 | `fig_cell_class_population`, `fig_population_structure`, `fig_spike_raster_summary` | Population structure + spikes |
+| Fig 4 | `fig_decoding_performance` | Causal decoding vs window / best decoder |
+| Fig 5 | `fig_manifold_decoding` | Counts vs PCA / region PCA (/ Isomap) |
+| Fig 6 | `fig_latent_geometry` | PCA + Isomap embeddings colored by behavior |
+| Fig 7 | `fig_isomap_diagnostics` | Trustworthiness, connectivity, residual variance, geodesic/knn |
+| Fig 8 | `fig_isomap_story` | Counts/PCA/Isomap story + distilled vs teacher |
+| Fig 9 | `fig_closed_loop` | Closed-loop position, confusions, triggers |
+| Fig 10 | `fig_deployment` | Deployment winner summary + window×decoder heatmaps |
+| Fig 11 | `fig_latency` | Causal-update latency budget |
+| Fig 12 (suppl.) | `fig_temporal_wl` | Temporal W×L heatmaps (when `decoding/` exists) |
+
+Compiled `figures/output.pdf` follows: simulation → decoding → manifolds/Isomap → realtime → deployment → latency.
+
+### Regenerating with Isomap panels populated
+
+Current comparison runs may be **counts / PCA / region PCA only**. Isomap panels then render an explicit **“Isomap not run”** empty state. To populate Figs 5–8 with Isomap geometry and decoding rows:
+
+```bash
+# Re-run decoder comparison (and optional distillation) on an existing experiment
+python run_full_decoder_workflow.py \
+  --experiment outputs/ratinabox_005 \
+  --feature-modes counts global_pca region_pca global_isomap \
+  --enable-isomap-distillation \
+  --compile-pdf
+
+# Or plot-only after comparison already includes global_isomap rows:
+python run_visualizations.py --experiment outputs/ratinabox_005 --all --compile-pdf
+```
+
+Future / deferred visualizations (not in this suite): 3D interactive embeddings, unit-ablation movies, animated Bayesian place-map GIFs.
+
 Includes when present:
 
 - behavior trajectory / occupancy / feature traces
-- neural driver features, ground-truth and sorted rasters, probe geometry
-- `decoder_comparison/` figures
-- `realtime_decoding/` closed-loop figures
+- neural publication multi-panels (`fig_circuit_population`, …)
+- decoder / manifold / Isomap / realtime / deployment / latency `fig_*` panels
 - sectioned `figures/output.pdf`
 
 ---
@@ -468,9 +798,17 @@ outputs/<run>/
   realtime_decoding/            # decoded CSV, closed-loop events, latency
     {spike_source}/{target}_{policy}/
   decoding/                     # optional temporal W×L results
-  figures/                      # all PNGs
-    decoder_comparison/
-    realtime_decoding/
+  figures/                      # subfolders + output.pdf only (no loose PNGs)
+    behavior/                   # fig_behavior_overview, fig_behavior_dynamics
+    features/                   # fig_behavior_features, fig_neural_drivers
+    neural/                     # fig_circuit_population, fig_cell_class_*, …
+    sorting/
+    report/
+    decoder_comparison/         # fig_decoding_performance, fig_manifold_*, fig_isomap_*, fig_latent_*
+    realtime_decoding/          # fig_closed_loop
+    deployment_decoder_selection/  # fig_deployment
+    latency/                    # fig_latency
+    temporal_decoding/          # fig_temporal_wl (when temporal comparison was run)
     output.pdf
 ```
 
@@ -487,9 +825,13 @@ outputs/<run>/
 | `realtime/decoder_models.py` | Model zoo |
 | `realtime/bayesian_decoder.py` | Bayesian place decoder |
 | `realtime/manifold_features.py` | Static manifold feature modes |
-| `realtime/manifolds/` | Temporal raw / PCA encoders |
+| `realtime/manifolds/` | Temporal raw / PCA / Isomap encoders (+ distillation) |
 | `realtime/temporal/` | History sequences, controls, W×L comparison |
+| `realtime/workflow.py` | Full decode orchestration |
+| `realtime/workflow_profiles.py` | `quick` / `standard` / `full` lean defaults |
+| `realtime/adaptive_windows.py` | Coarse→refine W; temporal W inheritance |
 | `realtime/decoder_comparison.py` | Multi-model / window search |
+| `realtime/deployment_selection.py` | Sorted-only deployable registry + window-score table |
 | `realtime/best_decoder_selection.py` | Selection policies |
 | `realtime/evaluate_realtime.py` | Closed-loop replay |
 | `realtime/workflow.py` | Orchestration for public decoder script |
@@ -506,7 +848,7 @@ Most users should **not** need these. Tuning and best-decoder selection already 
 |---------|------|
 | `run_decoder_comparison.py` | Comparison step only |
 | `run_realtime_decoding.py` | Replay step only (manual or `--use-best-decoder`) |
-| `run_full_workflow.py` | Staged simulate / manifolds / partitions / decode |
+| `run_BCI.py` | Staged simulate / manifolds / partitions / decode |
 
 ---
 

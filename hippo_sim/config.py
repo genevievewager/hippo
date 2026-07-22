@@ -25,21 +25,43 @@ REGION_SEGMENTS: List[Dict] = [
     {"region": "CA1", "layer": "pyramidal", "z_start": 200, "z_end": 400, "density": 8.0},
     {"region": "CA1", "layer": "radiatum", "z_start": 400, "z_end": 600, "density": 5.0},
     {"region": "CA2", "layer": "pyramidal", "z_start": 600, "z_end": 800, "density": 6.0},
-    {"region": "CA3", "layer": "pyramidal", "z_start": 800, "z_end": 1400, "density": 7.0},
-    {"region": "DG", "layer": "granule", "z_start": 1400, "z_end": 1800, "density": 10.0},
-    {"region": "DG", "layer": "hilus", "z_start": 1800, "z_end": 2000, "density": 3.0},
+    {"region": "CA3", "layer": "pyramidal", "z_start": 800, "z_end": 1300, "density": 7.0},
+    {"region": "DG", "layer": "granule", "z_start": 1300, "z_end": 1650, "density": 10.0},
+    {"region": "DG", "layer": "hilus", "z_start": 1650, "z_end": 1850, "density": 3.0},
+    {"region": "Subiculum", "layer": "pyramidal", "z_start": 1850, "z_end": 2050, "density": 4.0},
+    {"region": "MEC", "layer": "layer2", "z_start": 2050, "z_end": 2350, "density": 5.0},
+    {"region": "MEC", "layer": "layer3", "z_start": 2350, "z_end": 2600, "density": 4.0},
 ]
 
-CELL_TYPES = ["CA1_pyr", "CA2_pyr", "CA3_pyr", "DG_granule"]
+CELL_TYPES = [
+    "CA1_pyr",
+    "CA1_int",
+    "CA2_pyr",
+    "CA3_pyr",
+    "DG_granule",
+    "MEC_grid",
+    "MEC_hd",
+    "MEC_speed",
+    "Sub_bvc",
+]
 
-NEURAL_BACKENDS = ("custom_rate_equations", "ratinabox_neurons")
-
+# Maximally hippocampal RiaB population sizes (see hippocampal_populations.py).
 RATINABOX_PARAMS: Dict = {
-    "n_place_cells": 80,
-    "n_head_direction_cells": 40,
-    "n_boundary_vector_cells": 40,
-    "n_speed_cells": 40,
-    "n_grid_cells": 0,
+    "n_ca1_place_cells": 60,
+    "n_ca3_place_cells": 40,
+    "n_dg_place_cells": 50,
+    "n_ca2_place_cells": 20,
+    "n_mec_grid_cells": 40,
+    "n_mec_hd_cells": 30,
+    "n_sub_bvc_cells": 30,
+    "n_mec_speed_cells": 20,
+    "n_ca1_interneurons": 15,
+    # Legacy aliases kept for older configs / scripts.
+    "n_place_cells": 60,
+    "n_head_direction_cells": 30,
+    "n_boundary_vector_cells": 30,
+    "n_speed_cells": 20,
+    "n_grid_cells": 40,
     "dt": BEHAVIOR_DT,
     "poisson_spikes": True,
     "rate_scale_hz": 15.0,
@@ -47,19 +69,38 @@ RATINABOX_PARAMS: Dict = {
     "speed_amplitude_hz": 12.0,
     "speed_threshold_cm_s": 2.0,
     "speed_scale_cm_s": 28.0,
+    "apply_hippocampal_dynamics": True,
+    "apply_feedforward": True,
+    "int_baseline_hz": 18.0,
+    "int_anti_ca1_weight": 0.35,
+    # Trisynaptic / EC feedforward weights (see hippo_sim/feedforward.py).
+    "feedforward": {
+        "w_mec_to_dg": 0.20,
+        "w_dg_to_ca3": 0.25,
+        "w_ca3_to_ca1": 0.20,
+        "w_mec_to_ca1": 0.15,
+        "w_int_to_ca1": 0.30,
+        "w_mec_to_ca2": 0.10,
+        "w_ca3_to_ca2": 0.10,
+        "normalize_upstream": True,
+    },
 }
 
 REGION_TO_CELL_TYPE = {
-    ("CA1", "oriens"): "CA1_pyr",
+    ("CA1", "oriens"): "CA1_int",
     ("CA1", "pyramidal"): "CA1_pyr",
     ("CA1", "radiatum"): "CA1_pyr",
     ("CA2", "pyramidal"): "CA2_pyr",
     ("CA3", "pyramidal"): "CA3_pyr",
     ("DG", "granule"): "DG_granule",
     ("DG", "hilus"): "DG_granule",
+    ("Subiculum", "pyramidal"): "Sub_bvc",
+    ("MEC", "layer2"): "MEC_grid",
+    ("MEC", "layer3"): "MEC_hd",
 }
 
 RATE_PARAMS: Dict[str, Dict] = {
+    # Used by RatInABox hippocampal dynamics overlays (not a standalone ODE backend).
     "CA1_pyr": {
         "tau_s": 0.05,
         "baseline_hz": 0.5,
@@ -73,6 +114,20 @@ RATE_PARAMS: Dict[str, Dict] = {
         "theta_freq_hz": 8.0,
         "w_ripple": 0.5,
         "w_boundary": 0.2,
+    },
+    "CA1_int": {
+        "tau_s": 0.03,
+        "baseline_hz": 18.0,
+        "amplitude_hz": 4.0,
+        "sigma_place_cm": 25.0,
+        "w_hd": 0.05,
+        "kappa_hd": 1.0,
+        "w_speed": 0.1,
+        "speed_thresh_cm_s": 2.0,
+        "w_theta": 0.4,
+        "theta_freq_hz": 8.0,
+        "w_ripple": 0.3,
+        "w_boundary": 0.05,
     },
     "CA2_pyr": {
         "tau_s": 0.05,
@@ -118,15 +173,62 @@ RATE_PARAMS: Dict[str, Dict] = {
         "w_boundary": 0.3,
         "sparsity_thresh": 0.3,
     },
-}
-
-DRIFT_PARAMS = {
-    "place_drift_sd_cm_per_min": 0.1,
-    "place_drift_update_s": 30.0,
-    "state_drift_tau_s": 120.0,
-    "state_drift_sigma": 0.15,
-    "gain_drift_tau_s": 180.0,
-    "gain_drift_sigma": 0.1,
+    "MEC_grid": {
+        "tau_s": 0.05,
+        "baseline_hz": 0.3,
+        "amplitude_hz": 12.0,
+        "sigma_place_cm": 15.0,
+        "w_hd": 0.1,
+        "kappa_hd": 1.0,
+        "w_speed": 0.4,
+        "speed_thresh_cm_s": 2.0,
+        "w_theta": 0.2,
+        "theta_freq_hz": 8.0,
+        "w_ripple": 0.0,
+        "w_boundary": 0.1,
+    },
+    "MEC_hd": {
+        "tau_s": 0.04,
+        "baseline_hz": 0.5,
+        "amplitude_hz": 10.0,
+        "sigma_place_cm": 40.0,
+        "w_hd": 1.0,
+        "kappa_hd": 3.0,
+        "w_speed": 0.1,
+        "speed_thresh_cm_s": 2.0,
+        "w_theta": 0.2,
+        "theta_freq_hz": 8.0,
+        "w_ripple": 0.0,
+        "w_boundary": 0.05,
+    },
+    "MEC_speed": {
+        "tau_s": 0.05,
+        "baseline_hz": 0.5,
+        "amplitude_hz": 12.0,
+        "sigma_place_cm": 50.0,
+        "w_hd": 0.0,
+        "kappa_hd": 1.0,
+        "w_speed": 1.0,
+        "speed_thresh_cm_s": 2.0,
+        "w_theta": 0.05,
+        "theta_freq_hz": 8.0,
+        "w_ripple": 0.0,
+        "w_boundary": 0.0,
+    },
+    "Sub_bvc": {
+        "tau_s": 0.05,
+        "baseline_hz": 0.4,
+        "amplitude_hz": 10.0,
+        "sigma_place_cm": 20.0,
+        "w_hd": 0.15,
+        "kappa_hd": 1.5,
+        "w_speed": 0.15,
+        "speed_thresh_cm_s": 2.0,
+        "w_theta": 0.1,
+        "theta_freq_hz": 8.0,
+        "w_ripple": 0.0,
+        "w_boundary": 0.8,
+    },
 }
 
 RIPPLE_PARAMS = {
@@ -167,21 +269,13 @@ class SimConfig:
     n_channels: int = N_CHANNELS
     arena_size_cm: float = ARENA_SIZE_CM
     thigmotaxis: float = THIGMOTAXIS
-    neural_backend: str = "custom_rate_equations"
     region_segments: List[Dict] = field(default_factory=lambda: list(REGION_SEGMENTS))
+    # Cell-type parameters for RatInABox hippocampal dynamics overlays.
     rate_params: Dict[str, Dict] = field(default_factory=lambda: dict(RATE_PARAMS))
-    drift_params: Dict = field(default_factory=lambda: dict(DRIFT_PARAMS))
     ripple_params: Dict = field(default_factory=lambda: dict(RIPPLE_PARAMS))
     recording_params: Dict = field(default_factory=lambda: dict(RECORDING_PARAMS))
     sorting_params: Dict = field(default_factory=lambda: dict(SORTING_PARAMS))
     ratinabox_params: Dict = field(default_factory=lambda: dict(RATINABOX_PARAMS))
-
-    def __post_init__(self) -> None:
-        if self.neural_backend not in NEURAL_BACKENDS:
-            raise ValueError(
-                f"Invalid neural_backend {self.neural_backend!r}. "
-                f"Allowed values: {list(NEURAL_BACKENDS)}"
-            )
 
     @property
     def n_behavior_steps(self) -> int:

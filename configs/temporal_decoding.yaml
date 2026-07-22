@@ -5,32 +5,76 @@ timing:
   alignment_tolerance_s: 0.005
 
 neural_features:
+  # Coarse grid for standard profile; adaptive refine may add 0.100 s.
+  # Full profile uses the complete pool including 0.100.
   integration_windows_s:
     - 0.050
-    - 0.100
     - 0.250
     - 0.500
     - 1.000
   transform: sqrt_counts
 
 manifold:
+  # Lean temporal default is pca-only; full profile also enables raw.
+  # Add isomap explicitly via --representations isomap (offline analysis only).
   representations:
-    - raw
     - pca
-  # Phase 2+: autoencoder; Phase 3: cebra
-  optional_representations: []
+  optional_representations:
+    - raw
+    - isomap
   latent_dims:
     - 16
   representation_mode: target_specific
 
+  methods:
+    isomap:
+      enabled: true
+      latent_dims: [2, 3, 4, 6, 8]
+      n_neighbors: [5, 10, 20, 30, 50]
+      metric: euclidean
+      neighbors_algorithm: auto
+      path_method: auto
+      eigen_solver: auto
+      n_jobs: -1
+      realtime_compatible: false
+      deployment_tag: offline_analysis_only
+
+      preprocessing:
+        activity_representation: sqrt_counts
+        standardize: true
+        pre_pca:
+          enabled: true
+          n_components: 50
+          variance_threshold: null
+
+      graph_validation:
+        require_connected_graph: true
+        allow_largest_component_only: false
+        minimum_largest_component_fraction: 0.95
+
+      evaluation:
+        trustworthiness_neighbors: [5, 10, 20]
+        compute_residual_variance: true
+        compute_geodesic_preservation: true
+        sampled_distance_pairs: 100000
+
+      temporal:
+        enabled: true
+        latent_history_frames: [1, 2, 5, 10, 20]
+
+      distillation:
+        enabled: false
+        models: [ridge, kernel_ridge, mlp]
+        realtime_latency_budget_ms: 50
+
 temporal_decoding:
-  enabled: true
+  enabled: false  # opt-in via --enable-temporal-manifold
+  inherit_windows_from_step1: true
   latent_history_frames:
     - 1
-    - 2
     - 5
-    - 10
     - 20
+  # Full research grid: 1, 2, 5, 10, 20
   models:
     - raw_static
     - static_latent
@@ -39,8 +83,8 @@ temporal_decoding:
   prediction_lags_s:
     - 0.000
   controls:
-    shuffled_sequence: true
-    averaged_sequence: true
+    shuffled_sequence: false  # enable with --profile full
+    averaged_sequence: false
 
 streaming:
   enabled: false

@@ -16,9 +16,10 @@ from sklearn.ensemble import (
 from sklearn.linear_model import ElasticNet, LogisticRegression, Ridge
 from sklearn.multioutput import MultiOutputRegressor
 from sklearn.neighbors import KNeighborsClassifier, KNeighborsRegressor
+from sklearn.neural_network import MLPClassifier, MLPRegressor
 from sklearn.pipeline import Pipeline
 from sklearn.preprocessing import StandardScaler
-from sklearn.svm import LinearSVC
+from sklearn.svm import LinearSVC, SVC, SVR
 
 from realtime.bayesian_decoder import (
     BayesianDistanceToWallDecoder,
@@ -36,6 +37,8 @@ FULL_CONTINUOUS = (
     "random_forest_regressor",
     "hist_gradient_boosting_regressor",
     "knn_regressor",
+    "rbf_svr",
+    "mlp_regressor",
     "bayesian_place_decoder",
     "bayesian_place_decoder_smoothed",
 )
@@ -47,8 +50,26 @@ FULL_CATEGORICAL = (
     "random_forest_classifier",
     "hist_gradient_boosting_classifier",
     "knn_classifier",
+    "rbf_svc",
+    "mlp_classifier",
     "bayesian_place_decoder_derived_context",
 )
+
+# Nonlinear output mappers (still compared against linear baselines on same features)
+NONLINEAR_CONTINUOUS = frozenset({
+    "random_forest_regressor",
+    "hist_gradient_boosting_regressor",
+    "knn_regressor",
+    "rbf_svr",
+    "mlp_regressor",
+})
+NONLINEAR_CATEGORICAL = frozenset({
+    "random_forest_classifier",
+    "hist_gradient_boosting_classifier",
+    "knn_classifier",
+    "rbf_svc",
+    "mlp_classifier",
+})
 
 MULTI_OUTPUT_CONTINUOUS = frozenset({"position", "head_direction"})
 
@@ -110,6 +131,10 @@ def _categorical_model_allowed(name: str, target: str) -> bool:
     return True
 
 
+def is_nonlinear_decoder(name: str) -> bool:
+    return name in NONLINEAR_CONTINUOUS or name in NONLINEAR_CATEGORICAL
+
+
 def default_model_params(name: str, seed: int = 42, n_jobs: int = -1) -> dict[str, Any]:
     """Serializable default hyperparameters for decoder_config_json."""
     if name == "ridge":
@@ -126,6 +151,14 @@ def default_model_params(name: str, seed: int = 42, n_jobs: int = -1) -> dict[st
         return {"max_depth": 8, "random_state": seed}
     if name == "knn_regressor":
         return {"n_neighbors": 15, "weights": "distance"}
+    if name == "rbf_svr":
+        return {"C": 1.0, "gamma": "scale", "kernel": "rbf"}
+    if name == "mlp_regressor":
+        return {
+            "hidden_layer_sizes": (64, 32),
+            "max_iter": 400,
+            "random_state": seed,
+        }
     if name in ("bayesian_place_decoder", "bayesian_place_decoder_smoothed"):
         return {
             **DEFAULT_BAYESIAN_PARAMS,
@@ -147,6 +180,14 @@ def default_model_params(name: str, seed: int = 42, n_jobs: int = -1) -> dict[st
         return {"max_depth": 8, "random_state": seed}
     if name == "knn_classifier":
         return {"n_neighbors": 15, "weights": "distance"}
+    if name == "rbf_svc":
+        return {"C": 1.0, "gamma": "scale", "kernel": "rbf", "class_weight": "balanced"}
+    if name == "mlp_classifier":
+        return {
+            "hidden_layer_sizes": (64, 32),
+            "max_iter": 400,
+            "random_state": seed,
+        }
     if name == "bayesian_place_decoder_derived_context":
         return {**DEFAULT_BAYESIAN_PARAMS, "smooth": False}
     return {}
@@ -172,6 +213,12 @@ def _base_continuous_estimator(name: str, seed: int, n_jobs: int):
         return HistGradientBoostingRegressor(max_depth=8, random_state=seed)
     if name == "knn_regressor":
         return KNeighborsRegressor(n_neighbors=15, weights="distance")
+    if name == "rbf_svr":
+        return SVR(kernel="rbf", C=1.0, gamma="scale")
+    if name == "mlp_regressor":
+        return MLPRegressor(
+            hidden_layer_sizes=(64, 32), max_iter=400, random_state=seed,
+        )
     raise ValueError(f"Unknown continuous model: {name}")
 
 
@@ -193,6 +240,12 @@ def _base_categorical_estimator(name: str, seed: int, n_jobs: int):
         return HistGradientBoostingClassifier(max_depth=8, random_state=seed)
     if name == "knn_classifier":
         return KNeighborsClassifier(n_neighbors=15, weights="distance")
+    if name == "rbf_svc":
+        return SVC(kernel="rbf", C=1.0, gamma="scale", class_weight="balanced")
+    if name == "mlp_classifier":
+        return MLPClassifier(
+            hidden_layer_sizes=(64, 32), max_iter=400, random_state=seed,
+        )
     raise ValueError(f"Unknown categorical model: {name}")
 
 

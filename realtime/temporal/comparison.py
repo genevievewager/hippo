@@ -37,11 +37,13 @@ from realtime.decoder_comparison import (
     _predict_labels,
 )
 from realtime.decoder_models import (
+    is_nonlinear_decoder,
     make_categorical_pipeline,
     make_continuous_pipeline,
 )
 from realtime.decoding_targets import align_extended_behavior_to_decoder_times
-from realtime.manifolds import make_manifold_encoder
+from realtime.manifolds import is_realtime_compatible_manifold, make_manifold_encoder
+from realtime.manifolds.isomap_diagnostics import DisconnectedGraphError
 from realtime.spike_features import apply_feature_mode, build_causal_spike_matrix
 from realtime.temporal.flattened import (
     average_latent_history,
@@ -60,7 +62,6 @@ from realtime.temporal.splits import (
 )
 from realtime.timing import (
     DEFAULT_INTEGRATION_WINDOWS_S,
-    DEFAULT_LATENT_HISTORY_FRAMES,
     DEFAULT_PREDICTION_LAGS_S,
     assert_alignment,
     extract_behavior_times,
@@ -69,6 +70,8 @@ from realtime.timing import (
 )
 from realtime.train_decoder import infer_arena_bounds
 
+# Lean Phase-1 default; --profile full still passes the dense L grid.
+DEFAULT_LATENT_HISTORY_FRAMES = (1, 5, 20)
 
 DEFAULT_DECODERS_CONTINUOUS = ("ridge", "random_forest_regressor")
 DEFAULT_DECODERS_CATEGORICAL = ("logistic_regression", "random_forest_classifier")
@@ -83,14 +86,16 @@ class TemporalComparisonConfig:
     integration_windows_s: tuple[float, ...] = DEFAULT_INTEGRATION_WINDOWS_S
     latent_history_frames: tuple[int, ...] = DEFAULT_LATENT_HISTORY_FRAMES
     prediction_lags_s: tuple[float, ...] = (0.0,)
-    representations: tuple[str, ...] = ("raw", "pca")
+    representations: tuple[str, ...] = ("pca",)
     pca_latent_dim: int = 16
+    isomap_latent_dim: int = 8
+    isomap_n_neighbors: int = 10
+    isomap_pre_pca_enabled: bool = True
+    isomap_pre_pca_n_components: int = 50
     temporal_models: tuple[str, ...] = (
         "raw_static",
         "static_latent",
         "flattened_history",
-        "shuffled_sequence",
-        "averaged_history",
     )
     include_long_aggregate_control: bool = True
     targets: tuple[str, ...] = ALL_TARGETS
@@ -249,8 +254,21 @@ def run_temporal_manifold_comparison(config: TemporalComparisonConfig) -> pd.Dat
             kwargs: dict[str, Any] = {}
             if rep == "pca":
                 kwargs["n_components"] = config.pca_latent_dim
+            elif rep == "isomap":
+                kwargs.update({
+                    "n_components": config.isomap_latent_dim,
+                    "n_neighbors": config.isomap_n_neighbors,
+                    "pre_pca_enabled": config.isomap_pre_pca_enabled,
+                    "pre_pca_n_components": config.isomap_pre_pca_n_components,
+                    "n_jobs": config.n_jobs,
+                    "random_state": config.seed,
+                })
             enc = make_manifold_encoder(rep, **kwargs)
-            enc.fit(X[train_mask])
+            try:
+                enc.fit(X[train_mask])
+            except DisconnectedGraphError as exc:
+                print(f"  exclude isomap W={W:.3f}s: {exc}")
+                continue
             Z = enc.transform(X)
             encoders[(W, rep)] = enc
             Z_by_key[(W, rep)] = Z
@@ -268,7 +286,15 @@ def run_temporal_manifold_comparison(config: TemporalComparisonConfig) -> pd.Dat
         for W in config.integration_windows_s:
             X = X_by_window[float(W)]
             for rep in config.representations:
+                if (float(W), rep) not in Z_by_key:
+                    continue
                 Z = Z_by_key[(float(W), rep)]
+                enc = encoders.get((float(W), rep))
+                isomap_meta: dict[str, Any] = {}
+                if rep == "isomap" and enc is not None and hasattr(enc, "get_metadata"):
+                    isomap_meta = enc.get_metadata()
+                geo = isomap_meta.get("geometry_metrics") or {}
+                diag = isomap_meta.get("graph_diagnostics") or {}
                 for L in config.latent_history_frames:
                     for tau in config.prediction_lags_s:
                         lag_frames = lag_seconds_to_frames(tau, update_dt)
@@ -318,6 +344,11 @@ def run_temporal_manifold_comparison(config: TemporalComparisonConfig) -> pd.Dat
                                 if "static_latent" in config.temporal_models:
                                     continue
                             for decoder_name in decoders:
+                                print(
+                                    f"    {target} W={W:.3f}s L={L} "
+                                    f"rep={rep} model={temporal_model} "
+                                    f"decoder={decoder_name}"
+                                )
                                 metrics_val, lat_val, pipeline = _fit_predict_eval(
                                     feats[train_keep],
                                     feats[val_keep],
@@ -357,6 +388,7 @@ def run_temporal_manifold_comparison(config: TemporalComparisonConfig) -> pd.Dat
                                     "update_dt_s": update_dt,
                                     "temporal_model": temporal_model,
                                     "decoder": decoder_name,
+                                    "decoder_nonlinear": is_nonlinear_decoder(decoder_name),
                                     "spike_source": config.spike_source,
                                     "model_class": temporal_model,
                                     "n_train": int(train_keep.sum()),
@@ -370,6 +402,20 @@ def run_temporal_manifold_comparison(config: TemporalComparisonConfig) -> pd.Dat
                                     "mean_inference_latency_s": metrics_val.get(
                                         "mean_inference_latency_s", float("nan")
                                     ),
+                                    "realtime_compatible": is_realtime_compatible_manifold(rep),
+                                    "n_neighbors": (
+                                        config.isomap_n_neighbors if rep == "isomap" else None
+                                    ),
+                                    "latent_dim": (
+                                        config.isomap_latent_dim if rep == "isomap"
+                                        else (config.pca_latent_dim if rep == "pca" else None)
+                                    ),
+                                    "graph_connected": diag.get("graph_connected"),
+                                    "largest_component_fraction": diag.get(
+                                        "largest_component_fraction"
+                                    ),
+                                    "trustworthiness": geo.get("trustworthiness"),
+                                    "residual_variance": geo.get("residual_variance"),
                                 }
                                 for k, v in metrics_val.items():
                                     if k == "confusion_matrix":
