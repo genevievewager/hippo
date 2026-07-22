@@ -36,7 +36,21 @@ ALL_FEATURE_MODES = IDENTITY_FEATURE_MODES + MANIFOLD_FEATURE_MODES
 OFFLINE_ONLY_FEATURE_MODES = frozenset({"global_isomap"})
 
 QUICK_FEATURE_MODES = ("counts", "global_pca", "region_pca")
+# Lean “test all RT-relevant manifolds” set used by ``--profile manifolds``.
+# Skips cell_type_pca / rate_model_pca (costly, largely redundant with region/layer).
+MANIFOLDS_FEATURE_MODES = (
+    "counts",
+    "global_pca",
+    "region_pca",
+    "layer_pca",
+    "global_isomap",
+    "global_isomap_distilled",
+)
 FULL_FEATURE_MODES = ALL_FEATURE_MODES
+
+# Lean grids for ``--profile manifolds`` (avoid neighbor × dim explosions).
+MANIFOLDS_N_COMPONENTS = (3, 8)
+MANIFOLDS_ISOMAP_N_NEIGHBORS = (10, 30)
 
 GROUPING_COLUMN = {
     "global_pca": None,

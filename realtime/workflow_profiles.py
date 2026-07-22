@@ -1,9 +1,12 @@
-"""Decoder workflow profiles: quick / standard / full.
+"""Decoder workflow profiles: quick / standard / full / manifolds.
 
 Profiles set lean defaults so a casual user gets a strong decoder without a
 research-scale sweep. Explicit CLI flags always override profile values.
 Manifold feature modes stay in quick/standard so Step 1 still reports whether
 manifold features help vs raw counts.
+
+``manifolds`` is the one-command path for testing all realtime-relevant
+embeddings (PCA family + classic / distilled Isomap) with a bounded grid.
 """
 
 from __future__ import annotations
@@ -12,7 +15,13 @@ from dataclasses import dataclass
 
 from realtime.adaptive_windows import COARSE_DECODE_WINDOWS, WINDOW_CANDIDATE_POOL
 from realtime.decoder_comparison import DEFAULT_DECODE_WINDOWS, DEFAULT_MANIFOLD_N_COMPONENTS
-from realtime.manifold_features import QUICK_FEATURE_MODES
+from realtime.manifold_features import (
+    DEFAULT_ISOMAP_N_NEIGHBORS,
+    MANIFOLDS_FEATURE_MODES,
+    MANIFOLDS_ISOMAP_N_NEIGHBORS,
+    MANIFOLDS_N_COMPONENTS,
+    QUICK_FEATURE_MODES,
+)
 from realtime.timing import DEFAULT_LATENT_HISTORY_FRAMES
 
 
@@ -50,6 +59,8 @@ class WorkflowProfile:
     latent_history_frames: tuple[int, ...]
     temporal_models: tuple[str, ...]
     prediction_lags: tuple[float, ...]
+    isomap_n_neighbors: tuple[int, ...] = (DEFAULT_ISOMAP_N_NEIGHBORS,)
+    enable_isomap_distillation: bool = False
 
 
 PROFILES: dict[str, WorkflowProfile] = {
@@ -99,6 +110,25 @@ PROFILES: dict[str, WorkflowProfile] = {
         latent_history_frames=DEFAULT_LATENT_HISTORY_FRAMES,
         temporal_models=FULL_TEMPORAL_MODELS,
         prediction_lags=(0.0,),
+    ),
+    # One-command manifold suite: all RT-relevant embeddings + Isomap teacher/student.
+    # Bounded W / k / nn and quick decoder zoo to avoid combinatorial explosion.
+    "manifolds": WorkflowProfile(
+        name="manifolds",
+        decode_windows=COARSE_DECODE_WINDOWS,
+        adaptive_windows=False,
+        feature_modes=MANIFOLDS_FEATURE_MODES,
+        manifold_n_components=MANIFOLDS_N_COMPONENTS,
+        max_models="quick",
+        compare_sources=False,
+        enable_temporal_manifold=False,
+        temporal_inherit_windows=True,
+        representations=LEAN_TEMPORAL_REPRESENTATIONS,
+        latent_history_frames=LEAN_LATENT_HISTORY_FRAMES,
+        temporal_models=LEAN_TEMPORAL_MODELS,
+        prediction_lags=(0.0,),
+        isomap_n_neighbors=MANIFOLDS_ISOMAP_N_NEIGHBORS,
+        enable_isomap_distillation=True,
     ),
 }
 

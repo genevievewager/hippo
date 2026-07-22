@@ -78,7 +78,7 @@ def run_full_decoder_workflow(
     input_dir: Path,
     output_dir: Path,
     *,
-    profile: str = "standard",
+    profile: str = "manifolds",
     compare_sources: bool | None = None,
     spike_source: str = "sorted",
     deployment_only: bool = True,
@@ -96,6 +96,7 @@ def run_full_decoder_workflow(
     manifold_n_components: tuple[int, ...] | None = None,
     isomap_n_neighbors: tuple[int, ...] | None = None,
     isomap_latent_dim: int | None = None,
+    enable_isomap_distillation: bool | None = None,
     region_ablation: bool = False,
     layer_ablation: bool = False,
     skip_visualization: bool = False,
@@ -119,10 +120,13 @@ def run_full_decoder_workflow(
     optional oracle diagnostics (``include_ground_truth_diagnostics=True``) and
     never written into deployable best-model registries.
 
-    Profiles (``quick`` / ``standard`` / ``full``) set lean defaults. Explicit
-    keyword arguments override the profile. ``standard`` evaluates the full
-    causal-window grid ``[0.050, 0.100, 0.250, 0.500, 1.000]`` independently
-    per target — 0.250 s is never hard-coded as the winner.
+    Profiles (``manifolds`` / ``standard`` / ``quick`` / ``full``) set lean
+    defaults. Explicit keyword arguments override the profile. Default
+    ``manifolds`` searches all realtime-relevant embeddings (PCA family +
+    classic / distilled Isomap) on a bounded W / k / nn grid. ``standard``
+    evaluates counts+PCA on the full causal-window grid
+    ``[0.050, 0.100, 0.250, 0.500, 1.000]`` independently per target —
+    0.250 s is never hard-coded as the winner.
     """
     prof: WorkflowProfile = get_profile(profile)
 
@@ -147,10 +151,17 @@ def run_full_decoder_workflow(
     if manifold_n_components is None:
         manifold_n_components = prof.manifold_n_components
     if isomap_n_neighbors is None:
-        from realtime.manifold_features import DEFAULT_ISOMAP_N_NEIGHBORS
-        isomap_n_neighbors = (DEFAULT_ISOMAP_N_NEIGHBORS,)
+        isomap_n_neighbors = prof.isomap_n_neighbors
     if isomap_latent_dim is None:
         isomap_latent_dim = 8
+    if enable_isomap_distillation is None:
+        enable_isomap_distillation = prof.enable_isomap_distillation
+    if enable_isomap_distillation:
+        modes = list(feature_modes)
+        for mode in ("global_isomap", "global_isomap_distilled"):
+            if mode not in modes:
+                modes.append(mode)
+        feature_modes = tuple(modes)
     if enable_temporal_manifold is None:
         enable_temporal_manifold = prof.enable_temporal_manifold
     if representations is None:
@@ -175,7 +186,10 @@ def run_full_decoder_workflow(
     print(
         f"Step 1/4: decoder comparison (profile={prof.name}, "
         f"deployment_only={deployment_only and not include_ground_truth_diagnostics}, "
-        f"windows={list(decode_windows)}, adaptive_windows={adaptive_windows})..."
+        f"windows={list(decode_windows)}, adaptive_windows={adaptive_windows}, "
+        f"feature_modes={list(feature_modes)}, "
+        f"manifold_k={list(manifold_n_components)}, "
+        f"isomap_nn={list(isomap_n_neighbors)})..."
     )
     print(
         "  Deployment selection uses sorted spikes only. "

@@ -788,9 +788,12 @@ Regenerate figures with \texttt{run\_visualizations.py --experiment outputs/rati
 
 \begin{figure}[H]
 \centering
-\includegraphics[width=0.70\textwidth]{region_pca_trajectory.png}
-\caption{Population trajectory in the first two region-PCA coordinates, colored by true horizontal position. The structured color gradient indicates that the region-restricted latent space preserves spatial information.}
-\label{fig:region-pca-trajectory}
+\includegraphics[width=\textwidth]{fig_latent_geometry_position.png}
+\caption{Latent neural geometry across embedding modes (sorted / deployable), colored by true arena position with $x$ mapped to hue and $y$ to brightness.
+Each panel uses the causal window (and $k$ / $n_{\mathrm{neighbors}}$) that best decoded position for that feature mode on held-out data.
+Companion pages color the same embeddings by speed, acceleration, head direction, distance-to-wall, spatial context, movement state, and wall-distance bin
+(\texttt{fig\_latent\_geometry\_<feature>.png}).}
+\label{fig:latent-geometry}
 \end{figure}
 
 \subsection{Deployable offline selection (sorted spikes)}

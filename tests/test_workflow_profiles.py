@@ -68,6 +68,50 @@ def test_standard_profile_keeps_manifold_features():
     assert prof.enable_temporal_manifold is False
     assert prof.representations == ("pca",)
     assert prof.latent_history_frames == (1, 5, 20)
+    assert prof.enable_isomap_distillation is False
+
+
+def test_manifolds_profile_covers_rt_embeddings():
+    from realtime.adaptive_windows import COARSE_DECODE_WINDOWS
+    from realtime.manifold_features import (
+        MANIFOLDS_FEATURE_MODES,
+        MANIFOLDS_ISOMAP_N_NEIGHBORS,
+        MANIFOLDS_N_COMPONENTS,
+    )
+
+    prof = get_profile("manifolds")
+    assert prof.feature_modes == MANIFOLDS_FEATURE_MODES
+    assert "region_pca" in prof.feature_modes
+    assert "layer_pca" in prof.feature_modes
+    assert "global_isomap" in prof.feature_modes
+    assert "global_isomap_distilled" in prof.feature_modes
+    assert "cell_type_pca" not in prof.feature_modes
+    assert prof.decode_windows == COARSE_DECODE_WINDOWS
+    assert prof.manifold_n_components == MANIFOLDS_N_COMPONENTS
+    assert prof.isomap_n_neighbors == MANIFOLDS_ISOMAP_N_NEIGHBORS
+    assert prof.enable_isomap_distillation is True
+    assert prof.max_models == "quick"
+    assert prof.enable_temporal_manifold is False
+
+
+def test_run_decoder_default_profile_is_manifolds(monkeypatch):
+    import sys
+
+    import run_decoder
+
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "run_decoder.py",
+            "--input",
+            "outputs/ratinabox_005",
+            "--output",
+            "outputs/ratinabox_005",
+        ],
+    )
+    args = run_decoder.parse_args()
+    assert args.profile == "manifolds"
 
 
 def test_full_profile_dense_temporal():

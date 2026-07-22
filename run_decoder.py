@@ -5,9 +5,11 @@ Runs comparison → best-window selection → causal closed-loop replay →
 optional figures/PDF. Prefer this over ``run_decoder_comparison.py`` or
 ``run_realtime_decoding.py``.
 
-Default ``--profile standard`` uses a lean adaptive W search with counts +
-PCA manifold features (so manifold usefulness is still reported). Research
-sweeps use ``--profile full`` and optional ``--enable-temporal-manifold``.
+Default ``--profile manifolds`` searches realtime-relevant embeddings
+(counts + global/region/layer PCA + classic/distilled Isomap) on a lean
+W / k / nn grid with the quick decoder zoo. Use ``--profile standard`` for a
+faster counts+PCA smoke test, or ``--profile full`` for dense research grids.
+Prefer ``run_visualizations.py`` for figures (pass ``--skip-visualization``).
 """
 
 from __future__ import annotations
@@ -26,8 +28,10 @@ def parse_args() -> argparse.Namespace:
         description=(
             "Full decoder workflow: compare models/windows, select the best "
             "setup, run causal closed-loop replay, optionally visualize. "
-            "Default profile=standard is lean (adaptive W, sorted spikes, "
-            "manifold vs counts reported). Use --profile full for research grids."
+            "Default profile=manifolds (RT-relevant embeddings + Isomap "
+            "teacher/student). Use --profile standard for a faster counts+PCA "
+            "smoke test, or --profile full for research grids. Prefer "
+            "run_visualizations.py for figures."
         ),
     )
     parser.add_argument("--input", type=Path, required=True, help="Simulation output directory")
@@ -38,10 +42,12 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--profile",
         choices=sorted(PROFILES.keys()),
-        default="standard",
+        default="manifolds",
         help=(
-            "Workflow profile: quick (coarse W), standard (coarse+refine, default), "
-            "full (dense research grid). Explicit flags below override the profile."
+            "Workflow profile: manifolds (default; all RT embeddings + Isomap "
+            "teacher/student, lean grid), standard (counts+PCA, full W), "
+            "quick (coarse W smoke), full (dense research grid + full model zoo). "
+            "Explicit flags below override the profile."
         ),
     )
     parser.add_argument("--compare-sources", action="store_true", default=None,
@@ -73,7 +79,7 @@ def parse_args() -> argparse.Namespace:
         "--decode-windows", type=float, nargs="+", default=None,
         help=(
             "Neural integration windows W in seconds "
-            "(default standard profile: 0.050 0.100 0.250 0.500 1.000)"
+            "(default from profile; manifolds: 0.050 0.250 0.500 1.000)"
         ),
     )
     parser.add_argument(
@@ -87,11 +93,13 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--max-models", choices=["quick", "full"], default=None)
     parser.add_argument(
         "--feature-modes", nargs="+", default=None, choices=list(ALL_FEATURE_MODES),
-        help="Feature modes (default from profile: counts + global_pca + region_pca)",
+        help="Feature modes (default from profile; manifolds includes PCA family + Isomap)",
     )
-    parser.add_argument("--manifold-n-components", type=int, default=3)
+    parser.add_argument("--manifold-n-components", type=int, default=None,
+                        help="Single latent dim for manifold modes (overrides profile)")
     parser.add_argument(
         "--manifold-components-list", type=int, nargs="+", default=None,
+        help="Latent-dim grid for manifold modes (overrides profile)",
     )
     parser.add_argument(
         "--isomap-neighbors", type=int, nargs="+", default=None,
@@ -172,9 +180,11 @@ def main() -> None:
         update_dt = 1.0 / float(args.behavior_rate)
 
     if args.manifold_components_list:
-        n_comps = tuple(args.manifold_components_list)
-    else:
+        n_comps: tuple[int, ...] | None = tuple(args.manifold_components_list)
+    elif args.manifold_n_components is not None:
         n_comps = (int(args.manifold_n_components),)
+    else:
+        n_comps = None  # use profile defaults
 
     compare_sources: bool | None
     if args.no_compare_sources:
@@ -196,6 +206,8 @@ def main() -> None:
     include_gt = bool(args.include_ground_truth_diagnostics or args.compare_sources)
 
     feature_modes = tuple(args.feature_modes) if args.feature_modes else None
+    # CLI flag forces distillation on; profile=manifolds also enables it in workflow.
+    enable_isomap_distillation: bool | None = True if args.enable_isomap_distillation else None
     if args.enable_isomap_distillation:
         base = list(feature_modes) if feature_modes else ["counts", "global_pca", "region_pca"]
         for mode in ("global_isomap", "global_isomap_distilled"):
@@ -226,6 +238,7 @@ def main() -> None:
             tuple(args.isomap_neighbors) if args.isomap_neighbors else None
         ),
         isomap_latent_dim=args.isomap_latent_dim,
+        enable_isomap_distillation=enable_isomap_distillation,
         region_ablation=args.region_ablation,
         layer_ablation=args.layer_ablation,
         skip_visualization=args.skip_visualization,
