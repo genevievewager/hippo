@@ -1,6 +1,10 @@
 """Publication multi-panel Isomap / latent-geometry figures (Figs 6–8).
 
-Gracefully annotates empty-state panels when ``global_isomap`` was not run.
+Fig 6 is a suite: one dense page per recovered behavioral feature, with every
+embedding mode present in the sorted comparison at that mode's best-performing
+window for decoding the colored variable.
+
+Gracefully annotates empty-state panels when a mode/transform is unavailable.
 """
 
 from __future__ import annotations
@@ -28,6 +32,31 @@ sns.set_theme(style="ticks", context="paper", font_scale=1.0)
 
 MAX_EMBED_POINTS = 2500
 
+# Stable panel order for embedding modes (skip missing).
+EMBEDDING_MODE_ORDER = (
+    "counts",
+    "rates",
+    "global_pca",
+    "region_pca",
+    "layer_pca",
+    "cell_type_pca",
+    "rate_model_pca",
+    "global_isomap",
+    "global_isomap_distilled",
+)
+
+# One page per recovered / color feature (sorted-spike deployable view).
+COLOR_FEATURES: tuple[tuple[str, str], ...] = (
+    ("position", "Position (x→hue, y→brightness)"),
+    ("speed", "Speed"),
+    ("acceleration", "Acceleration"),
+    ("head_direction", "Head direction"),
+    ("distance_to_wall", "Distance to wall"),
+    ("spatial_context", "Spatial context"),
+    ("movement_state", "Movement state"),
+    ("wall_distance_bin", "Wall-distance bin"),
+)
+
 
 def _find_transform_dir(comparison_dir: Path, prefixes: tuple[str, ...]) -> Path | None:
     metas = [
@@ -41,6 +70,97 @@ def _find_transform_dir(comparison_dir: Path, prefixes: tuple[str, ...]) -> Path
         if "_w0250ms" in p.parent.name or "_w0100ms" in p.parent.name:
             return p.parent
     return metas[0].parent
+
+
+def _resolve_transform_dir(
+    experiment_dir: Path,
+    row: pd.Series,
+) -> Path | None:
+    """Resolve manifold transform directory from a metrics row."""
+    experiment_dir = Path(experiment_dir)
+    raw = row.get("manifold_transform_path")
+    if raw is not None and not (isinstance(raw, float) and np.isnan(raw)):
+        path = Path(str(raw))
+        if not path.is_absolute():
+            candidates = [
+                path,
+                Path.cwd() / path,
+                experiment_dir / path.name,
+                experiment_dir / "decoder_comparison" / "sorted" / "models" / "manifold_transforms" / path.name,
+            ]
+        else:
+            candidates = [path]
+        for c in candidates:
+            if c.exists():
+                return c
+
+    feature = str(row.get("feature_type", ""))
+    w = float(row.get("decode_window_s", 0.25))
+    w_ms = int(round(w * 1000))
+    k = row.get("manifold_n_components")
+    nn = row.get("n_neighbors")
+    root = experiment_dir / "decoder_comparison" / "sorted" / "models" / "manifold_transforms"
+    if not root.exists():
+        root = experiment_dir / "decoder_comparison" / "models" / "manifold_transforms"
+    if not root.exists():
+        return None
+
+    # Build candidate dirname patterns
+    patterns = []
+    if feature in ("counts", "rates"):
+        patterns.append(f"{feature}_w{w_ms:04d}ms")
+    else:
+        k_part = ""
+        if k is not None and not (isinstance(k, float) and np.isnan(k)):
+            k_part = f"_k{int(k)}"
+        nn_part = ""
+        if nn is not None and not (isinstance(nn, float) and np.isnan(nn)):
+            nn_part = f"_nn{int(nn)}"
+        patterns.append(f"{feature}{k_part}{nn_part}_w{w_ms:04d}ms")
+        patterns.append(f"{feature}{k_part}_w{w_ms:04d}ms")
+        patterns.append(f"{feature}_w{w_ms:04d}ms")
+
+    for name in patterns:
+        cand = root / name
+        if cand.exists():
+            return cand
+    # Fuzzy: any dir starting with feature and matching window
+    for p in sorted(root.glob(f"{feature}*w{w_ms:04d}ms")):
+        return p
+    return None
+
+
+def _best_row_for_mode_target(
+    metrics: pd.DataFrame,
+    *,
+    feature_mode: str,
+    target: str,
+) -> pd.Series | None:
+    if metrics.empty:
+        return None
+    df = metrics.copy()
+    if "spike_source" in df.columns:
+        df = df[df["spike_source"].astype(str) == "sorted"]
+    df = df[
+        (df["feature_type"].astype(str) == feature_mode)
+        & (df["target_name"].astype(str) == target)
+    ]
+    if df.empty:
+        return None
+    metric = _metric_for_target(df, target)
+    return _best_row(df, metric)
+
+
+def _modes_present(metrics: pd.DataFrame) -> list[str]:
+    if metrics.empty or "feature_type" not in metrics.columns:
+        return []
+    df = metrics
+    if "spike_source" in df.columns:
+        df = df[df["spike_source"].astype(str) == "sorted"]
+    present = sorted({str(m) for m in df["feature_type"].dropna().unique()})
+    ordered = [m for m in EMBEDDING_MODE_ORDER if m in present]
+    ordered += [m for m in present if m not in ordered]
+    return ordered
 
 
 def _load_heldout_embedding(
@@ -96,7 +216,20 @@ def _load_heldout_embedding(
         else:
             mask = np.ones(len(decode_times), dtype=bool)
             tag = "exploratory_full_session_embedding"
-        Z = transformer.transform(X[mask])
+        Z = np.asarray(transformer.transform(X[mask]), dtype=float)
+        # Display PCA when raw counts (or any) embedding is >2-D
+        if Z.ndim == 1:
+            Z = Z.reshape(-1, 1)
+        if Z.shape[1] < 2:
+            Z = np.column_stack([Z[:, 0], np.zeros(len(Z))])
+        elif Z.shape[1] > 2:
+            # Identity count features: project to 2D for display only.
+            # Ordered manifold embeddings (PCA/Isomap): keep leading two axes.
+            if name.startswith("counts") or name.startswith("rates"):
+                from sklearn.decomposition import PCA
+                Z = PCA(n_components=2, random_state=0).fit_transform(Z)
+            else:
+                Z = Z[:, :2]
         beh = aligned.iloc[np.where(mask)[0]].reset_index(drop=True)
         if Z.shape[0] > MAX_EMBED_POINTS:
             rng = np.random.default_rng(0)
@@ -106,6 +239,27 @@ def _load_heldout_embedding(
         return Z, beh, tag
     except Exception:
         return None
+
+
+def _rgb_from_xy(x: np.ndarray, y: np.ndarray) -> np.ndarray:
+    """Map position to RGB: x → hue (hsv), y → brightness."""
+    x = np.asarray(x, dtype=float)
+    y = np.asarray(y, dtype=float)
+
+    def _norm(a: np.ndarray) -> np.ndarray:
+        lo, hi = np.nanmin(a), np.nanmax(a)
+        if not np.isfinite(lo) or not np.isfinite(hi) or hi <= lo:
+            return np.zeros_like(a)
+        return np.clip((a - lo) / (hi - lo), 0.0, 1.0)
+
+    xn, yn = _norm(x), _norm(y)
+    rgba = plt.cm.hsv(xn)
+    brightness = 0.30 + 0.70 * yn
+    out = rgba.copy()
+    out[:, 0] *= brightness
+    out[:, 1] *= brightness
+    out[:, 2] *= brightness
+    return out
 
 
 def _scatter_latent(ax, Z: np.ndarray, color, *, cmap="viridis", label: str = "") -> None:
@@ -140,103 +294,175 @@ def _scatter_latent(ax, Z: np.ndarray, color, *, cmap="viridis", label: str = ""
     sns.despine(ax=ax)
 
 
+def _scatter_position_2d(ax, Z: np.ndarray, beh: pd.DataFrame) -> None:
+    if "x" not in beh.columns or "y" not in beh.columns:
+        color = beh["x"] if "x" in beh.columns else np.arange(len(beh))
+        _scatter_latent(ax, Z, color, label="position")
+        return
+    rgba = _rgb_from_xy(beh["x"].to_numpy(), beh["y"].to_numpy())
+    ax.scatter(Z[:, 0], Z[:, 1], c=rgba, s=4, alpha=0.7)
+    ax.set_xlabel("z₁")
+    ax.set_ylabel("z₂")
+    ax.text(
+        0.02, 0.98, "x→hue, y→brightness",
+        transform=ax.transAxes, va="top", ha="left", fontsize=6, color="0.25",
+    )
+    sns.despine(ax=ax)
+
+
+def _color_for_feature(beh: pd.DataFrame, feature: str):
+    """Return color data for a recovered feature (Series or special marker)."""
+    if feature == "position":
+        return "position_xy"
+    if feature in beh.columns:
+        return beh[feature]
+    # Fallbacks
+    if feature == "head_direction" and "head_direction_sin" in beh.columns:
+        return np.arctan2(beh["head_direction_sin"], beh["head_direction_cos"])
+    return None
+
+
+def _panel_title(mode: str, row: pd.Series | None) -> str:
+    if row is None:
+        return mode
+    w = row.get("decode_window_s")
+    k = row.get("manifold_n_components")
+    nn = row.get("n_neighbors")
+    parts = [mode]
+    if w is not None and not (isinstance(w, float) and np.isnan(w)):
+        parts.append(f"W={float(w):.2f}s")
+    if k is not None and not (isinstance(k, float) and np.isnan(k)):
+        parts.append(f"k={int(k)}")
+    if nn is not None and not (isinstance(nn, float) and np.isnan(nn)):
+        parts.append(f"nn={int(nn)}")
+    return "\n".join([parts[0], " ".join(parts[1:])]) if len(parts) > 1 else parts[0]
+
+
 # ---------------------------------------------------------------------------
-# Fig 6 — Latent geometry
+# Fig 6 — Latent geometry (one page per recovered feature)
 # ---------------------------------------------------------------------------
 
-def plot_fig_latent_geometry(
+def plot_fig_latent_geometry_for_feature(
     experiment_dir: Path,
+    feature: str,
+    feature_title: str,
     figures_dir: Path | None = None,
 ) -> Path | None:
-    """Fig 6: PCA + Isomap embeddings colored by behavior."""
+    """One page: all embedding modes colored by a single recovered feature."""
     experiment_dir = Path(experiment_dir)
     figures_dir = Path(figures_dir) if figures_dir else experiment_dir / "figures"
     out_dir = figures_dir / FIGURE_SUBDIR_DECODER
     out_dir.mkdir(parents=True, exist_ok=True)
 
-    comparison_dir = experiment_dir / "decoder_comparison"
-    metrics = load_comparison_metrics(experiment_dir)
-    has_isomap = (
-        not metrics.empty
-        and "feature_type" in metrics.columns
-        and metrics["feature_type"].astype(str).str.contains("isomap").any()
+    metrics = load_comparison_metrics(experiment_dir, prefer="sorted")
+    if metrics.empty:
+        return None
+    if "spike_source" in metrics.columns:
+        metrics = metrics[metrics["spike_source"].astype(str) == "sorted"].copy()
+
+    modes = _modes_present(metrics)
+    if not modes:
+        return None
+
+    # Decode target for choosing best W: position page uses target "position"
+    target = "position" if feature == "position" else feature
+    packs: list[tuple[str, pd.Series | None, tuple | None]] = []
+    for mode in modes:
+        row = _best_row_for_mode_target(metrics, feature_mode=mode, target=target)
+        # If this mode never decoded this target, fall back to best W for position
+        if row is None and target != "position":
+            row = _best_row_for_mode_target(metrics, feature_mode=mode, target="position")
+        if row is None:
+            packs.append((mode, None, None))
+            continue
+        tdir = _resolve_transform_dir(experiment_dir, row)
+        pack = _load_heldout_embedding(experiment_dir, tdir) if tdir is not None else None
+        packs.append((mode, row, pack))
+
+    n = len(packs)
+    cols = min(3, n)
+    rows_n = int(np.ceil(n / cols))
+    fig = plt.figure(figsize=(3.4 * cols + 0.6, 2.9 * rows_n + 0.7))
+    gs = GridSpec(rows_n, cols, figure=fig, hspace=0.42, wspace=0.32)
+
+    for i, (mode, row, pack) in enumerate(packs):
+        r, c = divmod(i, cols)
+        ax = fig.add_subplot(gs[r, c])
+        title = _panel_title(mode, row)
+        if pack is None:
+            _empty_panel(ax, f"{mode}\nunavailable")
+        else:
+            Z, beh, tag = pack
+            color = _color_for_feature(beh, feature)
+            if isinstance(color, str) and color == "position_xy":
+                _scatter_position_2d(ax, Z, beh)
+            elif color is None:
+                _empty_panel(ax, f"no {feature}\nin behavior")
+            else:
+                cmap = "hsv" if feature == "head_direction" else (
+                    "magma" if feature in ("speed", "acceleration") else "viridis"
+                )
+                _scatter_latent(ax, Z, color, cmap=cmap, label=feature)
+            ax.set_title(title, fontsize=8)
+        panel_label(ax, chr(ord("A") + i))
+
+    for j in range(n, rows_n * cols):
+        r, c = divmod(j, cols)
+        ax = fig.add_subplot(gs[r, c])
+        ax.axis("off")
+
+    fig.suptitle(
+        f"Latent geometry — colored by {feature_title} (sorted / deployable)",
+        fontsize=11,
+        y=0.995,
     )
-
-    pca_dir = _find_transform_dir(comparison_dir, ("global_pca_",))
-    iso_dir = _find_transform_dir(comparison_dir, ("global_isomap_",)) if has_isomap else None
-
-    pca_pack = _load_heldout_embedding(experiment_dir, pca_dir) if pca_dir else None
-    iso_pack = _load_heldout_embedding(experiment_dir, iso_dir) if iso_dir else None
-
-    fig = plt.figure(figsize=(10.5, 7.2))
-    gs = GridSpec(2, 2, figure=fig, hspace=0.36, wspace=0.30)
-
-    ax_a = fig.add_subplot(gs[0, 0])
-    if pca_pack is not None:
-        Z, beh, tag = pca_pack
-        color = beh["x"] if "x" in beh.columns else np.arange(len(beh))
-        _scatter_latent(ax_a, Z, color, label="position x (cm)")
-    else:
-        _empty_panel(ax_a, "PCA embedding unavailable")
-    panel_label(ax_a, "A")
-
-    ax_b = fig.add_subplot(gs[0, 1])
-    if iso_pack is not None:
-        Z, beh, tag = iso_pack
-        color = beh["x"] if "x" in beh.columns else np.arange(len(beh))
-        _scatter_latent(ax_b, Z, color, label="position x (cm)")
-    else:
-        msg = "Isomap not run\n(re-run with --feature-modes … global_isomap)"
-        _empty_panel(ax_b, msg)
-    panel_label(ax_b, "B")
-
-    ax_c = fig.add_subplot(gs[1, 0])
-    if iso_pack is not None:
-        Z, beh, tag = iso_pack
-        if "spatial_context" in beh.columns:
-            _scatter_latent(ax_c, Z, beh["spatial_context"], label="spatial_context")
-        elif "speed" in beh.columns:
-            _scatter_latent(ax_c, Z, beh["speed"], cmap="magma", label="speed")
-        else:
-            _empty_panel(ax_c, "No context/speed columns")
-    elif pca_pack is not None:
-        Z, beh, tag = pca_pack
-        if "spatial_context" in beh.columns:
-            _scatter_latent(ax_c, Z, beh["spatial_context"], label="spatial_context")
-        elif "speed" in beh.columns:
-            _scatter_latent(ax_c, Z, beh["speed"], cmap="magma", label="speed")
-        else:
-            _empty_panel(ax_c, "Isomap not run")
-    else:
-        _empty_panel(ax_c, "Isomap not run")
-    panel_label(ax_c, "C")
-
-    ax_d = fig.add_subplot(gs[1, 1])
-    if pca_pack is not None and iso_pack is not None:
-        Zp, beh_p, _ = pca_pack
-        Zi, beh_i, _ = iso_pack
-        n = min(len(Zp), len(Zi), 800)
-        ax_d.scatter(Zp[:n, 0], Zp[:n, 1], s=3, alpha=0.4, label="PCA", c="C0")
-        ax_d.scatter(Zi[:n, 0], Zi[:n, 1], s=3, alpha=0.4, label="Isomap", c="C1")
-        ax_d.set_xlabel("z₁")
-        ax_d.set_ylabel("z₂")
-        legend_below(ax_d, ncol=2, fontsize=6)
-        sns.despine(ax=ax_d)
-    elif pca_pack is not None:
-        Z, beh, tag = pca_pack
-        color = beh["speed"] if "speed" in beh.columns else (
-            beh["x"] if "x" in beh.columns else np.arange(len(beh))
-        )
-        lab = "speed" if "speed" in beh.columns else "position x"
-        _scatter_latent(ax_d, Z, color, cmap="magma", label=lab)
-    else:
-        _empty_panel(ax_d, "No embeddings available")
-    panel_label(ax_d, "D")
-
+    stem = f"fig_latent_geometry_{feature}"
     return save_pub_figure(
-        fig, out_dir / "fig_latent_geometry.png", dpi=FIGURE_DPI,
-        rect=(0.08, 0.12, 0.98, 0.94),
+        fig, out_dir / f"{stem}.png", dpi=FIGURE_DPI,
+        rect=(0.05, 0.06, 0.98, 0.93),
     )
+
+
+def plot_fig_latent_geometry(
+    experiment_dir: Path,
+    figures_dir: Path | None = None,
+) -> Path | None:
+    """Fig 6 suite: one dense page per recovered feature across all embeddings.
+
+    Replaces the old 2×2 PCA/Isomap overview. Writes
+    ``fig_latent_geometry_<feature>.png`` for each color feature and copies the
+    position page to ``fig_latent_geometry.png`` for backward-compatible PDF
+    sectioning / captions.
+    """
+    experiment_dir = Path(experiment_dir)
+    figures_dir = Path(figures_dir) if figures_dir else experiment_dir / "figures"
+    out_dir = figures_dir / FIGURE_SUBDIR_DECODER
+    out_dir.mkdir(parents=True, exist_ok=True)
+
+    written: list[Path] = []
+    for feature, title in COLOR_FEATURES:
+        try:
+            path = plot_fig_latent_geometry_for_feature(
+                experiment_dir, feature, title, figures_dir=figures_dir,
+            )
+            if path is not None:
+                written.append(path)
+                print(f"  wrote {path.relative_to(figures_dir)}")
+        except Exception as exc:
+            print(f"  warning: latent geometry [{feature}] skipped ({exc})")
+
+    if not written:
+        return None
+
+    # Canonical Fig 6 stem = position page (or first written)
+    primary = next(
+        (p for p in written if p.stem == "fig_latent_geometry_position"),
+        written[0],
+    )
+    import shutil
+    dest = out_dir / "fig_latent_geometry.png"
+    shutil.copy2(primary, dest)
+    return dest
 
 
 # ---------------------------------------------------------------------------

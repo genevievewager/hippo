@@ -132,12 +132,12 @@ CAPTIONS: dict[str, str] = {
         "(D) Mean explained variance by anatomical group."
     ),
     "fig_latent_geometry": (
-        "Latent neural geometry. "
-        "(A) Global PCA embedding (z₁, z₂) colored by position. "
-        "(B) Isomap embedding colored by position when available; otherwise empty. "
-        "(C) Embedding colored by spatial context or speed. "
-        "(D) PCA versus Isomap comparison, or PCA-only when Isomap was not run. "
-        "Held-out (train-fit / test-transform) embeddings are preferred when available."
+        "Latent neural geometry across embedding modes (sorted / deployable). "
+        "Each panel is one feature mode at the causal window (and k / n_neighbors) "
+        "that best decoded the colored behavioral variable on held-out data. "
+        "Position pages encode arena (x, y) as hue and brightness; other pages "
+        "color by the named continuous or categorical variable. "
+        "See also fig_latent_geometry_<feature> for the full suite."
     ),
     "fig_isomap_diagnostics": (
         "Isomap geometry diagnostics. "
@@ -529,6 +529,17 @@ CAPTIONS: dict[str, str] = {
 
 # Regex patterns for parameterized stems → caption template with {match} groups.
 _PATTERN_CAPTIONS: list[tuple[re.Pattern[str], str]] = [
+    (
+        re.compile(r"^fig_latent_geometry_(.+)$"),
+        (
+            "Latent neural geometry colored by {0} (sorted / deployable spikes). "
+            "Each panel is one embedding mode (counts, PCA variants, Isomap, …) "
+            "at the causal window and hyperparameters that best decoded this "
+            "behavioral variable on held-out data. Axes are the leading two "
+            "latent coordinates (z₁, z₂). For position pages, arena coordinates "
+            "are encoded as hue (x) and brightness (y)."
+        ),
+    ),
     (
         re.compile(r"^example_units_(.+)$"),
         (

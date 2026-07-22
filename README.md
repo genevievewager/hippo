@@ -2,13 +2,20 @@
 
 Simulates realistic hippocampal single-unit activity during 10-minute open-field navigation, recorded through a Neuropixels 1.0 single-shank probe (384 channels), with Neuropixels-like recording degradation and Kilosort-like spike re-extraction. Decodes latent behavioral variables from **causal** population spike counts, with optional low-dimensional manifold features.
 
+**Purpose:** a research-engineering loop to find a **maximally compatible hippocampal BCI** — search embeddings `E` × decoders `D` × windows `W` on sorted spikes, gate what clears realtime constraints, then transplant the winners to the lab. Figures are a separate inspect step (never required to retrain).
+
 Equations below use plain Unicode / code formatting so they render in Cursor, GitHub, and terminals without a LaTeX math plugin.
 
 ---
 
 ## Public workflow
 
-Three user-facing scripts. Hyperparameter search (decoder model, causal window `W`, feature mode) runs **inside** the decoder workflow; you do not pick windows by hand for the standard path.
+Three scripts. Decode searches manifolds and decoders inside one comparison; you do not pick `W` or `(E, D)` by hand for the happy path.
+
+```text
+Simulate → Search (E × D × W) → Gate (sorted + realtime + latency) → Export registry
+                                    ↘ Inspect with figures anytime (separate command)
+```
 
 ```bash
 source .hippo/bin/activate
@@ -16,34 +23,33 @@ pip install -r requirements.txt
 
 # 1. Simulate
 python run_simulation.py \
-    --output outputs/ratinabox_005 \
-    --seed 5
+    --output outputs/ratinabox_001 \
+    --seed 1
 
-# 2. Decode (default --profile standard: sorted spikes only, full W grid,
-#    counts+PCA manifolds, closed-loop replay). Ground-truth is optional.
+# 2. Decode — default --profile manifolds: sorted spikes, lean grid over
+#    counts / global·region·layer PCA / classic+distilled Isomap, quick decoder
+#    zoo, closed-loop replay, deployable registry. Skip figures here.
 python run_decoder.py \
-    --input outputs/ratinabox_005 \
-    --output outputs/ratinabox_005 \
-    --compile-pdf
-
-# Optional research extras (not needed for a working decoder):
-#   --include-ground-truth-diagnostics  # oracle GT comparison (non-deployable)
-#   --enable-temporal-manifold          # lean W×L Table 8 (inherits W from Step 1)
-#   --profile full                      # dense research grids + full model zoo
-#   --feature-modes counts global_pca global_isomap   # offline Isomap research
+    --input outputs/ratinabox_001 \
+    --output outputs/ratinabox_001 \
+    --skip-visualization
 
 # 3. Visualize anytime (reads saved outputs only; never retrains)
 python run_visualizations.py \
-    --experiment outputs/ratinabox_005 \
+    --experiment outputs/ratinabox_001 \
     --all \
     --compile-pdf
 ```
 
+**Lab transplant artifact** (after Step 2): `models/best_realtime_decoders.json` plus the referenced manifold transforms and decoder `.joblib` files under `decoder_comparison/sorted/`.
+
 | Goal | Command |
 |------|---------|
 | Simulate data | `run_simulation.py` |
-| Full decoder workflow (tune + select + replay) | `run_decoder.py` |
-| Generate all available visualizations | `run_visualizations.py --experiment ... --all --compile-pdf` |
+| Search embeddings × decoders, gate, export registry | `run_decoder.py` (default `--profile manifolds`) |
+| Inspect figures / PDF | `run_visualizations.py --experiment ... --all --compile-pdf` |
+
+**Advanced** (not needed for the happy path): `--profile standard` or `quick` (faster counts+PCA smoke), `--profile full` (dense grids + full model zoo), `--include-ground-truth-diagnostics` (oracle GT, non-deployable), `--enable-temporal-manifold` (W×L Table 8), or explicit `--feature-modes` / `--max-models` overrides.
 
 ### Detached simulation (survives terminal close)
 
@@ -418,7 +424,7 @@ Encoder `E` is fit on **training** activity only, then frozen for test / realtim
 
 Enabled with `--enable-temporal-manifold` on `run_decoder.py`. Config reference: `configs/temporal_decoding.yaml`.
 
-Under `--profile standard` (default), temporal mode is **lean**: PCA-only latents, `L ∈ {1,5,20}`, core models, and **W inherited from Step 1** (best/recommended windows plus short/long flanks). Use `--profile full` for the dense research grid (`raw`+`pca`, full L list, shuffle/average controls).
+Under `--profile standard` (or when temporal is enabled without `full`), temporal mode is **lean**: PCA-only latents, `L ∈ {1,5,20}`, core models, and **W inherited from Step 1** (best/recommended windows plus short/long flanks). Use `--profile full` for the dense research grid (`raw`+`pca`, full L list, shuffle/average controls). Default decode profile `manifolds` leaves temporal off unless you pass `--enable-temporal-manifold`.
 
 ```text
 x_t^(W)  →  z_t  →  Z_t^(L) = [z_{t−L+1}, …, z_t]  →  ŷ_{t+τ}
@@ -551,7 +557,7 @@ Isomap geometry and temporal history are kept separate: encode each causal windo
 
 Best-decoder selection prefers realtime-compatible feature modes for closed-loop recommendations even when offline Isomap wins on accuracy.
 
-Parametric distillation (`realtime/manifolds/isomap_distillation.py`, static mode `global_isomap_distilled`) trains Ridge / kernel Ridge / small MLP so `E_θ(x_t) ≈ z_t^Isomap`. This is **not** exact Isomap. Enable with `--enable-isomap-distillation`.
+Parametric distillation (`realtime/manifolds/isomap_distillation.py`, static mode `global_isomap_distilled`) trains Ridge / kernel Ridge / small MLP so `E_θ(x_t) ≈ z_t^Isomap`. This is **not** exact Isomap. Enable with `--enable-isomap-distillation`, or use `--profile manifolds` (distillation on by default).
 
 Every causal-update stage (spike binning, feature transforms including distilled Isomap, each decoder head, closed-loop policy) is timed under `latency_profiling/` and plotted in `figures/latency/` in the compiled PDF.
 
@@ -641,12 +647,12 @@ Do **not** conclude Isomap is superior because a 2-D plot looks more curved. Use
 
 ## Decoder workflow (public script)
 
-`run_decoder.py` runs under the hood:
+`run_decoder.py` (default `--profile manifolds`) runs under the hood:
 
 1. **Compare** models × windows × feature modes on **sorted spikes only** → `decoder_comparison/sorted/`
 2. **Write deployable registry** → `models/best_realtime_decoders.json` + `deployment_decoder_selection/`
 3. **Replay** closed-loop causal decoding from that registry → `realtime_decoding/sorted/`
-4. **Optional** figures + `figures/output.pdf`
+4. **Optional** in-decode figures (prefer Step 3 `run_visualizations.py` instead)
 
 ### Deployment vs oracle
 
@@ -660,53 +666,67 @@ Deployable models must survive missed spikes, jitter, contamination, amplitude d
 ### Causal window selection
 
 - Update rate is fixed at **20 Hz / 50 ms** (`update_dt=0.050`).
-- The **causal integration window `W`** is selected **independently per target** from:
+- Under `--profile manifolds`, the **causal integration window `W`** is selected **independently per target** from the lean grid:
 
 ```text
-[0.050, 0.100, 0.250, 0.500, 1.000]
+[0.050, 0.250, 0.500, 1.000]
 ```
 
+- `--profile standard` uses the full pool `[0.050, 0.100, 0.250, 0.500, 1.000]`.
 - A common 250 ms window is allowed **only if it wins empirically** for that target — it is **not hard-coded**.
 - After selection, if every target picks the same `W`, the workflow prints a warning and you should inspect `all_sorted_window_scores.csv`.
 
 ```bash
-# Happy path — sorted-only deployment selection, full W grid, closed-loop, PDF
+# Happy path — manifold search, gate, export (figures via Step 3)
 python run_decoder.py \
-    --input outputs/ratinabox_004 \
-    --output outputs/ratinabox_004 \
+    --input outputs/ratinabox_005 \
+    --output outputs/ratinabox_005 \
+    --skip-visualization
+
+python run_visualizations.py \
+    --experiment outputs/ratinabox_005 \
+    --all \
     --compile-pdf
 
-# Optional oracle GT diagnostics (still selects deployable models from sorted)
+# Advanced: faster counts+PCA smoke
 python run_decoder.py \
-    --input outputs/ratinabox_004 \
-    --output outputs/ratinabox_004 \
+    --input outputs/ratinabox_005 \
+    --output outputs/ratinabox_005 \
+    --profile standard \
+    --skip-visualization
+
+# Advanced: oracle GT diagnostics (still selects deployable models from sorted)
+python run_decoder.py \
+    --input outputs/ratinabox_005 \
+    --output outputs/ratinabox_005 \
     --include-ground-truth-diagnostics \
-    --compile-pdf
+    --skip-visualization
 
-# Research: dense temporal Table 8 on sorted spikes
+# Advanced: dense temporal Table 8
 python run_decoder.py \
-    --input outputs/ratinabox_004 \
-    --output outputs/ratinabox_004 \
+    --input outputs/ratinabox_005 \
+    --output outputs/ratinabox_005 \
     --profile full \
     --enable-temporal-manifold \
-    --compile-pdf
+    --skip-visualization
 ```
 
 | Flag | Purpose |
 |------|---------|
-| `--profile` | `quick` / `standard` (default, full W grid) / `full` |
+| `--profile` | `manifolds` (default) / `standard` / `quick` / `full` |
 | `--deployment-only` | Default: sorted-only deployable selection |
 | `--include-ground-truth-diagnostics` | Also run GT oracle comparisons (non-deployable) |
 | `--compare-sources` | Deprecated alias for GT diagnostics |
 | `--closed-loop-target` | Target for realtime selection / triggers |
 | `--selection-policy` | `shortest_near_optimal` or `best_accuracy` |
-| `--decode-windows` | Override `W` grid (else full pool from profile) |
-| `--feature-modes` | Observation / manifold modes (default keeps counts + PCA) |
+| `--decode-windows` | Override `W` grid (else from profile) |
+| `--feature-modes` | Override observation / manifold modes |
 | `--max-models` | `quick` or `full` model zoo |
+| `--enable-isomap-distillation` | Add classic + distilled Isomap (on by default in `manifolds`) |
 | `--enable-temporal-manifold` | Also run Table 8 W×L comparison |
 | `--skip-comparison` | Reuse existing `decoder_comparison/` |
-| `--skip-visualization` | Skip figure generation |
-| `--compile-pdf` | Write `figures/output.pdf` |
+| `--skip-visualization` | Skip in-decode figure generation (preferred; use Step 3) |
+| `--compile-pdf` | Optional in-decode PDF (prefer `run_visualizations.py`) |
 
 ### Deployment outputs to check before realtime
 
@@ -747,7 +767,7 @@ Default regeneration writes a **small set of seaborn multi-panel** `fig_*.png` f
 | Fig 3 | `fig_cell_class_population`, `fig_population_structure`, `fig_spike_raster_summary` | Population structure + spikes |
 | Fig 4 | `fig_decoding_performance` | Causal decoding vs window / best decoder |
 | Fig 5 | `fig_manifold_decoding` | Counts vs PCA / region PCA (/ Isomap) |
-| Fig 6 | `fig_latent_geometry` | PCA + Isomap embeddings colored by behavior |
+| Fig 6 | `fig_latent_geometry` (+ `fig_latent_geometry_<feature>`) | All embeddings × one recovered feature per page (best W per mode; position = x→hue, y→brightness) |
 | Fig 7 | `fig_isomap_diagnostics` | Trustworthiness, connectivity, residual variance, geodesic/knn |
 | Fig 8 | `fig_isomap_story` | Counts/PCA/Isomap story + distilled vs teacher |
 | Fig 9 | `fig_closed_loop` | Closed-loop position, confusions, triggers |
@@ -755,23 +775,32 @@ Default regeneration writes a **small set of seaborn multi-panel** `fig_*.png` f
 | Fig 11 | `fig_latency` | Causal-update latency budget |
 | Fig 12 (suppl.) | `fig_temporal_wl` | Temporal W×L heatmaps (when `decoding/` exists) |
 
+Fig 6 is a **suite**: one dense page per behavioral variable
+(`position`, `speed`, `acceleration`, `head_direction`, `distance_to_wall`,
+`spatial_context`, `movement_state`, `wall_distance_bin`). Each page shows every
+embedding mode present in the sorted comparison at the **best-performing window**
+(and k / n_neighbors) for decoding that variable — not a shared W. The canonical
+`fig_latent_geometry.png` is a copy of the position page for PDF ordering.
+
 Compiled `figures/output.pdf` follows: simulation → decoding → manifolds/Isomap → realtime → deployment → latency.
 
-### Regenerating with Isomap panels populated
+### Regenerating manifold / Isomap panels
 
-Current comparison runs may be **counts / PCA / region PCA only**. Isomap panels then render an explicit **“Isomap not run”** empty state. To populate Figs 5–8 with Isomap geometry and decoding rows:
+Default `--profile manifolds` already includes region/layer PCA and classic + distilled Isomap. If an older run was counts/PCA-only, Isomap panels show an explicit empty state until you re-decode, then re-plot:
 
 ```bash
-# Re-run decoder comparison (and optional distillation) on an existing experiment
-python run_full_decoder_workflow.py \
-  --experiment outputs/ratinabox_005 \
-  --feature-modes counts global_pca region_pca global_isomap \
-  --enable-isomap-distillation \
-  --compile-pdf
+python run_decoder.py \
+  --input outputs/ratinabox_005 \
+  --output outputs/ratinabox_005 \
+  --skip-visualization
 
-# Or plot-only after comparison already includes global_isomap rows:
-python run_visualizations.py --experiment outputs/ratinabox_005 --all --compile-pdf
+python run_visualizations.py \
+  --experiment outputs/ratinabox_005 \
+  --all \
+  --compile-pdf
 ```
+
+`--profile manifolds` uses coarse `W`, latent dims `{3,8}`, Isomap neighbors `{10,30}`, and the quick decoder zoo so compute stays bounded while covering all realtime-relevant embeddings.
 
 Future / deferred visualizations (not in this suite): 3D interactive embeddings, unit-ablation movies, animated Bayesian place-map GIFs.
 
