@@ -218,8 +218,10 @@ def mini_experiment(tmp_path: Path) -> Path:
         {"category": "isomap_compare", "name": "global_isomap_teacher", "mean_ms": 8.0, "p95_ms": 10.0, "realtime_compatible": False},
     ]).to_csv(lat / "latency_everything.csv", index=False)
     pd.DataFrame([
-        {"name": "counts", "mean_ms": 0.01, "realtime_compatible": True},
-        {"name": "global_pca", "mean_ms": 0.1, "realtime_compatible": True},
+        {"feature_mode": "counts", "mean_ms": 0.01, "realtime_compatible": True},
+        {"feature_mode": "global_pca", "mean_ms": 0.1, "realtime_compatible": True},
+        {"feature_mode": "global_isomap", "mean_ms": 8.0, "realtime_compatible": False},
+        {"feature_mode": "global_isomap_distilled", "mean_ms": 0.1, "realtime_compatible": True},
     ]).to_csv(lat / "feature_transform_latency.csv", index=False)
     pd.DataFrame([
         {"method": "global_isomap_teacher", "mean_ms": 8.0, "realtime_compatible": False},
@@ -285,7 +287,7 @@ def test_plot_figs_write_pngs(mini_experiment: Path, tmp_path: Path):
     expected = {
         "decoder_comparison/fig_decoding_performance.png",
         "decoder_comparison/fig_manifold_decoding.png",
-        "decoder_comparison/fig_latent_geometry.png",
+        "decoder_comparison/fig_latent_geometry_position.png",
         "decoder_comparison/fig_isomap_diagnostics.png",
         "decoder_comparison/fig_isomap_story.png",
         "realtime_decoding/fig_closed_loop.png",

@@ -28,6 +28,7 @@ def plot_manifold_comparison_outputs(comparison_dir: Path, figures_dir: Path) ->
 
         plot_fig_manifold_decoding(experiment_dir, root_figures)
         generate_publication_isomap_figures(experiment_dir, root_figures, cleanup_legacy=False)
+        plot_fig_manifold_vs_spikes_onepager(experiment_dir, root_figures)
     except Exception as exc:
         print(f"  warning: publication manifold/isomap figures skipped ({exc})")
 
@@ -390,10 +391,35 @@ def _plot_manifold_vs_spikes_onepager(
         fontsize=14,
         y=0.995,
     )
-    out_path = Path(out_dir) / "manifold_vs_spikes_onepager.png"
+    out_path = Path(out_dir) / "fig_manifold_vs_spikes_onepager.png"
     fig.savefig(out_path, dpi=FIGURE_DPI, bbox_inches="tight")
     plt.close(fig)
     return out_path
+
+
+def plot_fig_manifold_vs_spikes_onepager(
+    experiment_dir: Path,
+    figures_dir: Path | None = None,
+) -> Path | None:
+    """Write the counts-vs-manifold deployable onepager under decoder_comparison/."""
+    experiment_dir = Path(experiment_dir)
+    figures_dir = Path(figures_dir) if figures_dir is not None else experiment_dir / "figures"
+    out_dir = figures_dir / "decoder_comparison"
+    out_dir.mkdir(parents=True, exist_ok=True)
+
+    from visualization.publication_decoding_plots import load_comparison_metrics
+
+    comparison_dir = experiment_dir / "decoder_comparison"
+    metrics = load_comparison_metrics(experiment_dir, prefer="sorted")
+    if metrics.empty:
+        # Fall back to empty frame; onepager can still use deployment scores.
+        metrics = pd.DataFrame()
+    return _plot_manifold_vs_spikes_onepager(
+        metrics=metrics,
+        comparison_dir=comparison_dir,
+        out_dir=out_dir,
+        experiment_dir=experiment_dir,
+    )
 
 
 

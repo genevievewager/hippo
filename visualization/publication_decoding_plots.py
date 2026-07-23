@@ -511,12 +511,43 @@ def plot_fig_closed_loop(
 
     ax_a = fig.add_subplot(gs[0, 0])
     if {"true_x", "true_y", "decoded_x", "decoded_y"}.issubset(decoded.columns):
-        ax_a.scatter(decoded["true_x"], decoded["true_y"], s=4, c="#4C72B0", alpha=0.45, label="True")
-        ax_a.scatter(decoded["decoded_x"], decoded["decoded_y"], s=4, c="#DD8452", alpha=0.45, marker="x", label="Decoded")
+        if "time" in decoded.columns:
+            time = pd.to_numeric(decoded["time"], errors="coerce").to_numpy()
+            sc = ax_a.scatter(
+                decoded["true_x"], decoded["true_y"],
+                c=time, s=4, alpha=0.55, cmap="viridis", label="True",
+            )
+            ax_a.scatter(
+                decoded["decoded_x"], decoded["decoded_y"],
+                c=time, s=4, alpha=0.55, cmap="viridis", marker="x", label="Decoded",
+            )
+            cbar = fig.colorbar(sc, ax=ax_a, fraction=0.046, pad=0.04)
+            cbar.set_label("Time (s)", fontsize=7)
+            cbar.ax.tick_params(labelsize=6)
+        else:
+            ax_a.scatter(
+                decoded["true_x"], decoded["true_y"],
+                s=4, c="#4C72B0", alpha=0.45, label="True",
+            )
+            ax_a.scatter(
+                decoded["decoded_x"], decoded["decoded_y"],
+                s=4, c="#DD8452", alpha=0.45, marker="x", label="Decoded",
+            )
         ax_a.set_xlabel("x (cm)")
         ax_a.set_ylabel("y (cm)")
         ax_a.set_aspect("equal", adjustable="box")
-        handles_rt, labels_rt = ax_a.get_legend_handles_labels()
+        # Marker-style legend: color encodes time, not series identity.
+        handles_rt = [
+            plt.Line2D(
+                [0], [0], marker="o", color="0.3", linestyle="None",
+                markersize=5, label="True",
+            ),
+            plt.Line2D(
+                [0], [0], marker="x", color="0.3", linestyle="None",
+                markersize=5, label="Decoded",
+            ),
+        ]
+        labels_rt = ["True", "Decoded"]
         if ax_a.get_legend() is not None:
             ax_a.get_legend().remove()
         sns.despine(ax=ax_a)
@@ -734,8 +765,14 @@ def plot_fig_latency(
     fig = plt.figure(figsize=(10.5, 7.2))
     gs = GridSpec(2, 2, figure=fig, hspace=0.38, wspace=0.32)
 
-    def _barh_latency(ax, df: pd.DataFrame, name_col: str, mean_col: str = "mean_ms") -> None:
-        if df.empty or name_col not in df.columns or mean_col not in df.columns:
+    def _latency_label_col(df: pd.DataFrame, *preferred: str) -> str | None:
+        for col in preferred:
+            if col in df.columns:
+                return col
+        return None
+
+    def _barh_latency(ax, df: pd.DataFrame, name_col: str | None, mean_col: str = "mean_ms") -> None:
+        if df.empty or name_col is None or name_col not in df.columns or mean_col not in df.columns:
             _empty_panel(ax, "No data")
             return
         sub = df.sort_values(mean_col, ascending=True)
@@ -757,7 +794,12 @@ def plot_fig_latency(
     feat_df = feature if not feature.empty else (
         everything[everything["category"] == "feature_transform"] if not everything.empty else pd.DataFrame()
     )
-    _barh_latency(ax_a, feat_df, "name" if "name" in feat_df.columns else "method")
+    # Benchmark CSV uses feature_mode; unified table uses name.
+    _barh_latency(
+        ax_a,
+        feat_df,
+        _latency_label_col(feat_df, "feature_mode", "name", "method"),
+    )
     panel_label(ax_a, "A")
 
     ax_b = fig.add_subplot(gs[0, 1])
@@ -895,6 +937,21 @@ def generate_publication_decoding_figures(
                 print(f"  wrote {path.relative_to(figures_dir)}")
         except Exception as exc:
             print(f"  warning: {fn.__name__} skipped ({exc})")
+
+    # Dense onepagers (ideal W/decoder + counts vs manifold) after manifold summary
+    try:
+        from visualization.deployment_plots import plot_deployable_selection_onepagers
+        from visualization.manifold_plots import plot_fig_manifold_vs_spikes_onepager
+
+        for path in plot_deployable_selection_onepagers(experiment_dir, figures_dir):
+            written.append(path)
+            print(f"  wrote {path.relative_to(figures_dir)}")
+        path = plot_fig_manifold_vs_spikes_onepager(experiment_dir, figures_dir)
+        if path is not None:
+            written.append(path)
+            print(f"  wrote {path.relative_to(figures_dir)}")
+    except Exception as exc:
+        print(f"  warning: deployable/manifold onepagers skipped ({exc})")
 
     # Isomap publication suite
     try:

@@ -117,4 +117,4 @@ def test_manifold_vs_spikes_onepager_writes_png(tmp_path: Path):
     )
     assert path is not None
     assert path.exists()
-    assert path.name == "manifold_vs_spikes_onepager.png"
+    assert path.name == "fig_manifold_vs_spikes_onepager.png"

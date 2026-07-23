@@ -46,6 +46,14 @@ SECTION_ORDER = [
     "temporal_decoding",
 ]
 
+# Within decoder_comparison, keep dense selection onepagers immediately after
+# fig_manifold_decoding (PDF Figure 28 in the current ratinabox layout).
+_DECODER_COMPARISON_TRAILING = (
+    "fig_manifold_decoding",
+    "fig_deployable_decoder_x_window_heatmaps",
+    "fig_manifold_vs_spikes_onepager",
+)
+
 
 def _section_key(figures_dir: Path, png_path: Path) -> str:
     """Map a PNG path to a section key, collapsing known nested run folders."""
@@ -79,10 +87,26 @@ def collect_pngs_by_section(figures_dir: Path) -> dict[str, list[Path]]:
     figures_dir = Path(figures_dir)
     groups: dict[str, list[Path]] = {}
     for png in sorted(figures_dir.rglob("*.png")):
+        # Skip legacy alias that duplicates fig_latent_geometry_position.
+        if png.stem == "fig_latent_geometry":
+            sibling = png.with_name("fig_latent_geometry_position.png")
+            if sibling.exists():
+                continue
         key = _section_key(figures_dir, png)
         groups.setdefault(key, []).append(png)
-    for paths in groups.values():
-        paths.sort(key=lambda p: p.name.lower())
+    for key, paths in groups.items():
+        if key == "decoder_comparison":
+            trailing = {stem: i for i, stem in enumerate(_DECODER_COMPARISON_TRAILING)}
+
+            def _decoder_sort_key(p: Path, _trailing=trailing) -> tuple:
+                stem = p.stem
+                if stem in _trailing:
+                    return (1, _trailing[stem], p.name.lower())
+                return (0, 0, p.name.lower())
+
+            paths.sort(key=_decoder_sort_key)
+        else:
+            paths.sort(key=lambda p: p.name.lower())
     return groups
 
 

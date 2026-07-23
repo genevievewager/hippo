@@ -157,7 +157,9 @@ CAPTIONS: dict[str, str] = {
     ),
     "fig_closed_loop": (
         "Closed-loop realtime decoding. "
-        "(A) True versus decoded position. "
+        "(A) True versus decoded position, both colored by elapsed time "
+        "(circles = true, crosses = decoded) so matched timepoints and "
+        "large spatial mismatches are visible. "
         "(B) Position error over time with closed-loop trigger markers. "
         "(C) Spatial-context confusion matrix (row-normalized). "
         "(D) Trigger reliability (correct versus incorrect counts)."
@@ -292,6 +294,15 @@ CAPTIONS: dict[str, str] = {
         "helps). Companion detail is in manifold_vs_spikes_onepager."
     ),
     "manifold_vs_spikes_onepager": (
+        "One-pager comparing spike-count features versus manifold embeddings for "
+        "sorted / Neuropixels decoding. Top table lists best counts setup, best "
+        "manifold setup, ±5% verdict, and the deployable registry selection per "
+        "target. Lower panels are decoder × feature heatmaps collapsed over "
+        "windows (best W annotated; greener is better). A dashed line separates "
+        "spike features (counts/rates) from manifold modes; gold outline marks "
+        "the deployable selection; hatching marks offline-only features."
+    ),
+    "fig_manifold_vs_spikes_onepager": (
         "One-pager comparing spike-count features versus manifold embeddings for "
         "sorted / Neuropixels decoding. Top table lists best counts setup, best "
         "manifold setup, ±5% verdict, and the deployable registry selection per "
@@ -520,7 +531,19 @@ CAPTIONS: dict[str, str] = {
         "each cell; greener is better). Gold outline marks the selected cell; "
         "hatching marks offline-only features such as classic Isomap."
     ),
+    "fig_deployable_winner_onepager": (
+        "One-pager for sorted / Neuropixels deployable selection. Top table lists "
+        "the registry winner per target (decoder, feature, W, metric). Lower panels "
+        "are decoder × feature heatmaps collapsed over windows (best W annotated in "
+        "each cell; greener is better). Gold outline marks the selected cell; "
+        "hatching marks offline-only features such as classic Isomap."
+    ),
     "deployable_decoder_x_window_heatmaps": (
+        "Deployable decoder × causal-window heatmaps on sorted spikes. Each cell "
+        "shows the best realtime-compatible feature mode at that window and the "
+        "metric value; gold outline marks the selected (decoder, W) pair."
+    ),
+    "fig_deployable_decoder_x_window_heatmaps": (
         "Deployable decoder × causal-window heatmaps on sorted spikes. Each cell "
         "shows the best realtime-compatible feature mode at that window and the "
         "metric value; gold outline marks the selected (decoder, W) pair."

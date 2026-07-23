@@ -429,10 +429,9 @@ def plot_fig_latent_geometry(
 ) -> Path | None:
     """Fig 6 suite: one dense page per recovered feature across all embeddings.
 
-    Replaces the old 2×2 PCA/Isomap overview. Writes
-    ``fig_latent_geometry_<feature>.png`` for each color feature and copies the
-    position page to ``fig_latent_geometry.png`` for backward-compatible PDF
-    sectioning / captions.
+    Writes ``fig_latent_geometry_<feature>.png`` for each color feature.
+    The position page is the canonical Fig 6 stem; a legacy alias copy is
+    not written (it duplicated the position page in compiled PDFs).
     """
     experiment_dir = Path(experiment_dir)
     figures_dir = Path(figures_dir) if figures_dir else experiment_dir / "figures"
@@ -454,15 +453,13 @@ def plot_fig_latent_geometry(
     if not written:
         return None
 
-    # Canonical Fig 6 stem = position page (or first written)
-    primary = next(
+    # Drop legacy alias if a prior run left a duplicate of the position page.
+    (out_dir / "fig_latent_geometry.png").unlink(missing_ok=True)
+
+    return next(
         (p for p in written if p.stem == "fig_latent_geometry_position"),
         written[0],
     )
-    import shutil
-    dest = out_dir / "fig_latent_geometry.png"
-    shutil.copy2(primary, dest)
-    return dest
 
 
 # ---------------------------------------------------------------------------
