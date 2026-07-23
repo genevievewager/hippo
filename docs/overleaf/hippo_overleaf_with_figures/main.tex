@@ -796,6 +796,23 @@ Companion pages color the same embeddings by speed, acceleration, head direction
 \label{fig:latent-geometry}
 \end{figure}
 
+\begin{figure}[H]
+\centering
+\includegraphics[width=\textwidth]{fig_deployable_decoder_x_window_heatmaps.png}
+\caption{Deployable decoder $\times$ causal-window heatmaps on sorted spikes.
+Each cell shows the best realtime-compatible feature at that $W$; gold outline marks the selected $(\mathrm{decoder},\,W)$ pair.}
+\label{fig:deployable-window-heatmaps}
+\end{figure}
+
+\begin{figure}[H]
+\centering
+\includegraphics[width=\textwidth]{fig_manifold_vs_spikes_onepager.png}
+\caption{Manifold vs.\ spike-count one-pager (sorted / Neuropixels).
+Top table: best counts setup, best manifold setup, $\pm 5\%$ verdict, and deployable registry selection per target.
+Lower panels: decoder $\times$ feature heatmaps with best $W$ per cell; dashed line separates counts from manifold modes.}
+\label{fig:manifold-vs-spikes-onepager}
+\end{figure}
+
 \subsection{Deployable offline selection (sorted spikes)}
 \label{sec:offline-deployment}
 

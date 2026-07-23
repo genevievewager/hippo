@@ -738,7 +738,9 @@ python run_decoder.py \
 | `figures/deployment_decoder_selection/fig_deployment.png` | Publication deployment selection (winners + window×decoder heatmaps) |
 | `figures/decoder_comparison/fig_decoding_performance.png` | Causal decoding performance (Fig 4) |
 | `figures/decoder_comparison/fig_manifold_decoding.png` | Manifold vs counts (Fig 5) |
-| `figures/decoder_comparison/fig_latent_geometry.png` | PCA / Isomap embeddings (Fig 6) |
+| `figures/decoder_comparison/fig_deployable_decoder_x_window_heatmaps.png` | Deployable decoder×window heatmaps |
+| `figures/decoder_comparison/fig_manifold_vs_spikes_onepager.png` | Best counts vs best manifold + verdict |
+| `figures/decoder_comparison/fig_latent_geometry_position.png` | PCA / Isomap embeddings colored by position (Fig 6) |
 | `figures/decoder_comparison/fig_isomap_diagnostics.png` | Isomap geometry diagnostics (Fig 7) |
 | `figures/decoder_comparison/fig_isomap_story.png` | Isomap decoding + distillation (Fig 8) |
 | `figures/realtime_decoding/fig_closed_loop.png` | Closed-loop realtime (Fig 9) |
@@ -767,10 +769,11 @@ Default regeneration writes a **small set of seaborn multi-panel** `fig_*.png` f
 | Fig 3 | `fig_cell_class_population`, `fig_population_structure`, `fig_spike_raster_summary` | Population structure + spikes |
 | Fig 4 | `fig_decoding_performance` | Causal decoding vs window / best decoder |
 | Fig 5 | `fig_manifold_decoding` | Counts vs PCA / region PCA (/ Isomap) |
-| Fig 6 | `fig_latent_geometry` (+ `fig_latent_geometry_<feature>`) | All embeddings × one recovered feature per page (best W per mode; position = x→hue, y→brightness) |
+| Fig 5b–c | `fig_deployable_decoder_x_window_heatmaps`, `fig_manifold_vs_spikes_onepager` | Ideal W/decoder selection + counts vs manifold (PDF pages after `fig_manifold_decoding`) |
+| Fig 6 | `fig_latent_geometry_<feature>` | All embeddings × one recovered feature per page (best W per mode; position = x→hue, y→brightness) |
 | Fig 7 | `fig_isomap_diagnostics` | Trustworthiness, connectivity, residual variance, geodesic/knn |
 | Fig 8 | `fig_isomap_story` | Counts/PCA/Isomap story + distilled vs teacher |
-| Fig 9 | `fig_closed_loop` | Closed-loop position, confusions, triggers |
+| Fig 9 | `fig_closed_loop` | Closed-loop position (time-colored), confusions, triggers |
 | Fig 10 | `fig_deployment` | Deployment winner summary + window×decoder heatmaps |
 | Fig 11 | `fig_latency` | Causal-update latency budget |
 | Fig 12 (suppl.) | `fig_temporal_wl` | Temporal W×L heatmaps (when `decoding/` exists) |
@@ -779,8 +782,7 @@ Fig 6 is a **suite**: one dense page per behavioral variable
 (`position`, `speed`, `acceleration`, `head_direction`, `distance_to_wall`,
 `spatial_context`, `movement_state`, `wall_distance_bin`). Each page shows every
 embedding mode present in the sorted comparison at the **best-performing window**
-(and k / n_neighbors) for decoding that variable — not a shared W. The canonical
-`fig_latent_geometry.png` is a copy of the position page for PDF ordering.
+(and k / n_neighbors) for decoding that variable — not a shared W.
 
 Compiled `figures/output.pdf` follows: simulation → decoding → manifolds/Isomap → realtime → deployment → latency.
 

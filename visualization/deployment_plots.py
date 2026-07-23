@@ -16,12 +16,55 @@ def plot_deployment_selection_outputs(
     experiment_dir: Path,
     figures_dir: Path | None = None,
 ) -> None:
-    """Write sorted-only deployment selection figures (publication multi-panel)."""
+    """Write sorted-only deployment selection figures (publication + onepagers)."""
     experiment_dir = Path(experiment_dir)
     figures_dir = Path(figures_dir) if figures_dir is not None else experiment_dir / "figures"
     from visualization.publication_decoding_plots import plot_fig_deployment
 
     plot_fig_deployment(experiment_dir, figures_dir)
+    plot_deployable_selection_onepagers(experiment_dir, figures_dir)
+
+
+def plot_deployable_selection_onepagers(
+    experiment_dir: Path,
+    figures_dir: Path | None = None,
+) -> list[Path]:
+    """Write decoder×window heatmaps under decoder_comparison/ (sorted only).
+
+    The old blue-table winner onepager is intentionally not written: its
+    decoder×feature heatmaps duplicated ``fig_manifold_vs_spikes_onepager``.
+    """
+    experiment_dir = Path(experiment_dir)
+    figures_dir = Path(figures_dir) if figures_dir is not None else experiment_dir / "figures"
+    from visualization.publication_decoding_plots import load_window_scores
+
+    scores = load_window_scores(experiment_dir)
+    if scores.empty:
+        return []
+    registry = None
+    for path in (
+        experiment_dir / "models" / "best_realtime_decoders.json",
+        experiment_dir / "deployment_decoder_selection" / "best_realtime_decoders.json",
+    ):
+        if path.exists():
+            with open(path) as f:
+                registry = json.load(f)
+            break
+    out = figures_dir / "decoder_comparison"
+    out.mkdir(parents=True, exist_ok=True)
+    winners = _registry_winners(registry)
+    _plot_decoder_window_heatmaps(scores, winners, out)
+    # Drop the retired blue-table onepager if a prior run left it behind.
+    for stale in (
+        out / "fig_deployable_winner_onepager.png",
+        out / "deployable_winner_onepager.png",
+    ):
+        stale.unlink(missing_ok=True)
+    written = []
+    path = out / "fig_deployable_decoder_x_window_heatmaps.png"
+    if path.exists():
+        written.append(path)
+    return written
 
 
 def _plot_best_decoder_by_target(best: pd.DataFrame, out: Path) -> None:
@@ -368,7 +411,7 @@ def _plot_deployable_winner_onepager(
         fontsize=14,
         y=0.995,
     )
-    fig.savefig(out / "deployable_winner_onepager.png", dpi=FIGURE_DPI, bbox_inches="tight")
+    fig.savefig(out / "fig_deployable_winner_onepager.png", dpi=FIGURE_DPI, bbox_inches="tight")
     plt.close(fig)
 
     # Also write decoder × window heatmaps (best feature annotated) as a companion page
@@ -462,5 +505,5 @@ def _plot_decoder_window_heatmaps(
         fontsize=12,
     )
     fig.tight_layout()
-    fig.savefig(out / "deployable_decoder_x_window_heatmaps.png", dpi=FIGURE_DPI)
+    fig.savefig(out / "fig_deployable_decoder_x_window_heatmaps.png", dpi=FIGURE_DPI)
     plt.close(fig)
