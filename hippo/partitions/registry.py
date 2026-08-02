@@ -8,6 +8,8 @@ from hippo.partitions.anatomical import (
     AllUnitsPartition,
     CA1DeepSuperficialPartition,
     CellClassPartition,
+    CellTypePartition,
+    DeepSuperficialPartition,
     LayerPartition,
     RateModelPartition,
     SubfieldPartition,
@@ -19,7 +21,9 @@ _REGISTRY: dict[str, type[PartitionStrategy]] = {
     "subfield": SubfieldPartition,
     "layer": LayerPartition,
     "ca1_deep_superficial": CA1DeepSuperficialPartition,
+    "deep_superficial": DeepSuperficialPartition,
     "cell_class": CellClassPartition,
+    "cell_type": CellTypePartition,
     "rate_model": RateModelPartition,
 }
 

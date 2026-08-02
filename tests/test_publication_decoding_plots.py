@@ -9,14 +9,23 @@ import pandas as pd
 import pytest
 
 from visualization.figure_captions import CAPTIONS, caption_for
+from visualization.comparison_grid_diagram import plot_fig_decoder_comparison_grid
 from visualization.publication_decoding_plots import (
     plot_fig_closed_loop,
+    plot_fig_closed_loop_suite,
+    plot_fig_continuous_decoders_feature_x_window,
+    plot_fig_categorical_decoders_feature_x_window,
     plot_fig_decoding_performance,
+    plot_fig_decoder_x_window,
     plot_fig_deployment,
+    plot_fig_feature_x_window,
     plot_fig_latency,
+    plot_fig_latency_realtime,
     plot_fig_manifold_decoding,
     plot_fig_temporal_wl,
+    plot_fig_window_selection_story,
 )
+from visualization.publication_decoder_geometry_plots import plot_fig_decoder_geometry
 from visualization.publication_isomap_plots import (
     plot_fig_isomap_diagnostics,
     plot_fig_isomap_story,
@@ -25,13 +34,21 @@ from visualization.publication_isomap_plots import (
 
 PUB_STEMS = (
     "fig_decoding_performance",
-    "fig_manifold_decoding",
+    "fig_decoder_comparison_grid",
+    "fig_window_selection_story",
+    "fig_feature_x_window",
+    "fig_decoder_x_window",
+    "fig_continuous_decoders_feature_x_window",
+    "fig_categorical_decoders_feature_x_window",
     "fig_latent_geometry",
+    "fig_decoder_geometry",
     "fig_isomap_diagnostics",
     "fig_isomap_story",
     "fig_closed_loop",
+    "fig_closed_loop_suite",
     "fig_deployment",
     "fig_latency",
+    "fig_latency_realtime",
     "fig_temporal_wl",
 )
 
@@ -57,9 +74,12 @@ def mini_experiment(tmp_path: Path) -> Path:
             for target, family, metric, val_base in (
                 ("position", "continuous", "mean_position_error_cm", 20.0),
                 ("speed", "continuous", "r2", 0.5),
+                ("acceleration", "continuous", "r2", 0.15),
+                ("head_direction", "continuous", "mean_circular_error_deg", 40.0),
+                ("distance_to_wall", "continuous", "r2", 0.6),
                 ("spatial_context", "categorical", "balanced_accuracy", 0.7),
                 ("movement_state", "categorical", "balanced_accuracy", 0.6),
-                ("head_direction", "continuous", "mean_circular_error_deg", 40.0),
+                ("wall_distance_bin", "categorical", "balanced_accuracy", 0.65),
             ):
                 for decoder in ("ridge", "random_forest_regressor"):
                     v = val_base + (0.05 if feat == "global_pca" else 0.0)
@@ -69,6 +89,7 @@ def mini_experiment(tmp_path: Path) -> Path:
                         "spike_source": "sorted",
                         "source": "sorted",
                         "feature_type": feat,
+                        "feature_mode": feat,
                         "decode_window_s": w,
                         "update_dt_s": 0.05,
                         "n_units": 50,
@@ -171,20 +192,41 @@ def mini_experiment(tmp_path: Path) -> Path:
 
     scores = []
     for w in (0.05, 0.10, 0.25):
-        for dec_name in ("ridge", "random_forest_regressor"):
-            for target in ("position", "spatial_context"):
-                scores.append({
-                    "spike_source": "sorted",
-                    "target": target,
-                    "decoder": dec_name,
-                    "feature_mode": "counts",
-                    "causal_window_s": w,
-                    "metric_name": "mean_position_error_cm" if target == "position" else "balanced_accuracy",
-                    "metric_value": 20.0 - 10 * w if target == "position" else 0.6 + w,
-                    "higher_is_better": target != "position",
-                    "realtime_compatible": True,
-                })
+        for feat in ("counts", "global_pca", "region_pca", "global_isomap"):
+            for dec_name in ("ridge", "random_forest_regressor"):
+                for target in ("position", "spatial_context"):
+                    base = 20.0 - 10 * w if target == "position" else 0.6 + w
+                    if feat == "global_pca":
+                        base = base - 1.0 if target == "position" else base + 0.05
+                    elif feat == "region_pca":
+                        base = base - 1.5 if target == "position" else base + 0.08
+                    elif feat == "global_isomap":
+                        base = base - 0.5 if target == "position" else base + 0.02
+                    scores.append({
+                        "spike_source": "sorted",
+                        "target": target,
+                        "decoder": dec_name,
+                        "feature_mode": feat,
+                        "causal_window_s": w,
+                        "metric_name": (
+                            "mean_position_error_cm"
+                            if target == "position"
+                            else "balanced_accuracy"
+                        ),
+                        "metric_value": base,
+                        "higher_is_better": target != "position",
+                        "realtime_compatible": feat != "global_isomap",
+                    })
     pd.DataFrame(scores).to_csv(deploy / "all_sorted_window_scores.csv", index=False)
+    (deploy / "best_realtime_decoders.json").write_text(
+        '{"targets": {'
+        '"position": {"selected_decoder": "ridge", "selected_feature_mode": "region_pca",'
+        ' "selected_causal_window_s": 0.10, "metric_value": 17.5},'
+        '"spatial_context": {"selected_decoder": "random_forest_regressor",'
+        ' "selected_feature_mode": "counts", "selected_causal_window_s": 0.25,'
+        ' "metric_value": 0.85}'
+        "}}\n"
+    )
 
     n = 80
     rng = np.random.default_rng(0)
@@ -197,10 +239,18 @@ def mini_experiment(tmp_path: Path) -> Path:
         "position_error_cm": rng.uniform(5, 40, n),
         "true_spatial_context": rng.choice(["open", "near_wall"], n),
         "decoded_spatial_context": rng.choice(["open", "near_wall"], n),
-        "true_movement_state": rng.choice(["moving", "still"], n),
-        "decoded_movement_state": rng.choice(["moving", "still"], n),
+        "true_movement_state": rng.choice(["still", "slow", "fast"], n),
+        "decoded_movement_state": rng.choice(["still", "slow", "fast"], n),
+        "true_speed": rng.uniform(0, 20, n),
+        "decoded_speed": rng.uniform(0, 20, n),
+        "speed_error": rng.normal(0, 2, n),
+        "true_head_direction_deg": rng.uniform(-180, 180, n),
     })
     decoded.to_csv(rt / "decoded_realtime.csv", index=False)
+    (rt / "realtime_metrics.json").write_text(
+        '{"mean_position_error_cm": 12.0, "spatial_context_accuracy": 0.75,'
+        ' "movement_state_accuracy": 0.65, "speed_r2": 0.22}\n'
+    )
     events = pd.DataFrame({
         "time": rng.uniform(0, 40, 20),
         "event_type": ["trigger"] * 20,
@@ -228,11 +278,37 @@ def mini_experiment(tmp_path: Path) -> Path:
         {"method": "global_isomap_distilled", "mean_ms": 0.1, "realtime_compatible": True},
     ]).to_csv(lat / "isomap_teacher_vs_distilled_latency.csv", index=False)
     pd.DataFrame([
-        {"stage": "spike_binning", "mean_ms": 1.0, "source": "sorted/x"},
-        {"stage": "feature_transform", "mean_ms": 0.2, "source": "sorted/x"},
-        {"stage": "decode_position", "mean_ms": 2.0, "source": "sorted/x"},
+        {"stage": "spike_binning", "mean_ms": 1.0, "p95_ms": 1.5, "source": "sorted/x"},
+        {"stage": "feature_transform", "mean_ms": 0.2, "p95_ms": 0.3, "source": "sorted/x"},
+        {"stage": "decode_position", "mean_ms": 2.0, "p95_ms": 2.5, "source": "sorted/x"},
     ]).to_csv(lat / "realtime_stage_latency_combined.csv", index=False)
     (lat / "latency_benchmark_summary.json").write_text('{"update_budget_ms": 50.0}\n')
+
+    latency_dir = rt / "latency"
+    latency_dir.mkdir(parents=True)
+    per_update_rows = []
+    for i in range(20):
+        t = 420.0 + i * 0.45
+        spatial = 44.0 + rng.uniform(-4, 8)
+        movement = 46.0 + rng.uniform(-4, 12 if i == 10 else 6)
+        total = 0.3 + 0.001 + 0.02 + 0.5 + 0.8 + spatial + movement + 0.5 + 0.09
+        per_update_rows.append({
+            "time_s": t,
+            "spike_binning_ms": 0.3 + rng.uniform(0, 0.2),
+            "feature_transform_ms": 0.001,
+            "manifold_transform_ms": 0.02,
+            "decode_position_ms": 0.5,
+            "decode_speed_ms": 0.8,
+            "decode_spatial_context_ms": spatial,
+            "decode_movement_state_ms": movement,
+            "decode_primary_ms": 0.5,
+            "closed_loop_policy_ms": 0.09,
+            "total_update_ms": total,
+        })
+    pd.DataFrame(per_update_rows).to_csv(latency_dir / "latency_per_update.csv", index=False)
+    (latency_dir / "latency_summary.json").write_text(
+        '{"n_updates": 20, "update_budget_ms": 50.0, "mean_total_ms": 95.0}\n'
+    )
 
     # Temporal W×L
     twl = []
@@ -275,30 +351,65 @@ def test_plot_figs_write_pngs(mini_experiment: Path, tmp_path: Path):
     figures.mkdir()
 
     assert plot_fig_decoding_performance(mini_experiment, figures) is not None
+    assert plot_fig_decoder_comparison_grid(mini_experiment, figures) is not None
+    assert plot_fig_window_selection_story(mini_experiment, figures) is not None
+    assert plot_fig_feature_x_window(mini_experiment, figures) is not None
+    assert plot_fig_decoder_x_window(mini_experiment, figures) is not None
+    assert plot_fig_continuous_decoders_feature_x_window(mini_experiment, figures) is not None
+    assert plot_fig_categorical_decoders_feature_x_window(mini_experiment, figures) is not None
     assert plot_fig_manifold_decoding(mini_experiment, figures) is not None
     assert plot_fig_latent_geometry(mini_experiment, figures) is not None
+    assert plot_fig_decoder_geometry(mini_experiment, figures) is not None
     assert plot_fig_isomap_diagnostics(mini_experiment, figures) is not None
     assert plot_fig_isomap_story(mini_experiment, figures) is not None
     assert plot_fig_closed_loop(mini_experiment, figures) is not None
+    assert plot_fig_closed_loop_suite(mini_experiment, figures) is not None
     assert plot_fig_deployment(mini_experiment, figures) is not None
     assert plot_fig_latency(mini_experiment, figures) is not None
+    assert plot_fig_latency_realtime(mini_experiment, figures) is not None
     assert plot_fig_temporal_wl(mini_experiment, figures) is not None
 
     expected = {
         "decoder_comparison/fig_decoding_performance.png",
-        "decoder_comparison/fig_manifold_decoding.png",
+        "decoder_comparison/fig_decoder_comparison_grid.png",
+        "decoder_comparison/fig_window_selection_story.png",
+        "decoder_comparison/fig_feature_x_window.png",
+        "decoder_comparison/fig_decoder_x_window.png",
+        "decoder_comparison/fig_continuous_decoders_feature_x_window.png",
+        "decoder_comparison/fig_categorical_decoders_feature_x_window.png",
         "decoder_comparison/fig_latent_geometry_position.png",
+        "decoder_comparison/fig_latent_geometry_speed.png",
+        "decoder_comparison/fig_latent_geometry_acceleration.png",
+        "decoder_comparison/fig_latent_geometry_head_direction.png",
+        "decoder_comparison/fig_latent_geometry_distance_to_wall.png",
+        "decoder_comparison/fig_latent_geometry_spatial_context.png",
+        "decoder_comparison/fig_latent_geometry_movement_state.png",
+        "decoder_comparison/fig_latent_geometry_wall_distance_bin.png",
+        "decoder_comparison/fig_decoder_geometry_position.png",
+        "decoder_comparison/fig_decoder_geometry_speed.png",
+        "decoder_comparison/fig_decoder_geometry_acceleration.png",
+        "decoder_comparison/fig_decoder_geometry_head_direction.png",
+        "decoder_comparison/fig_decoder_geometry_distance_to_wall.png",
+        "decoder_comparison/fig_decoder_geometry_spatial_context.png",
+        "decoder_comparison/fig_decoder_geometry_movement_state.png",
+        "decoder_comparison/fig_decoder_geometry_wall_distance_bin.png",
         "decoder_comparison/fig_isomap_diagnostics.png",
         "decoder_comparison/fig_isomap_story.png",
         "realtime_decoding/fig_closed_loop.png",
+        "realtime_decoding/fig_closed_loop_suite.png",
         "deployment_decoder_selection/fig_deployment.png",
         "latency/fig_latency.png",
+        "latency/fig_latency_realtime.png",
         "temporal_decoding/fig_temporal_wl.png",
     }
     for rel in expected:
         path = figures / rel
         assert path.exists(), f"missing {rel}"
         assert path.stat().st_size > 1000
+    # Retired companion pages must not be regenerated.
+    assert not (figures / "decoder_comparison" / "fig_manifold_decoding.png").exists()
+    assert not (figures / "decoder_comparison" / "fig_manifold_decoder_window_threeway.png").exists()
+    assert not (figures / "decoder_comparison" / "fig_deployable_decoder_x_window_heatmaps.png").exists()
 
 
 def test_isomap_empty_state_does_not_crash(mini_experiment: Path, tmp_path: Path):

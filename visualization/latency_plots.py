@@ -9,8 +9,64 @@ import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 
+from realtime.latency_profiler import STAGE_ORDER
+
 FIGURE_DPI = 150
 BUDGET_DEFAULT_MS = 50.0
+
+
+def _read_update_budget_ms(experiment_dir: Path, latency_dir: Path | None = None) -> float:
+    """Read update budget from per-run or experiment-level latency summaries."""
+    if latency_dir is not None:
+        summary = latency_dir / "latency_summary.json"
+        if summary.exists():
+            try:
+                return float(json.loads(summary.read_text()).get("update_budget_ms", BUDGET_DEFAULT_MS))
+            except Exception:
+                pass
+    bench = Path(experiment_dir) / "latency_profiling" / "latency_benchmark_summary.json"
+    if bench.exists():
+        try:
+            return float(json.loads(bench.read_text()).get("update_budget_ms", BUDGET_DEFAULT_MS))
+        except Exception:
+            pass
+    return BUDGET_DEFAULT_MS
+
+
+def _load_latency_per_update(experiment_dir: Path) -> tuple[pd.DataFrame, float]:
+    """Discover and load the richest per-update latency CSV for sorted realtime runs."""
+    experiment_dir = Path(experiment_dir)
+    rt_root = experiment_dir / "realtime_decoding"
+    if not rt_root.exists():
+        return pd.DataFrame(), BUDGET_DEFAULT_MS
+
+    paths = sorted(rt_root.rglob("latency/latency_per_update.csv"))
+    sorted_paths = [p for p in paths if "sorted" in str(p)]
+    candidates = sorted_paths if sorted_paths else paths
+    if not candidates:
+        return pd.DataFrame(), BUDGET_DEFAULT_MS
+
+    best_path = candidates[0]
+    best_df = pd.DataFrame()
+    for path in candidates:
+        try:
+            df = pd.read_csv(path)
+        except pd.errors.EmptyDataError:
+            continue
+        if len(df) > len(best_df):
+            best_df = df
+            best_path = path
+
+    if best_df.empty:
+        return pd.DataFrame(), _read_update_budget_ms(experiment_dir)
+
+    budget_ms = _read_update_budget_ms(experiment_dir, best_path.parent)
+    return best_df, budget_ms
+
+
+def stage_ms_columns() -> list[tuple[str, str]]:
+    """Return (stage_name, csv_column) pairs excluding total_update."""
+    return [(s, f"{s}_ms") for s in STAGE_ORDER if s != "total_update"]
 
 
 def plot_latency_outputs(
@@ -19,15 +75,22 @@ def plot_latency_outputs(
 ) -> Path | None:
     """Write latency PNGs under figures/latency/ for PDF compilation.
 
-    Default: publication multi-panel ``fig_latency``. Legacy single-panel
-    helpers remain as private functions.
+    Default: publication multi-panel ``fig_latency`` and ``fig_latency_realtime``.
+    Legacy single-panel helpers remain as private functions.
     """
     experiment_dir = Path(experiment_dir)
     figures_dir = Path(figures_dir) if figures_dir else experiment_dir / "figures"
-    from visualization.publication_decoding_plots import plot_fig_latency
+    from visualization.publication_decoding_plots import (
+        plot_fig_latency,
+        plot_fig_latency_realtime,
+    )
 
-    path = plot_fig_latency(experiment_dir, figures_dir)
-    return (figures_dir / "latency") if path is not None else None
+    wrote = False
+    if plot_fig_latency(experiment_dir, figures_dir) is not None:
+        wrote = True
+    if plot_fig_latency_realtime(experiment_dir, figures_dir) is not None:
+        wrote = True
+    return (figures_dir / "latency") if wrote else None
 
 
 def _plot_everything(df: pd.DataFrame, out: Path, budget_ms: float) -> None:

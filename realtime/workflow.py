@@ -86,7 +86,7 @@ def run_full_decoder_workflow(
     decode_windows: tuple[float, ...] | None = None,
     adaptive_windows: bool | None = None,
     max_models: str | None = None,
-    closed_loop_target: str = "spatial_context",
+    closed_loop_target: str = "position",
     selection_policy: str = "shortest_near_optimal",
     update_dt: float = DEFAULT_UPDATE_DT_S,
     train_frac: float = 0.70,

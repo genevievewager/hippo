@@ -75,6 +75,7 @@ def _derive_cell_class(cell_type: str) -> str:
     if (
         "inh" in ct
         or "inter" in ct
+        or ct.startswith("int_")
         or ct.endswith("_int")
         or "_int_" in ct
         or "pv" in ct
@@ -85,19 +86,23 @@ def _derive_cell_class(cell_type: str) -> str:
 
 
 def _derive_deep_superficial_from_layer(layer: Any) -> tuple[float, str]:
-    """Map CA1 stratum labels to a provisional deep/superficial coordinate.
+    """Map stratum / laminar labels to a provisional deep/superficial coordinate.
 
-    This is a Phase-1 convenience mapping from existing layer names, not a claim
-    that oriens/radiatum equal biological deep/superficial pyramids.
+    Phase-1 convenience mapping from layer names (CA1 strata and common
+    SUB/ENT aliases). Not a claim that lab band labels equal biological
+    deep/superficial pyramids.
     """
     if layer is None or (isinstance(layer, float) and np.isnan(layer)):
         return float("nan"), "unknown"
-    name = str(layer).lower()
-    if name in ("oriens", "deep"):
+    name = str(layer).lower().strip()
+    if name in ("oriens", "deep", "so", "stratum_oriens", "sub_deep", "ent_deep"):
         return 0.0, "deep"
-    if name in ("radiatum", "superficial", "lm", "lacunosum"):
+    if name in (
+        "radiatum", "superficial", "lm", "lacunosum", "slm",
+        "sub_superficial", "ent_superficial", "molecular", "mo",
+    ):
         return 1.0, "superficial"
-    if name in ("pyramidal", "pyr", "intermediate"):
+    if name in ("pyramidal", "pyr", "intermediate", "sp", "pcl", "sub", "ent"):
         return 0.5, "intermediate"
     return float("nan"), "unknown"
 
@@ -106,7 +111,12 @@ def normalize_unit_metadata(units_df: pd.DataFrame) -> pd.DataFrame:
     """
     Return a copy of units_df with required columns validated and optional
     schema columns present (NaN if unavailable).
+
+    Also annotates hippocampal-system analysis eligibility
+    (``include_in_decoder``, ``region_canonical``).
     """
+    from hippo.anatomy.hippocampal_system import annotate_units_for_analysis
+
     if units_df is None or units_df.empty:
         raise ValueError("units_df is empty")
     df = units_df.copy()
@@ -114,8 +124,10 @@ def normalize_unit_metadata(units_df: pd.DataFrame) -> pd.DataFrame:
     if missing:
         raise ValueError(f"units_df missing required columns: {missing}")
 
-    if "subfield" not in df.columns:
-        df["subfield"] = df["region"]
+    df = annotate_units_for_analysis(df, include_non_hippocampal=False)
+
+    if "subfield" not in df.columns or df["subfield"].isna().all():
+        df["subfield"] = df.get("region_canonical", df["region"])
     if "cell_class" not in df.columns:
         df["cell_class"] = df["cell_type"].map(_derive_cell_class)
 

@@ -42,41 +42,58 @@ class RealTimeDecoder:
         # Optional fitted manifold / identity transform (frozen at replay time).
         self.feature_transformer = feature_transformer
 
-    def _features(self, spikes_df: pd.DataFrame, t: float) -> np.ndarray:
-        counts = count_spikes_in_window(
+    def _count_window(self, spikes_df: pd.DataFrame, t: float) -> np.ndarray:
+        """Causal half-open counts from [t - W, t)."""
+        return count_spikes_in_window(
             spikes_df,
             self.unit_ids,
             t - self.decode_window,
             t,
         ).reshape(1, -1)
-        if self.feature_transformer is not None:
-            return np.asarray(self.feature_transformer.transform(counts), dtype=float)
-        if self.feature_type == "rates":
-            return counts / self.decode_window
-        return counts
 
-    def _features_profiled(
-        self, spikes_df: pd.DataFrame, t: float
-    ) -> tuple[np.ndarray, dict[str, float]]:
-        stages: dict[str, float] = {}
-        t0 = time.perf_counter()
-        counts = count_spikes_in_window(
-            spikes_df,
-            self.unit_ids,
-            t - self.decode_window,
-            t,
-        ).reshape(1, -1)
-        stages["spike_binning"] = (time.perf_counter() - t0) * 1000.0
+    def _window_stats(self, counts: np.ndarray) -> dict[str, float | int]:
+        c = np.asarray(counts, dtype=float).ravel()
+        return {
+            "update_dt_s": float(self.update_dt),
+            "n_spikes_in_window": int(np.sum(c)),
+            "n_active_units_in_window": int(np.sum(c > 0)),
+        }
 
-        t1 = time.perf_counter()
+    def _features(self, spikes_df: pd.DataFrame, t: float) -> tuple[np.ndarray, np.ndarray]:
+        counts = self._count_window(spikes_df, t)
         if self.feature_transformer is not None:
             feats = np.asarray(self.feature_transformer.transform(counts), dtype=float)
         elif self.feature_type == "rates":
             feats = counts / self.decode_window
         else:
             feats = counts
+        return feats, counts
+
+    def _features_profiled(
+        self, spikes_df: pd.DataFrame, t: float
+    ) -> tuple[np.ndarray, np.ndarray, dict[str, float]]:
+        stages: dict[str, float] = {}
+        t0 = time.perf_counter()
+        counts = self._count_window(spikes_df, t)
+        stages["spike_binning"] = (time.perf_counter() - t0) * 1000.0
+
+        # Split identity/rate feature prep vs frozen manifold transform when present.
+        t1 = time.perf_counter()
+        if self.feature_type == "rates":
+            base = counts / self.decode_window
+        else:
+            base = counts
         stages["feature_transform"] = (time.perf_counter() - t1) * 1000.0
-        return feats, stages
+
+        t2 = time.perf_counter()
+        if self.feature_transformer is not None:
+            # Transformer may be identity or manifold; time as manifold stage.
+            feats = np.asarray(self.feature_transformer.transform(counts), dtype=float)
+            stages["manifold_transform"] = (time.perf_counter() - t2) * 1000.0
+        else:
+            feats = base
+            stages["manifold_transform"] = 0.0
+        return feats, counts, stages
 
     def decode_at_time(self, spikes_df: pd.DataFrame, t: float) -> dict:
         """
@@ -84,15 +101,17 @@ class RealTimeDecoder:
 
         Returns decoded position, context, movement state, speed, and confidences.
         """
-        feats = self._features(spikes_df, t)
-        return self._decode_from_features(feats, t)
+        feats, counts = self._features(spikes_df, t)
+        result = self._decode_from_features(feats, t)
+        result.update(self._window_stats(counts))
+        return result
 
     def decode_at_time_profiled(
         self, spikes_df: pd.DataFrame, t: float
     ) -> tuple[dict, LatencySample]:
         """Like ``decode_at_time`` but also return per-stage latency (ms)."""
         t_total0 = time.perf_counter()
-        feats, stages = self._features_profiled(spikes_df, t)
+        feats, counts, stages = self._features_profiled(spikes_df, t)
 
         t0 = time.perf_counter()
         decoded_xy = self.models.position.predict(feats)[0]
@@ -130,6 +149,7 @@ class RealTimeDecoder:
             "movement_state_confidence": movement_conf,
             "decoded_speed": decoded_speed,
         }
+        result.update(self._window_stats(counts))
 
         if self.primary_model is not None and self.primary_target is not None:
             t0 = time.perf_counter()
@@ -138,6 +158,7 @@ class RealTimeDecoder:
         else:
             stages["decode_primary"] = 0.0
 
+        stages["closed_loop_policy"] = stages.get("closed_loop_policy", 0.0)
         stages["total_update"] = (time.perf_counter() - t_total0) * 1000.0
         return result, LatencySample(time_s=t, stages_ms=stages)
 
@@ -169,6 +190,10 @@ class RealTimeDecoder:
             "movement_state_confidence": movement_conf,
             "decoded_speed": decoded_speed,
         }
+        # Window stats are filled by decode_at_time; keep keys present for helpers.
+        result.setdefault("update_dt_s", float(self.update_dt))
+        result.setdefault("n_spikes_in_window", None)
+        result.setdefault("n_active_units_in_window", None)
 
         if self.primary_model is not None and self.primary_target is not None:
             result.update(self._apply_primary(feats))
@@ -276,6 +301,9 @@ class RealTimeDecoder:
                 "window_start": decoded["window_start"],
                 "window_end": decoded["window_end"],
                 "decode_window_s": decoded["decode_window_s"],
+                "update_dt_s": decoded.get("update_dt_s", float(self.update_dt)),
+                "n_spikes_in_window": decoded.get("n_spikes_in_window"),
+                "n_active_units_in_window": decoded.get("n_active_units_in_window"),
                 "decoded_x": decoded["decoded_x"],
                 "decoded_y": decoded["decoded_y"],
                 "true_x": true_x,

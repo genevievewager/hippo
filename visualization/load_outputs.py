@@ -83,8 +83,9 @@ def normalize_behavior(df: pd.DataFrame) -> pd.DataFrame:
         "speed": df[cols["speed"]].astype(float),
         "head_direction": df[cols["head_direction"]].astype(float),
     })
-    if "acceleration" in df.columns or "accel" in df.columns or "a" in df.columns:
-        acc_col = next(c for c in ["acceleration", "accel", "a", "acceleration_cm_s2"] if c in df.columns)
+    acc_candidates = ("acceleration", "accel", "a", "acceleration_cm_s2")
+    acc_col = next((c for c in acc_candidates if c in df.columns), None)
+    if acc_col is not None:
         out["acceleration"] = df[acc_col].astype(float)
     else:
         dt = float(np.median(np.diff(out["time"].to_numpy())))
@@ -108,9 +109,18 @@ def normalize_spikes(df: pd.DataFrame) -> pd.DataFrame:
 
 def normalize_units(df: pd.DataFrame) -> pd.DataFrame:
     cols = resolve_unit_columns(df)
+    try:
+        from hippo.anatomy.cell_capture import canonicalize_cell_type
+    except ImportError:  # pragma: no cover
+        def canonicalize_cell_type(cell_type: str) -> str:
+            raw = str(cell_type)
+            if raw in ("CA1_int", "interneuron"):
+                return "INT_CA1"
+            return raw
+
     out = pd.DataFrame({
         "unit_id": df[cols["unit_id"]].astype(int),
-        "cell_type": df[cols["cell_type"]].astype(str),
+        "cell_type": df[cols["cell_type"]].map(canonicalize_cell_type).astype(str),
         "region": df[cols["region"]].astype(str),
     })
     if "rate_model" in cols:

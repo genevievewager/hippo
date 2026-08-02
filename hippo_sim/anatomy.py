@@ -38,7 +38,12 @@ class AnatomyMap:
 
 CELL_TYPE_TO_PROBE = {
     "CA1_pyr": ("CA1", "pyramidal"),
-    "CA1_int": ("CA1", "oriens"),
+    "INT_CA1": ("CA1", "oriens"),
+    "INT_CA2": ("CA2", "pyramidal"),
+    "INT_CA3": ("CA3", "pyramidal"),
+    "INT_DG": ("DG", "hilus"),
+    "INT_SUB": ("Subiculum", "pyramidal"),
+    "interneuron": ("CA1", "oriens"),  # legacy → CA1-local
     "CA2_pyr": ("CA2", "pyramidal"),
     "CA3_pyr": ("CA3", "pyramidal"),
     "DG_granule": ("DG", "granule"),
@@ -55,16 +60,43 @@ def assign_probe_channels(
     rng: np.random.Generator,
 ) -> list[Unit]:
     """Assign probe channel/depth to units using hippocampal region segments."""
-    channel_pools: dict[str, np.ndarray] = {}
-    for seg in config.region_segments:
-        region_key = (seg["region"], seg["layer"])
-        cell_type = REGION_TO_CELL_TYPE.get(region_key)
-        if cell_type is None:
-            continue
-        channels = channels_for_segment(seg["z_start"], seg["z_end"])
-        if len(channels):
-            channel_pools.setdefault(cell_type, [])
-            channel_pools[cell_type].extend(channels.tolist())
+    pitch = float(getattr(config, "site_pitch_um", SITE_PITCH_UM))
+    n_channels = int(getattr(config, "n_channels", 384))
+    channel_pools: dict[str, list[int]] = {}
+    # Prefer capture-aware multi-type pools when cell_capture_config is present.
+    capture_cfg = getattr(config, "cell_capture_config", None) or {}
+    use_capture_probs = bool(capture_cfg.get("region_layer_probabilities"))
+
+    if use_capture_probs:
+        from hippo.anatomy.cell_capture import _probs_for_band
+
+        for seg in config.region_segments:
+            channels = channels_for_segment(
+                seg["z_start"], seg["z_end"], pitch_um=pitch, n_channels=n_channels,
+            )
+            if not len(channels):
+                continue
+            probs = _probs_for_band(capture_cfg, seg["region"], seg["layer"])
+            if not probs:
+                cell_type = REGION_TO_CELL_TYPE.get((seg["region"], seg["layer"]))
+                if cell_type:
+                    channel_pools.setdefault(cell_type, []).extend(channels.tolist())
+                continue
+            for cell_type, weight in probs.items():
+                if weight <= 0:
+                    continue
+                channel_pools.setdefault(cell_type, []).extend(channels.tolist())
+    else:
+        for seg in config.region_segments:
+            region_key = (seg["region"], seg["layer"])
+            cell_type = REGION_TO_CELL_TYPE.get(region_key)
+            if cell_type is None:
+                continue
+            channels = channels_for_segment(
+                seg["z_start"], seg["z_end"], pitch_um=pitch, n_channels=n_channels,
+            )
+            if len(channels):
+                channel_pools.setdefault(cell_type, []).extend(channels.tolist())
 
     for pool in channel_pools.values():
         pool.sort()
@@ -76,25 +108,43 @@ def assign_probe_channels(
             region, layer = CELL_TYPE_TO_PROBE.get(unit.cell_type, ("CA1", "pyramidal"))
             for seg in config.region_segments:
                 if seg["region"] == region and seg["layer"] == layer:
-                    pool = channels_for_segment(seg["z_start"], seg["z_end"]).tolist()
+                    pool = channels_for_segment(
+                        seg["z_start"], seg["z_end"], pitch_um=pitch, n_channels=n_channels,
+                    ).tolist()
                     break
             if not pool:
                 for seg in config.region_segments:
                     if seg["region"] == region:
-                        pool = channels_for_segment(seg["z_start"], seg["z_end"]).tolist()
+                        pool = channels_for_segment(
+                            seg["z_start"], seg["z_end"], pitch_um=pitch, n_channels=n_channels,
+                        ).tolist()
                         break
         if not pool:
-            pool = [0]
+            # Unit cell type has no crossed band — drop by parking on invalid sentinel
+            # only if no segments at all; otherwise skip assignment to ch 0 of first band.
+            if config.region_segments:
+                seg = config.region_segments[0]
+                pool = channels_for_segment(
+                    seg["z_start"], seg["z_end"], pitch_um=pitch, n_channels=n_channels,
+                ).tolist() or [0]
+            else:
+                pool = [0]
 
         ch = int(rng.choice(pool))
+        # Prefer region/layer from the segment that owns this channel.
         region, layer = CELL_TYPE_TO_PROBE.get(unit.cell_type, ("CA1", "pyramidal"))
+        depth = float(ch) * pitch
+        for seg in config.region_segments:
+            if seg["z_start"] <= depth < seg["z_end"]:
+                region, layer = seg["region"], seg["layer"]
+                break
         assigned.append(Unit(
             unit_id=unit.unit_id,
             cell_type=unit.cell_type,
             region=region,
             layer=layer,
             channel=ch,
-            depth_um=float(ch) * SITE_PITCH_UM,
+            depth_um=depth,
             place_center_cm=unit.place_center_cm,
             hd_pref_rad=unit.hd_pref_rad,
             gain=unit.gain,

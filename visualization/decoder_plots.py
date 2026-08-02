@@ -106,9 +106,13 @@ def plot_realtime_outputs(
     experiment_dir = (
         realtime_dir.parent if realtime_dir.name == "realtime_decoding" else realtime_dir
     )
-    from visualization.publication_decoding_plots import plot_fig_closed_loop
+    from visualization.publication_decoding_plots import (
+        plot_fig_closed_loop,
+        plot_fig_closed_loop_suite,
+    )
 
     path = plot_fig_closed_loop(experiment_dir, figures_dir)
+    plot_fig_closed_loop_suite(experiment_dir, figures_dir)
     if path is None and not any(realtime_dir.rglob("decoded_realtime.csv")):
         raise FileNotFoundError(
             f"No realtime decoding outputs found under {realtime_dir}"
@@ -154,11 +158,86 @@ def plot_decoder_comparison_outputs(
     except Exception as exc:
         print(f"  warning: isomap publication figures skipped ({exc})")
 
+    # Optional research-engineering summary panels (CSV/JSON only; never retrain).
+    try:
+        _plot_lab_deployable_summaries(comparison_dir, out_root)
+        wrote = True
+    except Exception as exc:
+        print(f"  warning: lab-deployable summary plots skipped ({exc})")
+
     if not wrote and not list(comparison_dir.rglob("decoder_comparison_metrics.csv")):
         raise FileNotFoundError(
             f"No decoder comparison outputs found under {comparison_dir}"
         )
     return out_root
+
+
+# Artifacts that visualization may read (never recompute / retrain).
+_READ_ONLY_COMPARISON_ARTIFACTS = (
+    "decoder_comparison_metrics.csv",
+    "best_decoder_by_target.csv",
+    "best_lab_deployable_decoders.csv",
+    "closed_loop_trigger_comparison.csv",
+    "cross_run_decoder_summary.csv",
+    "decoder_control_summary.csv",
+    "population_ablation_summary.csv",
+    "sorted_information_loss_summary.csv",
+)
+
+
+def _find_comparison_csv(comparison_dir: Path, name: str) -> Path | None:
+    for cand in (
+        Path(comparison_dir) / name,
+        Path(comparison_dir) / "sorted" / name,
+        Path(comparison_dir).parent / name,
+    ):
+        if cand.exists():
+            return cand
+    matches = list(Path(comparison_dir).rglob(name))
+    return matches[0] if matches else None
+
+
+def _plot_lab_deployable_summaries(comparison_dir: Path, figures_dir: Path) -> None:
+    """Plot-only panels from research-engineering CSVs (no model fitting)."""
+    import matplotlib.pyplot as plt
+
+    figures_dir = Path(figures_dir)
+    figures_dir.mkdir(parents=True, exist_ok=True)
+
+    best = _find_comparison_csv(comparison_dir, "best_lab_deployable_decoders.csv")
+    if best is not None:
+        df = _read_csv(best)
+        if not df.empty and "target_name" in df.columns:
+            fig, ax = plt.subplots(figsize=(8, 4))
+            labels = [
+                f"{r.target_name}\n{r.decoder_name}"
+                for r in df.itertuples()
+            ]
+            vals = df["metric_value"].to_numpy() if "metric_value" in df.columns else []
+            if len(vals):
+                ax.bar(range(len(vals)), vals, color="#4C78A8")
+                ax.set_xticks(range(len(labels)))
+                ax.set_xticklabels(labels, rotation=30, ha="right", fontsize=8)
+                ax.set_ylabel("Primary metric")
+                ax.set_title("Best lab-deployable decoders (from saved CSV)")
+                fig.tight_layout()
+                fig.savefig(figures_dir / "fig_best_lab_deployable_decoders.png", dpi=150)
+                plt.close(fig)
+
+    triggers = _find_comparison_csv(comparison_dir, "closed_loop_trigger_comparison.csv")
+    if triggers is not None:
+        df = _read_csv(triggers)
+        if not df.empty and "trigger_precision" in df.columns:
+            fig, ax = plt.subplots(figsize=(8, 4))
+            ax.scatter(df["trigger_recall"], df["trigger_precision"], alpha=0.7)
+            ax.set_xlabel("Trigger recall")
+            ax.set_ylabel("Trigger precision")
+            ax.set_title("Closed-loop trigger comparison (from saved CSV)")
+            fig.tight_layout()
+            fig.savefig(figures_dir / "fig_closed_loop_trigger_comparison.png", dpi=150)
+            plt.close(fig)
+
+    _ = _READ_ONLY_COMPARISON_ARTIFACTS  # documented allow-list for readers
 
 
 def _plot_realtime_source(source_dir: Path, output_dir: Path, spike_source: str) -> None:

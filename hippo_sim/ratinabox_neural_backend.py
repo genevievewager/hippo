@@ -19,7 +19,8 @@ from hippo_sim.behavior import BehaviorTrace
 from hippo_sim.config import SimConfig
 from hippo_sim.features import compute_global_features
 from hippo_sim.feedforward import (
-    apply_int_to_ca1_inhibition,
+    GROUP_TO_NODE,
+    apply_local_int_inhibition,
     apply_trisynaptic_feedforward,
 )
 from hippo_sim.hippocampal_populations import (
@@ -128,17 +129,34 @@ def _compute_speed_fallback_rates(
     return rates
 
 
+def _int_rate_params(config: SimConfig, cell_type: str) -> dict:
+    """Resolve rate params for a local INT pool (shared defaults + aliases)."""
+    rp = config.rate_params
+    return (
+        rp.get(cell_type)
+        or rp.get("interneuron")
+        or rp.get("CA1_int")
+        or rp.get("INT_CA1")
+        or {}
+    )
+
+
 def _compute_interneuron_rates(
     behavior: BehaviorTrace,
     n_cells: int,
     config: SimConfig,
-    ca1_pyr_rates: np.ndarray | None,
+    home_pyr_rates: np.ndarray | None,
+    *,
+    cell_type: str = "INT_CA1",
+    seed_offset: int = 77,
 ) -> np.ndarray:
-    """Synthetic CA1 oriens interneurons: high tonic + theta, anti-CA1-pyr."""
+    """Synthetic local interneurons: high tonic + theta, anti-home principal."""
     rp = config.ratinabox_params
-    rate_params = config.rate_params.get("CA1_int", {})
+    rate_params = _int_rate_params(config, cell_type)
     baseline = float(rp.get("int_baseline_hz", rate_params.get("baseline_hz", 18.0)))
-    anti_w = float(rp.get("int_anti_ca1_weight", 0.35))
+    anti_w = float(
+        rp.get("int_anti_home_weight", rp.get("int_anti_ca1_weight", 0.35))
+    )
     w_theta = float(rate_params.get("w_theta", 0.4))
     theta_freq = float(rate_params.get("theta_freq_hz", 8.0))
 
@@ -146,17 +164,17 @@ def _compute_interneuron_rates(
     theta = 1.0 + w_theta * np.cos(2 * np.pi * theta_freq * t)
     n_steps = len(t)
 
-    if ca1_pyr_rates is not None and ca1_pyr_rates.size:
-        ca1_mean = ca1_pyr_rates.mean(axis=0)
-        ca1_norm = ca1_mean / max(float(ca1_mean.max()), 1e-6)
+    if home_pyr_rates is not None and home_pyr_rates.size:
+        home_mean = home_pyr_rates.mean(axis=0)
+        home_norm = home_mean / max(float(home_mean.max()), 1e-6)
     else:
-        ca1_norm = np.zeros(n_steps)
+        home_norm = np.zeros(n_steps)
 
-    rng = np.random.default_rng(config.seed + 77)
+    rng = np.random.default_rng(config.seed + seed_offset)
     rates = np.zeros((n_cells, n_steps), dtype=float)
     for i in range(n_cells):
         gain = rng.uniform(0.8, 1.2)
-        rates[i] = gain * baseline * theta * (1.0 - anti_w * ca1_norm)
+        rates[i] = gain * baseline * theta * (1.0 - anti_w * home_norm)
     return np.maximum(rates, 0.0)
 
 
@@ -309,7 +327,7 @@ def simulate_ratinabox_neural_activity(
         class_name = spec["ratinabox_class"]
 
         # Synthetic / fallback groups — no RiaB neuron object.
-        if class_name in ("SpeedCells_fallback", "CA1_Interneurons_synthetic"):
+        if class_name in ("SpeedCells_fallback", "Interneurons_synthetic", "CA1_Interneurons_synthetic"):
             continue
 
         params = {
@@ -337,8 +355,6 @@ def simulate_ratinabox_neural_activity(
         _sync_agent_to_behavior_step(agent, behavior, step)
         for _, neurons in neuron_objects:
             neurons.update()
-
-    ca1_pyr_rates: np.ndarray | None = None
 
     for spec, neurons in neuron_objects:
         rates_hz = extract_rates_from_ratinabox_neurons(neurons, n_steps)
@@ -390,22 +406,44 @@ def simulate_ratinabox_neural_activity(
     # Excitatory trisynaptic / EC feedforward (before interneurons).
     ff_meta = apply_trisynaptic_feedforward(groups, ratinabox_params=rp)
 
+    # Post-FF principal means keyed by circuit node (for local INT construction).
+    home_rates_by_node: dict[str, np.ndarray] = {}
     for g in groups:
-        if g.name == "CA1_place_pp":
-            ca1_pyr_rates = g.rates_hz
-            break
+        node = GROUP_TO_NODE.get(g.name)
+        if node in ("CA1", "CA2", "CA3", "DG", "SUB"):
+            if node not in home_rates_by_node:
+                home_rates_by_node[node] = g.rates_hz
+            else:
+                home_rates_by_node[node] = np.vstack(
+                    [home_rates_by_node[node], g.rates_hz]
+                )
 
-    # CA1 interneurons track post-feedforward CA1, then inhibit CA1.
+    # Local interneurons track post-feedforward home principals, then inhibit them.
+    int_seed = 77
     for spec in HIPPOCAMPAL_RIA_B_POPULATIONS:
-        if spec["ratinabox_class"] != "CA1_Interneurons_synthetic":
+        if spec["ratinabox_class"] not in (
+            "Interneurons_synthetic",
+            "CA1_Interneurons_synthetic",  # legacy
+        ):
             continue
         n = population_count(spec, rp)
         if n <= 0:
             continue
-        int_rates = _compute_interneuron_rates(behavior, n, config, ca1_pyr_rates)
+        home_node = str(spec.get("home_node") or "CA1")
+        home_rates = home_rates_by_node.get(home_node)
+        int_rates = _compute_interneuron_rates(
+            behavior,
+            n,
+            config,
+            home_rates,
+            cell_type=str(spec["cell_type"]),
+            seed_offset=int_seed,
+        )
+        int_seed += 17
         if spec["dynamics"].get("ripple"):
-            w_ripple = float(config.rate_params.get("CA1_int", {}).get("w_ripple", 0.3))
-            amp = float(config.rate_params.get("CA1_int", {}).get("amplitude_hz", 4.0))
+            int_rp = _int_rate_params(config, str(spec["cell_type"]))
+            w_ripple = float(int_rp.get("w_ripple", 0.3))
+            amp = float(int_rp.get("amplitude_hz", 4.0))
             int_rates = int_rates + w_ripple * amp * global_features["ripple"][None, :]
             int_rates = np.maximum(int_rates, 0.0)
         groups.append(RiaBGroup(
@@ -418,9 +456,10 @@ def simulate_ratinabox_neural_activity(
             dynamics=spec["dynamics"],
         ))
 
-    # Second pass: INT→CA1 inhibition after interneurons exist.
-    int_meta = apply_int_to_ca1_inhibition(groups, ratinabox_params=rp)
-    ff_meta["int_to_ca1"] = int_meta
+    # Second pass: local INT→home inhibition after interneurons exist.
+    int_meta = apply_local_int_inhibition(groups, ratinabox_params=rp)
+    ff_meta["local_int_inhibition"] = int_meta
+    ff_meta["int_to_ca1"] = int_meta  # legacy mirror for older viz readers
 
     if not groups:
         raise RuntimeError("No RatInABox neural groups could be created.")

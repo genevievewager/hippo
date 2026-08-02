@@ -1,8 +1,11 @@
 """Publication multi-panel Isomap / latent-geometry figures (Figs 6–8).
 
-Fig 6 is a suite: one dense page per recovered behavioral feature, with every
-embedding mode present in the sorted comparison at that mode's best-performing
-window for decoding the colored variable.
+Default latent-geometry suite: one page per recovered latent variable, with
+every embedding mode colored by that variable
+(``fig_latent_geometry_<feature>.png``).
+
+Pass ``compact=True`` to ``plot_fig_latent_geometry`` for a 2-page summary
+(position page + other-features overview).
 
 Gracefully annotates empty-state panels when a mode/transform is unavailable.
 """
@@ -26,9 +29,16 @@ from visualization.publication_decoding_plots import (
     _read_csv,
     load_comparison_metrics,
 )
-from visualization.publication_style import legend_below, legend_outside, panel_label, save_pub_figure
+from visualization.publication_style import (
+    apply_publication_theme,
+    figure_legend_below,
+    legend_below,
+    legend_outside,
+    panel_label,
+    save_pub_figure,
+)
 
-sns.set_theme(style="ticks", context="paper", font_scale=1.0)
+apply_publication_theme()
 
 MAX_EMBED_POINTS = 2500
 
@@ -47,7 +57,7 @@ EMBEDDING_MODE_ORDER = (
 
 # One page per recovered / color feature (sorted-spike deployable view).
 COLOR_FEATURES: tuple[tuple[str, str], ...] = (
-    ("position", "Position (x→hue, y→brightness)"),
+    ("position", "Position"),
     ("speed", "Speed"),
     ("acceleration", "Acceleration"),
     ("head_direction", "Head direction"),
@@ -72,6 +82,41 @@ def _find_transform_dir(comparison_dir: Path, prefixes: tuple[str, ...]) -> Path
     return metas[0].parent
 
 
+def _mode_column(metrics: pd.DataFrame) -> str | None:
+    """Column with embedding-mode labels.
+
+    Newer decoder runs keep ``feature_type='counts'`` and put modes in
+    ``feature_mode``; older runs store modes directly in ``feature_type``.
+    """
+    has_mode = "feature_mode" in metrics.columns
+    has_type = "feature_type" in metrics.columns
+    if has_mode and has_type:
+        modes = {str(m) for m in metrics["feature_mode"].dropna().unique()}
+        types = {str(m) for m in metrics["feature_type"].dropna().unique()}
+        return "feature_mode" if len(modes) > len(types) else "feature_type"
+    if has_mode:
+        return "feature_mode"
+    if has_type:
+        return "feature_type"
+    return None
+
+
+def _row_embedding_mode(row: pd.Series) -> str:
+    """Embedding mode label for one metrics row (schema-tolerant)."""
+    if "feature_mode" in getattr(row, "index", []):
+        fm = row.get("feature_mode")
+        if pd.notna(fm):
+            text = str(fm).strip()
+            if text and text.lower() not in {"nan", "none"}:
+                return text
+    ft = row.get("feature_type")
+    if pd.notna(ft):
+        text = str(ft).strip()
+        if text and text.lower() not in {"nan", "none"}:
+            return text
+    return ""
+
+
 def _resolve_transform_dir(
     experiment_dir: Path,
     row: pd.Series,
@@ -94,7 +139,7 @@ def _resolve_transform_dir(
             if c.exists():
                 return c
 
-    feature = str(row.get("feature_type", ""))
+    feature = _row_embedding_mode(row) or str(row.get("feature_type", ""))
     w = float(row.get("decode_window_s", 0.25))
     w_ms = int(round(w * 1000))
     k = row.get("manifold_n_components")
@@ -141,8 +186,11 @@ def _best_row_for_mode_target(
     df = metrics.copy()
     if "spike_source" in df.columns:
         df = df[df["spike_source"].astype(str) == "sorted"]
+    mode_col = _mode_column(df)
+    if mode_col is None:
+        return None
     df = df[
-        (df["feature_type"].astype(str) == feature_mode)
+        (df[mode_col].astype(str) == feature_mode)
         & (df["target_name"].astype(str) == target)
     ]
     if df.empty:
@@ -152,12 +200,13 @@ def _best_row_for_mode_target(
 
 
 def _modes_present(metrics: pd.DataFrame) -> list[str]:
-    if metrics.empty or "feature_type" not in metrics.columns:
+    mode_col = _mode_column(metrics)
+    if metrics.empty or mode_col is None:
         return []
     df = metrics
     if "spike_source" in df.columns:
         df = df[df["spike_source"].astype(str) == "sorted"]
-    present = sorted({str(m) for m in df["feature_type"].dropna().unique()})
+    present = sorted({str(m) for m in df[mode_col].dropna().unique()})
     ordered = [m for m in EMBEDDING_MODE_ORDER if m in present]
     ordered += [m for m in present if m not in ordered]
     return ordered
@@ -223,11 +272,14 @@ def _load_heldout_embedding(
         if Z.shape[1] < 2:
             Z = np.column_stack([Z[:, 0], np.zeros(len(Z))])
         elif Z.shape[1] > 2:
-            # Identity count features: project to 2D for display only.
-            # Ordered manifold embeddings (PCA/Isomap): keep leading two axes.
+            # Display-only 2D view. Never fit/persist a decoder or manifold model.
+            # Ordered manifold embeddings: keep leading two axes. For raw counts /
+            # rates, use an in-memory SVD projection (figures/ only; not saved under
+            # decoder_comparison/ or models/).
             if name.startswith("counts") or name.startswith("rates"):
-                from sklearn.decomposition import PCA
-                Z = PCA(n_components=2, random_state=0).fit_transform(Z)
+                Zc = Z - np.mean(Z, axis=0, keepdims=True)
+                _, _, vt = np.linalg.svd(Zc, full_matrices=False)
+                Z = Zc @ vt[:2].T
             else:
                 Z = Z[:, :2]
         beh = aligned.iloc[np.where(mask)[0]].reset_index(drop=True)
@@ -262,7 +314,23 @@ def _rgb_from_xy(x: np.ndarray, y: np.ndarray) -> np.ndarray:
     return out
 
 
-def _scatter_latent(ax, Z: np.ndarray, color, *, cmap="viridis", label: str = "") -> None:
+def _scatter_latent(
+    ax,
+    Z: np.ndarray,
+    color,
+    *,
+    cmap="viridis",
+    label: str = "",
+    show_colorbar: bool = True,
+    show_legend: bool = True,
+    vmin: float | None = None,
+    vmax: float | None = None,
+) -> dict | None:
+    """Scatter latent coords; optionally omit per-panel colorbar/legend.
+
+    Returns a small dict describing the color mapping so callers can draw a
+    single shared legend / colorbar for a multi-panel figure.
+    """
     is_series = isinstance(color, pd.Series)
     categorical = False
     if is_series:
@@ -284,30 +352,42 @@ def _scatter_latent(ax, Z: np.ndarray, color, *, cmap="viridis", label: str = ""
             plt.Line2D([0], [0], marker="o", color="w", markerfacecolor=lut[u], markersize=6, label=u)
             for u in uniq[:8]
         ]
-        legend_below(ax, handles=handles, labels=[h.get_label() for h in handles], ncol=min(3, len(handles)), fontsize=6)
-    else:
-        vals = np.asarray(color, dtype=float)
-        sc = ax.scatter(Z[:, 0], Z[:, 1], c=vals, s=4, cmap=cmap, alpha=0.65)
+        labels = [h.get_label() for h in handles]
+        if show_legend:
+            legend_below(ax, handles=handles, labels=labels, ncol=min(3, len(handles)))
+        ax.set_xlabel("z₁")
+        ax.set_ylabel("z₂")
+        sns.despine(ax=ax)
+        return {"kind": "categorical", "handles": handles, "labels": labels, "label": label}
+
+    vals = np.asarray(color, dtype=float)
+    sc = ax.scatter(
+        Z[:, 0], Z[:, 1], c=vals, s=4, cmap=cmap, alpha=0.65,
+        vmin=vmin, vmax=vmax,
+    )
+    if show_colorbar:
         plt.colorbar(sc, ax=ax, fraction=0.046, pad=0.04, label=label)
     ax.set_xlabel("z₁")
     ax.set_ylabel("z₂")
     sns.despine(ax=ax)
+    return {"kind": "continuous", "mappable": sc, "label": label}
 
 
-def _scatter_position_2d(ax, Z: np.ndarray, beh: pd.DataFrame) -> None:
+def _scatter_position_2d(ax, Z: np.ndarray, beh: pd.DataFrame, *, annotate: bool = True) -> dict | None:
     if "x" not in beh.columns or "y" not in beh.columns:
         color = beh["x"] if "x" in beh.columns else np.arange(len(beh))
-        _scatter_latent(ax, Z, color, label="position")
-        return
+        return _scatter_latent(ax, Z, color, label="position", show_colorbar=annotate)
     rgba = _rgb_from_xy(beh["x"].to_numpy(), beh["y"].to_numpy())
     ax.scatter(Z[:, 0], Z[:, 1], c=rgba, s=4, alpha=0.7)
     ax.set_xlabel("z₁")
     ax.set_ylabel("z₂")
-    ax.text(
-        0.02, 0.98, "x→hue, y→brightness",
-        transform=ax.transAxes, va="top", ha="left", fontsize=6, color="0.25",
-    )
+    if annotate:
+        ax.text(
+            0.02, 0.98, "x→hue, y→brightness",
+            transform=ax.transAxes, va="top", ha="left", fontsize=8, color="0.25",
+        )
     sns.despine(ax=ax)
+    return {"kind": "position_xy", "label": "x→hue, y→brightness"}
 
 
 def _color_for_feature(beh: pd.DataFrame, feature: str):
@@ -336,6 +416,103 @@ def _panel_title(mode: str, row: pd.Series | None) -> str:
     if nn is not None and not (isinstance(nn, float) and np.isnan(nn)):
         parts.append(f"nn={int(nn)}")
     return "\n".join([parts[0], " ".join(parts[1:])]) if len(parts) > 1 else parts[0]
+
+
+def _robust_continuous_limits(values: np.ndarray) -> tuple[float, float]:
+    """Percentile color limits so rare spikes do not collapse contrast."""
+    finite = np.asarray(values, dtype=float)
+    finite = finite[np.isfinite(finite)]
+    if not finite.size:
+        return 0.0, 1.0
+    vmin = float(np.nanpercentile(finite, 1))
+    vmax = float(np.nanpercentile(finite, 99))
+    if not np.isfinite(vmin) or not np.isfinite(vmax) or vmin == vmax:
+        vmin = float(np.nanmin(finite))
+        vmax = float(np.nanmax(finite) + 1e-9)
+    return vmin, vmax
+
+
+def _as_continuous_color_array(color) -> np.ndarray | None:
+    """Float array for continuous coloring, or None if missing/categorical."""
+    if color is None or (isinstance(color, str) and color == "position_xy"):
+        return None
+    if isinstance(color, pd.Series):
+        if color.dtype == object or str(color.dtype) == "category" or pd.api.types.is_string_dtype(color):
+            return None
+        try:
+            arr = pd.to_numeric(color, errors="raise").to_numpy(dtype=float)
+        except (TypeError, ValueError):
+            return None
+    else:
+        try:
+            arr = np.asarray(color, dtype=float)
+        except (TypeError, ValueError):
+            return None
+    return arr
+
+
+def _global_color_limits(packs: list, feature: str) -> tuple[float | None, float | None]:
+    """Shared vmin/vmax across panels so one colorbar matches all embeddings.
+
+    Uses 1st–99th percentiles so rare spikes (e.g. acceleration outliers from
+    forward differences) do not collapse contrast across the typical range.
+    Values outside the limits still map to the colormap endpoints.
+    """
+    if feature == "position":
+        return None, None
+    vals: list[np.ndarray] = []
+    for _mode, _row, pack in packs:
+        if pack is None:
+            continue
+        Z, beh, _tag = pack
+        del Z
+        color = _color_for_feature(beh, feature)
+        arr = _as_continuous_color_array(color)
+        if color is not None and arr is None and not (isinstance(color, str) and color == "position_xy"):
+            return None, None  # categorical
+        if arr is None:
+            continue
+        finite = arr[np.isfinite(arr)]
+        if finite.size:
+            vals.append(finite)
+    if not vals:
+        return None, None
+    return _robust_continuous_limits(np.concatenate(vals))
+
+
+def _add_shared_color_guide(fig, axes: list, color_info: dict | None, *, feature_title: str) -> None:
+    """Draw one shared colorbar / categorical legend / position note.
+
+    Continuous colorbars use a dedicated figure axes so ``colorbar(ax=...)``
+    does not steal vertical space and collapse the A–C / D–F gap.
+    """
+    if not color_info or not axes:
+        return
+    kind = color_info.get("kind")
+    if kind == "continuous" and color_info.get("mappable") is not None:
+        # Fixed right-hand strip; do not resize the panel GridSpec.
+        cax = fig.add_axes([0.90, 0.18, 0.018, 0.62])
+        cbar = fig.colorbar(color_info["mappable"], cax=cax)
+        cbar.set_label(feature_title)
+    elif kind == "categorical" and color_info.get("handles"):
+        # Sit fully below bottom-row axis labels; enlarge for readability.
+        # Negative figure y keeps panel GridSpec / rect dimensions unchanged.
+        figure_legend_below(
+            fig,
+            color_info["handles"],
+            color_info["labels"],
+            ncol=min(4, max(len(color_info["handles"]), 1)),
+            y=-0.06,
+            title=feature_title,
+            fontsize=14,
+            title_fontsize=14,
+            markerscale=2.2,
+        )
+    elif kind == "position_xy":
+        fig.text(
+            0.5, 0.01, "Color: x→hue, y→brightness",
+            ha="center", va="bottom", fontsize=9, color="0.35",
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -382,28 +559,224 @@ def plot_fig_latent_geometry_for_feature(
     n = len(packs)
     cols = min(3, n)
     rows_n = int(np.ceil(n / cols))
-    fig = plt.figure(figsize=(3.4 * cols + 0.6, 2.9 * rows_n + 0.7))
-    gs = GridSpec(rows_n, cols, figure=fig, hspace=0.42, wspace=0.32)
+    # Modest spacer between panel rows: clear of labels, but keep A–C / D–F close.
+    height_ratios: list[float] = []
+    for ri in range(rows_n):
+        height_ratios.append(1.0)
+        if ri < rows_n - 1:
+            height_ratios.append(0.28)
+    fig = plt.figure(figsize=(3.5 * cols + 1.4, 3.4 * rows_n + 0.9))
+    gs = GridSpec(
+        len(height_ratios), cols, figure=fig,
+        height_ratios=height_ratios, hspace=0.05, wspace=0.28,
+    )
+
+    vmin, vmax = _global_color_limits(packs, feature)
+    axes: list = []
+    color_info: dict | None = None
+    cmap = "hsv" if feature == "head_direction" else (
+        "magma" if feature in ("speed", "acceleration") else "viridis"
+    )
 
     for i, (mode, row, pack) in enumerate(packs):
         r, c = divmod(i, cols)
-        ax = fig.add_subplot(gs[r, c])
+        gs_row = r * 2  # skip spacer rows
+        ax = fig.add_subplot(gs[gs_row, c])
+        axes.append(ax)
         title = _panel_title(mode, row)
         if pack is None:
             _empty_panel(ax, f"{mode}\nunavailable")
         else:
             Z, beh, tag = pack
+            del tag
             color = _color_for_feature(beh, feature)
             if isinstance(color, str) and color == "position_xy":
-                _scatter_position_2d(ax, Z, beh)
+                info = _scatter_position_2d(ax, Z, beh, annotate=False)
             elif color is None:
                 _empty_panel(ax, f"no {feature}\nin behavior")
+                info = None
+            else:
+                info = _scatter_latent(
+                    ax, Z, color, cmap=cmap, label=feature,
+                    show_colorbar=False, show_legend=False,
+                    vmin=vmin, vmax=vmax,
+                )
+            if color_info is None and info is not None:
+                color_info = info
+            ax.set_title(title, fontsize=8, pad=6)
+        panel_label(ax, chr(ord("A") + i))
+
+    for j in range(n, rows_n * cols):
+        r, c = divmod(j, cols)
+        ax = fig.add_subplot(gs[r * 2, c])
+        ax.axis("off")
+
+    _add_shared_color_guide(fig, axes, color_info, feature_title=feature_title)
+
+    fig.suptitle(
+        f'Latent geometry colored by "{feature_title}"',
+        fontsize=11,
+        y=0.98,
+    )
+    stem = f"fig_latent_geometry_{feature}"
+    bottom = 0.10 if (color_info or {}).get("kind") in {"categorical", "position_xy"} else 0.06
+    right = 0.86 if (color_info or {}).get("kind") == "continuous" else 0.96
+    return save_pub_figure(
+        fig, out_dir / f"{stem}.png", dpi=FIGURE_DPI,
+        rect=(0.08, bottom, right, 0.90),
+        hspace=0.20,
+        wspace=0.30,
+        pad_inches=0.35,
+    )
+
+
+def plot_fig_latent_geometry(
+    experiment_dir: Path,
+    figures_dir: Path | None = None,
+    *,
+    compact: bool = False,
+) -> Path | None:
+    """Latent-geometry suite for the PDF.
+
+    Default ``compact=False`` writes one page per recovered feature
+    (``fig_latent_geometry_<feature>.png``): every embedding mode colored by
+    that variable at its best causal window.
+
+    Set ``compact=True`` for a 2-page summary:
+      - ``fig_latent_geometry_position.png`` — all embeddings colored by position
+      - ``fig_latent_geometry_features.png`` — remaining features in a compact grid
+        (best embedding mode per feature)
+    """
+    experiment_dir = Path(experiment_dir)
+    figures_dir = Path(figures_dir) if figures_dir else experiment_dir / "figures"
+    out_dir = figures_dir / FIGURE_SUBDIR_DECODER
+    out_dir.mkdir(parents=True, exist_ok=True)
+
+    if not compact:
+        written: list[Path] = []
+        for feature, title in COLOR_FEATURES:
+            try:
+                path = plot_fig_latent_geometry_for_feature(
+                    experiment_dir, feature, title, figures_dir=figures_dir,
+                )
+                if path is not None:
+                    written.append(path)
+                    print(f"  wrote {path.relative_to(figures_dir)}")
+            except Exception as exc:
+                print(f"  warning: latent geometry [{feature}] skipped ({exc})")
+        (out_dir / "fig_latent_geometry.png").unlink(missing_ok=True)
+        (out_dir / "fig_latent_geometry_features.png").unlink(missing_ok=True)
+        if not written:
+            return None
+        return next(
+            (p for p in written if p.stem == "fig_latent_geometry_position"),
+            written[0],
+        )
+
+    # Compact suite ---------------------------------------------------------
+    try:
+        pos = plot_fig_latent_geometry_for_feature(
+            experiment_dir, "position", "Position",
+            figures_dir=figures_dir,
+        )
+        if pos is not None:
+            print(f"  wrote {pos.relative_to(figures_dir)}")
+    except Exception as exc:
+        print(f"  warning: latent geometry [position] skipped ({exc})")
+        pos = None
+
+    other = [(f, t) for f, t in COLOR_FEATURES if f != "position"]
+    overview = _plot_fig_latent_geometry_features_overview(
+        experiment_dir, other, figures_dir=figures_dir,
+    )
+    if overview is not None:
+        print(f"  wrote {overview.relative_to(figures_dir)}")
+
+    # Remove per-feature pages from prior full suites.
+    for feature, _ in COLOR_FEATURES:
+        if feature == "position":
+            continue
+        (out_dir / f"fig_latent_geometry_{feature}.png").unlink(missing_ok=True)
+    (out_dir / "fig_latent_geometry.png").unlink(missing_ok=True)
+
+    return pos or overview
+
+
+def _plot_fig_latent_geometry_features_overview(
+    experiment_dir: Path,
+    features: list[tuple[str, str]],
+    *,
+    figures_dir: Path,
+) -> Path | None:
+    """One page: each non-position feature colored on its best embedding."""
+    experiment_dir = Path(experiment_dir)
+    figures_dir = Path(figures_dir)
+    out_dir = figures_dir / FIGURE_SUBDIR_DECODER
+    out_dir.mkdir(parents=True, exist_ok=True)
+
+    metrics = load_comparison_metrics(experiment_dir, prefer="sorted")
+    if metrics.empty:
+        return None
+    if "spike_source" in metrics.columns:
+        metrics = metrics[metrics["spike_source"].astype(str) == "sorted"].copy()
+
+    modes = _modes_present(metrics)
+    if not modes:
+        return None
+    # Prefer a global linear mode when available for a consistent overview grid.
+    prefer = [m for m in ("global_pca", "region_pca", "layer_pca") if m in modes]
+    default_mode = prefer[0] if prefer else modes[0]
+
+    n = len(features)
+    if n == 0:
+        return None
+    cols = 4
+    rows_n = int(np.ceil(n / cols))
+    fig = plt.figure(figsize=(3.3 * cols + 0.8, 3.3 * rows_n + 0.9))
+    gs = GridSpec(rows_n, cols, figure=fig, hspace=0.75, wspace=0.32)
+
+    for i, (feature, title) in enumerate(features):
+        r, c = divmod(i, cols)
+        ax = fig.add_subplot(gs[r, c])
+        target = feature
+        row = _best_row_for_mode_target(metrics, feature_mode=default_mode, target=target)
+        if row is None:
+            row = _best_row_for_mode_target(metrics, feature_mode=default_mode, target="position")
+        if row is None:
+            # Fall back across modes.
+            for mode in modes:
+                row = _best_row_for_mode_target(metrics, feature_mode=mode, target=target)
+                if row is not None:
+                    break
+        if row is None:
+            _empty_panel(ax, f"{feature}\nunavailable")
+            panel_label(ax, chr(ord("A") + i))
+            continue
+        tdir = _resolve_transform_dir(experiment_dir, row)
+        pack = _load_heldout_embedding(experiment_dir, tdir) if tdir is not None else None
+        if pack is None:
+            _empty_panel(ax, f"{feature}\nunavailable")
+        else:
+            Z, beh, _tag = pack
+            color = _color_for_feature(beh, feature)
+            mode = _row_embedding_mode(row) or default_mode
+            # Overview page: each panel is a different feature, so keep per-panel guides.
+            if isinstance(color, str) and color == "position_xy":
+                _scatter_position_2d(ax, Z, beh, annotate=True)
+            elif color is None:
+                _empty_panel(ax, f"no {feature}")
             else:
                 cmap = "hsv" if feature == "head_direction" else (
                     "magma" if feature in ("speed", "acceleration") else "viridis"
                 )
-                _scatter_latent(ax, Z, color, cmap=cmap, label=feature)
-            ax.set_title(title, fontsize=8)
+                arr = _as_continuous_color_array(color)
+                vmin = vmax = None
+                if arr is not None:
+                    vmin, vmax = _robust_continuous_limits(arr)
+                _scatter_latent(
+                    ax, Z, color, cmap=cmap, label=feature, vmin=vmin, vmax=vmax,
+                )
+            ax.set_title(f"{title}\n({mode})", fontsize=9)
         panel_label(ax, chr(ord("A") + i))
 
     for j in range(n, rows_n * cols):
@@ -412,53 +785,15 @@ def plot_fig_latent_geometry_for_feature(
         ax.axis("off")
 
     fig.suptitle(
-        f"Latent geometry — colored by {feature_title} (sorted / deployable)",
+        'Latent geometry colored by other behavioral features',
         fontsize=11,
-        y=0.995,
+        y=0.98,
     )
-    stem = f"fig_latent_geometry_{feature}"
     return save_pub_figure(
-        fig, out_dir / f"{stem}.png", dpi=FIGURE_DPI,
-        rect=(0.05, 0.06, 0.98, 0.93),
-    )
-
-
-def plot_fig_latent_geometry(
-    experiment_dir: Path,
-    figures_dir: Path | None = None,
-) -> Path | None:
-    """Fig 6 suite: one dense page per recovered feature across all embeddings.
-
-    Writes ``fig_latent_geometry_<feature>.png`` for each color feature.
-    The position page is the canonical Fig 6 stem; a legacy alias copy is
-    not written (it duplicated the position page in compiled PDFs).
-    """
-    experiment_dir = Path(experiment_dir)
-    figures_dir = Path(figures_dir) if figures_dir else experiment_dir / "figures"
-    out_dir = figures_dir / FIGURE_SUBDIR_DECODER
-    out_dir.mkdir(parents=True, exist_ok=True)
-
-    written: list[Path] = []
-    for feature, title in COLOR_FEATURES:
-        try:
-            path = plot_fig_latent_geometry_for_feature(
-                experiment_dir, feature, title, figures_dir=figures_dir,
-            )
-            if path is not None:
-                written.append(path)
-                print(f"  wrote {path.relative_to(figures_dir)}")
-        except Exception as exc:
-            print(f"  warning: latent geometry [{feature}] skipped ({exc})")
-
-    if not written:
-        return None
-
-    # Drop legacy alias if a prior run left a duplicate of the position page.
-    (out_dir / "fig_latent_geometry.png").unlink(missing_ok=True)
-
-    return next(
-        (p for p in written if p.stem == "fig_latent_geometry_position"),
-        written[0],
+        fig, out_dir / "fig_latent_geometry_features.png", dpi=FIGURE_DPI,
+        rect=(0.08, 0.08, 0.96, 0.90),
+        hspace=0.78,
+        wspace=0.35,
     )
 
 
@@ -479,8 +814,9 @@ def plot_fig_isomap_diagnostics(
     metrics = load_comparison_metrics(experiment_dir)
     iso = pd.DataFrame()
     if not metrics.empty:
-        if "feature_type" in metrics.columns:
-            iso = metrics[metrics["feature_type"].astype(str).str.contains("isomap", na=False)].copy()
+        mode_col = _mode_column(metrics)
+        if mode_col is not None:
+            iso = metrics[metrics[mode_col].astype(str).str.contains("isomap", na=False)].copy()
         if iso.empty and "manifold_type" in metrics.columns:
             iso = metrics[metrics["manifold_type"] == "isomap"].copy()
 
@@ -520,7 +856,7 @@ def plot_fig_isomap_diagnostics(
         if "graph_connected" in iso.columns:
             conn = iso.groupby("n_neighbors")["graph_connected"].mean()
             ax.plot(conn.index, conn.values, marker="s", lw=1.0, color="C2", label="frac connected")
-            legend_below(ax, ncol=1, fontsize=6)
+            legend_below(ax, ncol=1)
         ax.set_xlabel("n_neighbors")
         ax.set_ylabel("Largest component fraction")
         ax.set_ylim(0, 1.05)
@@ -575,14 +911,14 @@ def plot_fig_isomap_diagnostics(
             return
         ax.set_xlabel("n_neighbors")
         ax.set_ylabel("Preservation metric")
-        legend_below(ax, ncol=2, fontsize=6)
+        legend_below(ax, ncol=2)
         sns.despine(ax=ax)
 
     _diag_or_empty(ax_d, "D", draw_geo)
 
     return save_pub_figure(
         fig, out_dir / "fig_isomap_diagnostics.png", dpi=FIGURE_DPI,
-        rect=(0.08, 0.10, 0.98, 0.94),
+        rect=(0.10, 0.16, 0.96, 0.94),
     )
 
 
@@ -605,20 +941,22 @@ def plot_fig_isomap_story(
         experiment_dir / "latency_profiling" / "isomap_teacher_vs_distilled_latency.csv"
     )
 
-    fig = plt.figure(figsize=(10.5, 7.2))
-    gs = GridSpec(2, 2, figure=fig, hspace=0.40, wspace=0.32)
+    fig = plt.figure(figsize=(11.0, 7.8))
+    gs = GridSpec(2, 2, figure=fig, hspace=0.50, wspace=0.45)
 
     modes = ("counts", "global_pca", "global_isomap", "global_isomap_distilled")
+    mode_col = _mode_column(metrics)
+    mode_values = set(metrics[mode_col].astype(str)) if mode_col else set()
     has_iso = (
         not metrics.empty
-        and "feature_type" in metrics.columns
-        and any(m in set(metrics["feature_type"].astype(str)) for m in ("global_isomap", "global_isomap_distilled"))
+        and mode_col is not None
+        and any(m in mode_values for m in ("global_isomap", "global_isomap_distilled"))
     )
 
     # A — best score by representation × target (selected targets)
     ax_a = fig.add_subplot(gs[0, 0])
-    if not metrics.empty and "feature_type" in metrics.columns:
-        present = [m for m in modes if m in set(metrics["feature_type"])]
+    if not metrics.empty and mode_col is not None:
+        present = [m for m in modes if m in mode_values]
         targets = [t for t in ("position", "speed", "spatial_context", "head_direction")
                    if t in set(metrics["target_name"])]
         rows = []
@@ -626,17 +964,14 @@ def plot_fig_isomap_story(
             sub_t = metrics[metrics["target_name"] == target]
             metric = _metric_for_target(sub_t, target)
             for mode in present:
-                sub = sub_t[sub_t["feature_type"] == mode]
+                sub = sub_t[sub_t[mode_col].astype(str) == mode]
                 row = _best_row(sub, metric)
                 if row is None:
                     continue
                 val = float(row[metric])
-                # Convert errors to a "higher is better" display via negation for mixed plot —
-                # keep raw value and annotate metric in title.
                 rows.append({"target": target, "feature": mode, "value": val, "metric": metric})
         rdf = pd.DataFrame(rows)
         if not rdf.empty:
-            # Split continuous error targets vs accuracy for clarity: normalize per target
             for target in rdf["target"].unique():
                 mask = rdf["target"] == target
                 metric = rdf.loc[mask, "metric"].iloc[0]
@@ -650,35 +985,33 @@ def plot_fig_isomap_story(
             sns.barplot(data=rdf, x="target", y="norm", hue="feature", ax=ax_a)
             ax_a.set_ylabel("Normalized best (1=best)")
             ax_a.set_xlabel("")
-            legend_outside(ax_a, fontsize=6, ncol=1, bbox=(1.02, 1.0))
-            ax_a.tick_params(axis="x", rotation=20, labelsize=7)
+            legend_outside(ax_a, ncol=1, bbox=(1.05, 1.0))
+            ax_a.tick_params(axis="x", rotation=20, labelsize=8)
             ax_a.set_ylim(0, 1.15)
             sns.despine(ax=ax_a)
         else:
             _empty_panel(ax_a, "No representation scores")
     else:
         _empty_panel(ax_a, "No comparison metrics")
-    # Empty-state note goes in the title, not over bars
     panel_label(ax_a, "A")
 
     # B — decoder family × representation for position (or first target)
     ax_b = fig.add_subplot(gs[0, 1])
-    if not metrics.empty and "feature_type" in metrics.columns:
+    if not metrics.empty and mode_col is not None:
         target = "position" if "position" in set(metrics["target_name"]) else metrics["target_name"].iloc[0]
         sub = metrics[metrics["target_name"] == target]
-        present = [m for m in modes if m in set(sub["feature_type"])]
+        present = [m for m in modes if m in set(sub[mode_col].astype(str))]
         metric = _metric_for_target(sub, target)
-        pivot = sub[sub["feature_type"].isin(present)].pivot_table(
-            index="decoder_name", columns="feature_type", values=metric,
+        pivot = sub[sub[mode_col].astype(str).isin(present)].pivot_table(
+            index="decoder_name", columns=mode_col, values=metric,
             aggfunc="min" if _is_lower_better(metric) else "max",
         )
         if not pivot.empty:
-            # Reorder columns
             cols = [c for c in modes if c in pivot.columns]
             pivot = pivot[cols]
             sns.heatmap(pivot, ax=ax_b, annot=True, fmt=".2f", cmap="viridis",
                         cbar_kws={"label": metric})
-            ax_b.tick_params(labelsize=6)
+            ax_b.tick_params(labelsize=8)
         else:
             _empty_panel(ax_b, "No decoder×feature matrix")
     else:
@@ -710,12 +1043,12 @@ def plot_fig_isomap_story(
 
     # D — distilled vs classic accuracy if both feature modes present
     ax_d = fig.add_subplot(gs[1, 1])
-    if has_iso and not metrics.empty:
+    if has_iso and not metrics.empty and mode_col is not None:
         rows = []
         for mode in ("global_isomap", "global_isomap_distilled"):
-            if mode not in set(metrics["feature_type"]):
+            if mode not in mode_values:
                 continue
-            for target, g in metrics[metrics["feature_type"] == mode].groupby("target_name"):
+            for target, g in metrics[metrics[mode_col].astype(str) == mode].groupby("target_name"):
                 metric = _metric_for_target(g, target)
                 row = _best_row(g, metric)
                 if row is None:
@@ -728,7 +1061,6 @@ def plot_fig_isomap_story(
                 })
         rdf = pd.DataFrame(rows)
         if not rdf.empty and rdf["mode"].nunique() >= 2:
-            # Normalize per target
             for target in rdf["target"].unique():
                 mask = rdf["target"] == target
                 metric = rdf.loc[mask, "metric"].iloc[0]
@@ -742,12 +1074,12 @@ def plot_fig_isomap_story(
             sns.barplot(data=rdf, x="target", y="norm", hue="mode", ax=ax_d)
             ax_d.set_ylabel("Normalized best")
             ax_d.tick_params(axis="x", rotation=25, labelsize=7)
-            legend_below(ax_d, ncol=2, fontsize=6)
+            legend_below(ax_d, ncol=2)
             sns.despine(ax=ax_d)
         elif not rdf.empty:
             sns.barplot(data=rdf, x="target", y="value", hue="mode", ax=ax_d)
             ax_d.tick_params(axis="x", rotation=25, labelsize=7)
-            legend_below(ax_d, ncol=2, fontsize=6)
+            legend_below(ax_d, ncol=2)
             sns.despine(ax=ax_d)
         else:
             _empty_panel(ax_d, "No Isomap accuracy rows")
@@ -757,7 +1089,7 @@ def plot_fig_isomap_story(
 
     return save_pub_figure(
         fig, out_dir / "fig_isomap_story.png", dpi=FIGURE_DPI,
-        rect=(0.08, 0.12, 0.98, 0.94),
+        rect=(0.10, 0.14, 0.82, 0.94),
     )
 
 
@@ -779,6 +1111,17 @@ def generate_publication_isomap_figures(
                 print(f"  wrote {path.relative_to(figures_dir)}")
         except Exception as exc:
             print(f"  warning: {fn.__name__} skipped ({exc})")
+
+    try:
+        from visualization.publication_decoder_geometry_plots import (
+            generate_publication_decoder_geometry_figures,
+        )
+
+        for path in generate_publication_decoder_geometry_figures(experiment_dir, figures_dir):
+            if path not in written:
+                written.append(path)
+    except Exception as exc:
+        print(f"  warning: decoder geometry skipped ({exc})")
 
     if cleanup_legacy:
         from visualization.publication_decoding_plots import _cleanup_legacy_pngs

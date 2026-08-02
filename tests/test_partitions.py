@@ -45,7 +45,10 @@ def _units(n_per_region: int = 8) -> pd.DataFrame:
 
 def test_available_partitions_includes_anatomical():
     avail = available_partitions()
-    for name in ("all_units", "subfield", "layer", "ca1_deep_superficial", "cell_class"):
+    for name in (
+        "all_units", "subfield", "layer", "ca1_deep_superficial",
+        "deep_superficial", "cell_class", "cell_type",
+    ):
         assert name in avail
 
 
@@ -79,6 +82,64 @@ def test_ca1_deep_superficial():
     assert any("superficial" in g for g in part.group_labels)
     for ids in part.group_labels.values():
         assert set(units.set_index("unit_id").loc[ids, "region"]) == {"CA1"}
+
+
+def test_deep_superficial_general_and_sub_ent():
+    rows = []
+    uid = 0
+    for region, layer, ct in [
+        ("subiculum", "deep", "Sub_bvc"),
+        ("subiculum", "superficial", "Sub_bvc"),
+        ("entorhinal_cortex", "deep", "MEC_grid"),
+        ("entorhinal_cortex", "superficial", "MEC_hd"),
+    ]:
+        for _ in range(6):
+            rows.append({
+                "unit_id": uid,
+                "cell_type": ct,
+                "region": region,
+                "layer": layer,
+                "channel": uid,
+                "depth_um": float(uid),
+                "place_x_cm": 0.0,
+                "place_y_cm": 0.0,
+                "hd_pref_rad": 0.0,
+                "rate_model": "custom",
+                "ratinabox_class": "PlaceCells",
+            })
+            uid += 1
+    units = normalize_unit_metadata(pd.DataFrame(rows))
+    # CA1-only partition should be empty
+    ca1_part = make_partition("ca1_deep_superficial").apply(units, min_units_per_group=5)
+    assert ca1_part.group_labels == {}
+    part = make_partition("deep_superficial").apply(units, min_units_per_group=5)
+    assert any(g.startswith("Subiculum_") for g in part.group_labels)
+    assert any(g.startswith("MEC_") for g in part.group_labels)
+
+
+def test_cell_type_partition_sub_ent():
+    rows = []
+    uid = 0
+    for ct, region in [("Sub_bvc", "subiculum"), ("MEC_grid", "entorhinal_cortex")]:
+        for _ in range(6):
+            rows.append({
+                "unit_id": uid,
+                "cell_type": ct,
+                "region": region,
+                "layer": "SUB" if ct == "Sub_bvc" else "ENT",
+                "channel": uid,
+                "depth_um": float(uid),
+                "place_x_cm": 0.0,
+                "place_y_cm": 0.0,
+                "hd_pref_rad": 0.0,
+                "rate_model": f"ratinabox_{ct}",
+                "ratinabox_class": ct,
+            })
+            uid += 1
+    units = normalize_unit_metadata(pd.DataFrame(rows))
+    part = make_partition("cell_type").apply(units, min_units_per_group=5)
+    assert "Sub_bvc" in part.group_labels
+    assert "MEC_grid" in part.group_labels
 
 
 def test_planned_partition_raises():

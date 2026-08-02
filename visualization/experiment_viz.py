@@ -17,6 +17,7 @@ from visualization.constants import (
     FIGURE_SUBDIR_NEURAL,
     FIGURE_SUBDIR_REPORT,
     FIGURE_SUBDIR_SORTING,
+    FIGURE_SUBDIR_TRAJECTORY,
 )
 from visualization.feature_plots import generate_feature_plots
 from visualization.load_outputs import load_simulation_outputs
@@ -65,6 +66,41 @@ def has_realtime_decoding(experiment_dir: Path) -> bool:
     return False
 
 
+def _regenerate_probe_trajectory(experiment_dir: Path, figures_dir: Path, data) -> None:
+    """Rewrite ``figures/trajectory/fig_probe_trajectory.png`` from saved anatomy."""
+    import json
+
+    import pandas as pd
+
+    from visualization.publication_trajectory_plots import (
+        generate_publication_trajectory_figures,
+    )
+
+    anatomy_path = Path(experiment_dir) / "anatomy_regions.csv"
+    if not anatomy_path.exists():
+        anatomy_path = Path(experiment_dir) / "trajectory" / "anatomy_regions_used.csv"
+    if not anatomy_path.exists():
+        return
+    anatomy = pd.read_csv(anatomy_path)
+    n_channels = 384
+    meta: dict = {}
+    summary_path = Path(experiment_dir) / "summary.json"
+    if summary_path.exists():
+        try:
+            summary = json.loads(summary_path.read_text())
+            n_channels = int(summary.get("n_channels", n_channels))
+            meta = summary.get("trajectory_meta") or {}
+        except (json.JSONDecodeError, TypeError, ValueError):
+            pass
+    generate_publication_trajectory_figures(
+        anatomy,
+        data.units,
+        figures_dir,
+        n_channels=n_channels,
+        meta=meta if isinstance(meta, dict) else {},
+    )
+
+
 def generate_simulation_figures(
     experiment_dir: Path,
     figures_dir: Path,
@@ -75,7 +111,7 @@ def generate_simulation_figures(
     Layout (figures root contains only subfolders + output.pdf)::
 
         figures/
-          behavior/   features/   neural/   sorting/   report/
+          trajectory/   behavior/   features/   neural/   sorting/   report/
           decoder_comparison/   realtime_decoding/   temporal_decoding/
           output.pdf
     """
@@ -92,6 +128,7 @@ def generate_simulation_figures(
     generate_report_figures(
         data, figures_dir / FIGURE_SUBDIR_REPORT, rate_bin_size=rate_bin_size,
     )
+    _regenerate_probe_trajectory(experiment_dir, figures_dir, data)
 
 
 def generate_experiment_figures(
@@ -110,6 +147,10 @@ def generate_experiment_figures(
     Never retrains decoders or recomputes comparison metrics. Only reads
     saved simulation / decoder outputs and writes under ``figures/``.
     """
+    from visualization.publication_style import enable_open_axes
+
+    enable_open_axes()
+
     experiment_dir = Path(experiment_dir)
     figures_dir = Path(figures_dir) if figures_dir is not None else experiment_dir / "figures"
     figures_dir.mkdir(parents=True, exist_ok=True)

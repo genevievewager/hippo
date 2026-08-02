@@ -29,42 +29,25 @@ def plot_deployable_selection_onepagers(
     experiment_dir: Path,
     figures_dir: Path | None = None,
 ) -> list[Path]:
-    """Write decoder×window heatmaps under decoder_comparison/ (sorted only).
+    """Clean retired deployable companion pages under decoder_comparison/.
 
-    The old blue-table winner onepager is intentionally not written: its
-    decoder×feature heatmaps duplicated ``fig_manifold_vs_spikes_onepager``.
+    Decoder × window heatmaps live in ``fig_decoder_x_window``; feature ×
+    window in ``fig_feature_x_window``. The old blue-table winner onepager is
+    also retired (duplicated ``fig_manifold_vs_spikes_onepager``).
     """
     experiment_dir = Path(experiment_dir)
     figures_dir = Path(figures_dir) if figures_dir is not None else experiment_dir / "figures"
-    from visualization.publication_decoding_plots import load_window_scores
-
-    scores = load_window_scores(experiment_dir)
-    if scores.empty:
-        return []
-    registry = None
-    for path in (
-        experiment_dir / "models" / "best_realtime_decoders.json",
-        experiment_dir / "deployment_decoder_selection" / "best_realtime_decoders.json",
-    ):
-        if path.exists():
-            with open(path) as f:
-                registry = json.load(f)
-            break
     out = figures_dir / "decoder_comparison"
     out.mkdir(parents=True, exist_ok=True)
-    winners = _registry_winners(registry)
-    _plot_decoder_window_heatmaps(scores, winners, out)
-    # Drop the retired blue-table onepager if a prior run left it behind.
     for stale in (
+        out / "fig_manifold_decoding.png",
+        out / "fig_deployable_decoder_x_window_heatmaps.png",
         out / "fig_deployable_winner_onepager.png",
         out / "deployable_winner_onepager.png",
+        out / "fig_manifold_decoder_window_threeway.png",
     ):
         stale.unlink(missing_ok=True)
-    written = []
-    path = out / "fig_deployable_decoder_x_window_heatmaps.png"
-    if path.exists():
-        written.append(path)
-    return written
+    return []
 
 
 def _plot_best_decoder_by_target(best: pd.DataFrame, out: Path) -> None:
@@ -412,98 +395,4 @@ def _plot_deployable_winner_onepager(
         y=0.995,
     )
     fig.savefig(out / "fig_deployable_winner_onepager.png", dpi=FIGURE_DPI, bbox_inches="tight")
-    plt.close(fig)
-
-    # Also write decoder × window heatmaps (best feature annotated) as a companion page
-    _plot_decoder_window_heatmaps(scores, winners, out)
-
-
-def _plot_decoder_window_heatmaps(
-    scores: pd.DataFrame,
-    winners: dict[str, dict],
-    out: Path,
-) -> None:
-    """Companion: decoder × window heatmaps; cell text = best feature."""
-    targets = list(winners.keys()) if winners else sorted(scores["target"].unique())
-    preferred = [
-        "position", "speed", "acceleration", "head_direction",
-        "distance_to_wall", "spatial_context", "movement_state", "wall_distance_bin",
-    ]
-    targets = [t for t in preferred if t in targets] + [
-        t for t in targets if t not in preferred
-    ]
-    # Restrict to realtime-compatible for deployable view of W search
-    rt = scores[scores.get("realtime_compatible", True) == True].copy()  # noqa: E712
-    if rt.empty:
-        rt = scores
-
-    n = len(targets)
-    cols = 4
-    rows = int(np.ceil(n / cols))
-    fig, axes = plt.subplots(rows, cols, figsize=(16, 2.6 * rows), squeeze=False)
-    for ax, target in zip(axes.ravel(), targets):
-        sub = rt[rt["target"] == target]
-        if sub.empty:
-            ax.axis("off")
-            continue
-        higher = bool(sub["higher_is_better"].iloc[0])
-        metric = str(sub["metric_name"].iloc[0])
-        decoders = sorted(sub["decoder"].unique())
-        windows = sorted(sub["causal_window_s"].unique())
-        mat = np.full((len(decoders), len(windows)), np.nan)
-        feat_ann = [["" for _ in windows] for _ in decoders]
-        for (dec, w), g in sub.groupby(["decoder", "causal_window_s"]):
-            di = decoders.index(str(dec))
-            wi = windows.index(float(w))
-            if higher:
-                idx = g["metric_value"].idxmax()
-            else:
-                idx = g["metric_value"].idxmin()
-            row = g.loc[idx]
-            mat[di, wi] = float(row["metric_value"])
-            feat_ann[di][wi] = _short(row["feature_mode"], 10)
-
-        display = mat if higher else -mat
-        finite = display[np.isfinite(display)]
-        if finite.size:
-            vmin, vmax = float(np.nanpercentile(finite, 5)), float(np.nanpercentile(finite, 95))
-            if vmin == vmax:
-                vmin, vmax = float(np.nanmin(finite)), float(np.nanmax(finite) + 1e-9)
-        else:
-            vmin, vmax = 0.0, 1.0
-        ax.imshow(display, aspect="auto", cmap="YlGn", vmin=vmin, vmax=vmax)
-        for di in range(len(decoders)):
-            for wi in range(len(windows)):
-                if np.isfinite(mat[di, wi]):
-                    ax.text(
-                        wi, di,
-                        f"{mat[di, wi]:.3g}\n{feat_ann[di][wi]}",
-                        ha="center", va="center", fontsize=5.2,
-                    )
-        if target in winners:
-            wcfg = winners[target]
-            wd = str(wcfg.get("selected_decoder", ""))
-            ww = float(wcfg.get("selected_causal_window_s", float("nan")))
-            if wd in decoders and ww in windows:
-                ax.add_patch(
-                    plt.Rectangle(
-                        (windows.index(ww) - 0.5, decoders.index(wd) - 0.5),
-                        1, 1, fill=False, edgecolor="#d4a017", linewidth=2.2,
-                    )
-                )
-        ax.set_xticks(np.arange(len(windows)))
-        ax.set_xticklabels([f"{w:.2g}" for w in windows], fontsize=6)
-        ax.set_yticks(np.arange(len(decoders)))
-        ax.set_yticklabels([_short(d, 14) for d in decoders], fontsize=6)
-        ax.set_xlabel("W (s)", fontsize=7)
-        ax.set_title(f"{target} ({metric})", fontsize=8)
-
-    for ax in axes.ravel()[n:]:
-        ax.axis("off")
-    fig.suptitle(
-        "Deployable view: decoder × window (cell = best realtime feature @ that W; gold = selected)",
-        fontsize=12,
-    )
-    fig.tight_layout()
-    fig.savefig(out / "fig_deployable_decoder_x_window_heatmaps.png", dpi=FIGURE_DPI)
     plt.close(fig)

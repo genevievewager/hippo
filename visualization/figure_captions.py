@@ -14,23 +14,18 @@ from pathlib import Path
 CAPTIONS: dict[str, str] = {
     # ---- Behavior / simulation ----
     "fig_behavior_overview": (
-        "Open-field locomotor behavior. "
-        "(A) Trajectory with start (green) and end (red). "
-        "(B) Same trajectory colored by elapsed time. "
-        "(C) Spatial occupancy (dwell time per bin). "
-        "(D) Mean locomotor speed mapped onto arena coordinates."
+        "Open-field locomotor behavior (absorbed into fig_behavior_dynamics)."
     ),
     "fig_behavior_dynamics": (
-        "Locomotor and postural dynamics over the session. "
-        "(A) Instantaneous speed. "
-        "(B) Head-direction angle. "
-        "(C) Distance to the nearest wall. "
-        "(D) Z-scored distributions of speed, head direction, wall distance, and acceleration."
+        "Open-field locomotor behavior and session covariates. "
+        "(A) Trajectory colored by elapsed time, with start (green) and end (red). "
+        "(B) Mean locomotor speed mapped onto arena coordinates. "
+        "(C) Spatial occupancy (dwell time per bin). "
+        "(D–I) Behavioral covariates over time: x, y, speed, head direction, "
+        "wall distance, and acceleration (when present)."
     ),
     "fig_behavior_features": (
-        "Behavioral covariates that drive RatInABox populations and decoding "
-        "targets over the session, including position, speed, heading, wall "
-        "distance, acceleration, and oscillatory channels when present."
+        "Behavioral covariates (absorbed into fig_behavior_dynamics)."
     ),
     "fig_neural_drivers": (
         "Neural driver features by cell class. "
@@ -85,35 +80,114 @@ CAPTIONS: dict[str, str] = {
         "proprioceptive covariates."
     ),
     "simulation_report_summary": (
-        "Composite summary of the hippocampal Neuropixels simulation: "
-        "trajectory and occupancy (A–B), speed (C), population rate (D), "
-        "ground-truth spike raster subset (E), mean rate by cell class (F), "
-        "and probe geometry through hippocampal regions (G)."
+        "Legacy composite report; panels absorbed into fig_behavior_dynamics, "
+        "fig_population_activity / fig_population_structure, "
+        "fig_sorting_summary, and fig_probe_trajectory."
+    ),
+    # ---- Probe trajectory / insertion anatomy ----
+    "probe_trajectory_regions": (
+        "Neuropixels probe path through brain regions by depth. "
+        "Colored bands mark crossed structures; channel markers indicate "
+        "site assignment along the shank. Visual cortex may appear but is "
+        "excluded from hippocampal decoding by default."
+    ),
+    "probe_areas_nte_style": (
+        "Neuropixels Trajectory Explorer–style probe-areas strip summarizing "
+        "region identity along the recorded shank."
+    ),
+    "probe_trajectory_3d": (
+        "Approximate 3D probe trajectory in coordinate space (not a full "
+        "Allen CCF mesh unless NTE endpoints are imported)."
+    ),
+    "channel_region_map": (
+        "Channel index mapped onto anatomical regions along the probe depth, "
+        "showing which sites fall in each crossed band."
+    ),
+    "unit_count_by_region": (
+        "Number of simulated units assigned to each anatomical region crossed "
+        "by the active probe trajectory."
+    ),
+    "unit_count_by_cell_type": (
+        "Number of simulated units by RatInABox cell class after trajectory-"
+        "informed capture."
+    ),
+    "unit_count_by_imported_region": (
+        "Number of simulated units by imported anatomy region (legacy alias)."
     ),
     # ---- Neural / sorting ----
+    "fig_circuit_feedforward": (
+        "Trisynaptic / entorhinal feedforward circuit. "
+        "Directed graph of circuit nodes used as Stage-C population drives. "
+        "Each node shows name, captured unit count and session-mean rate, "
+        "pooled cell classes, and circuit role. "
+        "INT is one inhibitory node aggregating all local INT_* pools; "
+        "dashed fan-out edges carry region-specific inhibition weights from "
+        "neural_backend_metadata (excitatory solid). "
+        "Only edges with nonzero weights are drawn. "
+        "Circuit node ≠ region or cell class: classes sharing a node are "
+        "pooled for feedforward, not claimed to share receptive-field type."
+    ),
+    "fig_population_activity": (
+        "Cell-class, circuit-node, and regional population activity. "
+        "(A) Mean rate traces by cell class (per-unit mean). "
+        "(B) Mean rate traces by circuit node (per-unit mean; "
+        "INT_* → local inhibitory pools, Subiculum → SUB). "
+        "(C) Mean rate traces by anatomical region (per-unit mean; "
+        "all cell classes in that region pooled). "
+        "Unit counts are shown in fig_probe_trajectory."
+    ),
     "fig_circuit_population": (
-        "Hippocampal circuit population activity. "
-        "(A) Mean rates for circuit nodes overlaid (MEC, DG, CA3, CA2, CA1, INT, SUB). "
-        "(B) Stacked traces emphasizing trisynaptic / entorhinal flow. "
-        "(C) Session-mean rate by circuit node. "
-        "(D) Population size versus mean rate by node."
+        "Legacy stem; content now lives in fig_population_activity panel B."
     ),
     "fig_cell_class_population": (
-        "Cell-class population activity. "
-        "(A) Mean rate traces by cell class. "
-        "(B) Mean rate traces by anatomical region. "
-        "(C) Violin distributions of per-unit mean rates by cell class."
+        "Legacy stem; content now lives in fig_population_activity panel A."
     ),
     "fig_population_structure": (
-        "Population structure. "
-        "(A) Unit-count crosstab of region × cell class. "
-        "(B) Mean-rate heatmap of region × cell class. "
-        "(C) Ground-truth rate heatmap with units ordered by circuit node."
+        "Ground-truth spike raster by circuit node. "
+        "Units are ordered MEC → DG → CA3 → CA2 → CA1 → INT_* → SUB "
+        "(present nodes only; local INT satellites follow their home), "
+        "then by cell class and descending mean rate. "
+        "Crimson lines mark node boundaries; left labels name each node. "
+        "When many units are present, each node is downsampled to keep the "
+        "raster readable. "
+        "Region × cell-class unit counts live in fig_probe_trajectory panel D. "
+        "Ground-truth versus sorted spike counts live in fig_sorting_summary."
     ),
     "fig_spike_raster_summary": (
-        "Spike raster and sorting yield. "
-        "(A) Compressed ground-truth raster ordered by circuit node. "
-        "(B) Ground-truth versus sorted total spike counts by cell class."
+        "Legacy stem; content now lives in fig_population_structure."
+    ),
+    "fig_spikes_on_trajectory_by_class": (
+        "Spikes on trajectory by cell class (3×3, one panel per class). "
+        "Each occupied class shows a median-rate unit’s spikes on the "
+        "open-field path. Empty classes show ‘not in session’."
+    ),
+    "fig_population_tuning": (
+        "Population tuning by cell class (3×3, one panel per class). "
+        "MEC_grid shows a 3×3 mosaic of example spatial rate maps; other "
+        "classes are units × feature rate heatmaps (rows sorted by preferred "
+        "feature). MEC_hd: head direction; MEC_speed: speed; Sub_bvc: wall "
+        "distance; place classes: distance to field center; INT_*: theta "
+        "phase. Empty classes show ‘not in session’."
+    ),
+    "fig_probe_trajectory": (
+        "Neuropixels insertion anatomy for the active trajectory. "
+        "(A) Region bands along probe depth. "
+        "(B) Channel index mapped to regions. "
+        "(C) Unit positions in probe-local 3D coordinates (depth along the "
+        "shank vs small lateral offsets), colored by cell class. "
+        "(D) Annotated heatmap of simulated unit counts by region × cell "
+        "class — the cells picked up along the probe trajectory. Local "
+        "INT_* pools appear as a single interneuron class (counts by region)."
+    ),
+    "fig_sorting_summary": (
+        "Sorting yield summary. "
+        "(A) Ground-truth versus sorted spike counts by cell class. "
+        "(B) Sorting loss (1 − sorted/GT)."
+    ),
+    "fig_latent_geometry_features": (
+        "Compact overview of latent embeddings for non-position behavioral "
+        "features (optional 2-page summary mode). Prefer the per-feature "
+        "fig_latent_geometry_<feature> pages, which show every embedding mode."
     ),
     # ---- Decoding / manifolds / realtime ----
     "fig_decoding_performance": (
@@ -123,21 +197,72 @@ CAPTIONS: dict[str, str] = {
         "(C) Best decoder and metric value by target. "
         "(D) Selected / recommended realtime window by target."
     ),
+    "fig_feature_x_window": (
+        "Causal decoding tables on sorted spikes: feature × window. "
+        "One panel per target in a 4×2 grid; feature modes are rows and "
+        "causal windows W are columns. Each cell shows the metric and best "
+        "decoder at that (feature, W); hatching marks offline-only features, "
+        "and gold outlines the selected (feature, W)."
+    ),
+    "fig_decoder_x_window": (
+        "Causal decoding tables on sorted spikes: decoder × window "
+        "(realtime-compatible features only). One panel per target in a 4×2 "
+        "grid; decoders are rows and causal windows W are columns. Each cell "
+        "shows the metric and best realtime-compatible feature at that "
+        "(decoder, W); gold outlines the selected (decoder, W)."
+    ),
+    "fig_decoder_comparison_grid": (
+        "Schematic of the bounded decoder comparison grid on sorted spikes. "
+        "(A) Nested search: for each causal window W, for each (feature F, "
+        "embedding E) job fit a frozen encoder once, then for each target T and "
+        "decoder D fit and score one held-out row (one CSV entry). "
+        "(B) Single-row pipeline: counts x_t(W) → encoder E → latent z_t → "
+        "decoder D → prediction and primary metric. (C) Scale of this experiment "
+        "(windows × feature modes × target×decoder combinations)."
+    ),
+    "fig_window_selection_story": (
+        "How causal windows are chosen and how decoding is scored on sorted "
+        "spikes. (A) Primary held-out metric per behavioral target. "
+        "(B) Causal pipeline: spike counts in [t−W, t) → frozen encoder E → "
+        "frozen decoder D → ŷ, with default shortest_near_optimal window policy "
+        "(shortest W within 5% of best metric). (C–D) Example continuous and "
+        "categorical targets: score vs W for counts / global_pca / region_pca "
+        "(best decoder at each W); yellow band = near-optimal; red dashed = "
+        "best-accuracy W; gold = selected W. (E) Best vs selected W for all "
+        "targets. (F) At selected W, best score by representation; gold star = "
+        "deployable feature mode."
+    ),
+    "fig_continuous_decoders_feature_x_window": (
+        "Continuous-target decoder suite on sorted spikes. One section per "
+        "continuous decoder; each panel is feature × causal window W for one "
+        "target. Hatch = offline-only features; gold = deployable selection "
+        "when that decoder is chosen."
+    ),
+    "fig_categorical_decoders_feature_x_window": (
+        "Categorical-target decoder suite on sorted spikes. One section per "
+        "categorical decoder; each panel is feature × causal window W for one "
+        "target. Hatch = offline-only features; gold = deployable selection "
+        "when that decoder is chosen."
+    ),
     "fig_manifold_decoding": (
-        "Manifold versus spike-count decoding. "
-        "(A) Feature-mode × target heatmap of normalized best scores "
-        "(counts, PCA, region PCA, and Isomap when present). "
-        "(B) Signed manifold − counts performance difference by target. "
-        "(C) Best region-PCA score by target. "
-        "(D) Mean explained variance by anatomical group."
+        "Retired combined page — feature × window and decoder × window now "
+        "appear as separate figures (fig_feature_x_window, fig_decoder_x_window)."
     ),
     "fig_latent_geometry": (
         "Latent neural geometry across embedding modes (sorted / deployable). "
-        "Each panel is one feature mode at the causal window (and k / n_neighbors) "
-        "that best decoded the colored behavioral variable on held-out data. "
-        "Position pages encode arena (x, y) as hue and brightness; other pages "
-        "color by the named continuous or categorical variable. "
-        "See also fig_latent_geometry_<feature> for the full suite."
+        "Each page is one recovered behavioral variable; each panel is one "
+        "feature mode at the causal window (and k / n_neighbors) that best "
+        "decoded that variable on held-out data. Position pages encode arena "
+        "(x, y) as hue and brightness; other pages color by the named continuous "
+        "or categorical variable. "
+        "See fig_latent_geometry_<feature> for the full suite."
+    ),
+    "fig_decoder_geometry": (
+        "Decoder comparison on a shared neural manifold (sorted / deployable). "
+        "Each page is one behavioral variable; all panels use the same deployable "
+        "encoder while dot color encodes true behavior in z₁ vs z₂. Each panel "
+        "adds a decoder-specific prediction overlay. "
+        "See fig_decoder_geometry_<feature> for the full suite."
     ),
     "fig_isomap_diagnostics": (
         "Isomap geometry diagnostics. "
@@ -156,13 +281,26 @@ CAPTIONS: dict[str, str] = {
         "Classic Isomap is offline-only."
     ),
     "fig_closed_loop": (
-        "Closed-loop realtime decoding. "
+        "Closed-loop realtime decoding with continuous position as the primary "
+        "target. "
         "(A) True versus decoded position, both colored by elapsed time "
         "(circles = true, crosses = decoded) so matched timepoints and "
         "large spatial mismatches are visible. "
-        "(B) Position error over time with closed-loop trigger markers. "
-        "(C) Spatial-context confusion matrix (row-normalized). "
+        "(B) Position error over time with closed-loop trigger markers "
+        "(position-in-zone policy). "
+        "(C) Spatial-context confusion from the auxiliary context head "
+        "(row-normalized). "
         "(D) Trigger reliability (correct versus incorrect counts)."
+    ),
+    "fig_closed_loop_suite": (
+        "Realtime auxiliary suite targets decoded on every causal update "
+        "(same run as fig_closed_loop). "
+        "(A) True versus decoded speed over time. "
+        "(B) Movement-state confusion matrix (row-normalized). "
+        "(C) Head direction: decoded versus true when available; otherwise true "
+        "heading only (decoded HD requires --closed-loop-target head_direction). "
+        "(D) Summary metrics for position error, context accuracy, movement "
+        "accuracy, and speed R² from realtime_metrics.json."
     ),
     "fig_deployment": (
         "Deployment decoder selection on sorted spikes. "
@@ -177,6 +315,15 @@ CAPTIONS: dict[str, str] = {
         "(D) Top overall latency contributors. "
         "Dashed line marks the update budget (typically 50 ms); green bars are "
         "realtime-compatible."
+    ),
+    "fig_latency_realtime": (
+        "Per-update closed-loop latency on sorted spikes. "
+        "(A) Distribution of total update latency with mean, p95, and budget "
+        "compliance. "
+        "(B) Total latency versus session time. "
+        "(C) Per-stage latency box plots across profiled updates. "
+        "(D) Median stage contributions stacked horizontally (sequential pipeline, "
+        "not parallel). Dashed line marks the update budget."
     ),
     "fig_temporal_wl": (
         "Temporal manifold decoding. "
@@ -260,17 +407,14 @@ CAPTIONS: dict[str, str] = {
         "or over-counting after sorting."
     ),
     "probe_region_geometry": (
-        "Simulated Neuropixels 1.0 single-shank probe geometry through "
-        "hippocampal anatomy. Shaded bands mark regional extents along the "
-        "probe depth axis and associated channel mapping."
+        "Legacy stem; probe geometry now lives in fig_probe_trajectory panels A–B."
     ),
     "unit_depth_by_cell_class": (
-        "Assigned probe depth of simulated units by cell class, reflecting "
-        "anatomical placement relative to the Neuropixels shank."
+        "Legacy stem; unit depth by cell class now lives in fig_probe_trajectory panel C."
     ),
     "unit_count_by_region_and_cell_class": (
-        "Unit counts cross-tabulated by hippocampal region and cell class for "
-        "the simulated population."
+        "Legacy stem; region × cell-class counts now live in "
+        "fig_probe_trajectory panel D (annotated heatmap)."
     ),
     # ---- Decoder comparison (source summary) ----
     "ground_truth_vs_sorted_best_position_error": (
@@ -539,19 +683,29 @@ CAPTIONS: dict[str, str] = {
         "hatching marks offline-only features such as classic Isomap."
     ),
     "deployable_decoder_x_window_heatmaps": (
-        "Deployable decoder × causal-window heatmaps on sorted spikes. Each cell "
-        "shows the best realtime-compatible feature mode at that window and the "
-        "metric value; gold outline marks the selected (decoder, W) pair."
+        "Retired standalone page — decoder × window heatmaps now appear in "
+        "fig_decoder_x_window."
     ),
     "fig_deployable_decoder_x_window_heatmaps": (
-        "Deployable decoder × causal-window heatmaps on sorted spikes. Each cell "
-        "shows the best realtime-compatible feature mode at that window and the "
-        "metric value; gold outline marks the selected (decoder, W) pair."
+        "Retired standalone page — decoder × window heatmaps now appear in "
+        "fig_decoder_x_window."
     ),
 }
 
 # Regex patterns for parameterized stems → caption template with {match} groups.
 _PATTERN_CAPTIONS: list[tuple[re.Pattern[str], str]] = [
+    (
+        re.compile(r"^fig_decoder_geometry_(.+)$"),
+        (
+            "Decoder comparison on a shared neural manifold, colored by true {0} "
+            "(sorted / deployable spikes). All panels use the same deployable encoder "
+            "(feature mode and causal window W from the registry). Dot color encodes "
+            "true behavior in latent space (z₁ vs z₂), matching fig_latent_geometry_* "
+            "style. Each decoder panel stacks the shared manifold (top) and a "
+            "true-vs-predicted panel (bottom): trajectory for position, trace for "
+            "continuous targets, or class strips for categorical targets."
+        ),
+    ),
     (
         re.compile(r"^fig_latent_geometry_(.+)$"),
         (
@@ -564,11 +718,20 @@ _PATTERN_CAPTIONS: list[tuple[re.Pattern[str], str]] = [
         ),
     ),
     (
+        re.compile(r"^population_tuning_(.+)$"),
+        (
+            "Population primary-feature tuning for {0} cells. "
+            "Place/grid classes: rate-map mosaic (top units by mean rate) and "
+            "field-center scatter for all units. One-dimensional classes: all "
+            "unit tuning curves with population mean, plus a preference "
+            "heatmap (or amplitude histogram for speed cells)."
+        ),
+    ),
+    (
         re.compile(r"^example_units_(.+)$"),
         (
-            "Example single-unit activity for {0} cells. Panels show "
-            "driver/rate traces, spike trains, and instantaneous firing rates "
-            "for representative units of this class."
+            "Legacy example-unit page for {0} cells (replaced by "
+            "population_tuning_* and fig_spikes_on_trajectory_by_class)."
         ),
     ),
     (
@@ -615,7 +778,13 @@ _SOURCE_NOTES = {
 
 _CELL_CLASS_LABELS = {
     "CA1_pyr": "CA1 pyramidal",
-    "CA1_int": "CA1 interneuron",
+    "INT_CA1": "CA1 interneuron",
+    "INT_CA2": "CA2 interneuron",
+    "INT_CA3": "CA3 interneuron",
+    "INT_DG": "DG interneuron",
+    "INT_SUB": "Sub interneuron",
+    "interneuron": "CA1 interneuron",  # legacy
+    "CA1_int": "CA1 interneuron",  # legacy
     "CA2_pyr": "CA2 pyramidal",
     "CA3_pyr": "CA3 pyramidal",
     "DG_granule": "DG granule",

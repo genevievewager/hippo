@@ -71,11 +71,14 @@ def _metrics_to_score_frame(metrics: pd.DataFrame) -> pd.DataFrame:
                 or metric_name.endswith("_deg")
                 or metric_name in ("mae", "rmse", "mae_cm", "rmse_cm")
             )
+        mode = row.get("feature_mode")
+        if mode is None or (isinstance(mode, float) and pd.isna(mode)) or not str(mode).strip():
+            mode = row.get("feature_type", "")
         rows.append({
             "spike_source": str(row.get("spike_source", "sorted")),
             "target": target,
             "decoder": str(row.get("decoder_name", "")),
-            "feature_mode": str(row.get("feature_type", "")),
+            "feature_mode": str(mode),
             "causal_window_s": float(row.get("decode_window_s", float("nan"))),
             "metric_name": metric_name,
             "metric_value": float(row[metric_name]),
@@ -91,6 +94,7 @@ def _load_scores_prefer_deployment(
     metrics: pd.DataFrame,
 ) -> pd.DataFrame:
     """Prefer deployment window scores; fall back to metrics conversion."""
+    rebuilt = _metrics_to_score_frame(metrics)
     if experiment_dir is not None:
         candidates = [
             Path(experiment_dir) / "deployment_decoder_selection" / "all_sorted_window_scores.csv",
@@ -99,9 +103,24 @@ def _load_scores_prefer_deployment(
         for path in candidates:
             if path.exists():
                 df = pd.read_csv(path)
-                if not df.empty:
-                    return df
-    return _metrics_to_score_frame(metrics)
+                if df.empty:
+                    continue
+                # Older exports wrote base feature_type (always counts) into
+                # feature_mode; prefer metrics when that collapse is detected.
+                score_modes = (
+                    {str(m) for m in df["feature_mode"].dropna().unique()}
+                    if "feature_mode" in df.columns
+                    else set()
+                )
+                metric_modes = (
+                    {str(m) for m in rebuilt["feature_mode"].dropna().unique()}
+                    if not rebuilt.empty and "feature_mode" in rebuilt.columns
+                    else set()
+                )
+                if score_modes <= {"counts", "rates"} and len(metric_modes - {"counts", "rates"}) > 0:
+                    return rebuilt
+                return df
+    return rebuilt
 
 
 def _load_manifold_vs_counts(comparison_dir: Path) -> pd.DataFrame:

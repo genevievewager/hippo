@@ -242,6 +242,59 @@ def run_latency_benchmark(
     with open(output_dir / "latency_benchmark_summary.json", "w") as f:
         json.dump(summary, f, indent=2)
 
+    # Canonical summary artifacts expected by README / viz.
+    summary_rows: list[dict[str, Any]] = []
+    for _, row in feature_latency.iterrows():
+        summary_rows.append({
+            "category": "feature_transform",
+            "name": row["feature_mode"],
+            "mean_ms": float(row["mean_ms"]),
+            "median_ms": float(row["median_ms"]),
+            "p95_ms": float(row["p95_ms"]),
+            "update_budget_ms": float(summary["update_budget_ms"]),
+            "within_budget": bool(float(row["mean_ms"]) <= float(summary["update_budget_ms"])),
+            "realtime_compatible": bool(row.get("realtime_compatible", True)),
+        })
+    if not stages.empty:
+        prefer = stages
+        if "source" in stages.columns:
+            sorted_rows = stages[stages["source"].astype(str).str.contains("sorted")]
+            if not sorted_rows.empty:
+                prefer = sorted_rows
+        if "source" in prefer.columns:
+            prefer = prefer[prefer["source"] == prefer["source"].iloc[0]]
+        for _, row in prefer.iterrows():
+            mean_ms = float(row["mean_ms"])
+            summary_rows.append({
+                "category": "realtime_stage",
+                "name": row["stage"],
+                "mean_ms": mean_ms,
+                "median_ms": float(row.get("median_ms", mean_ms)),
+                "p95_ms": float(row.get("p95_ms", mean_ms)),
+                "update_budget_ms": float(summary["update_budget_ms"]),
+                "within_budget": bool(mean_ms <= float(summary["update_budget_ms"])),
+                "realtime_compatible": True,
+            })
+    summary_df = pd.DataFrame(summary_rows)
+    if not summary_df.empty:
+        summary_df.to_csv(output_dir / "latency_summary.csv", index=False)
+    # Also mirror under the canonical JSON name.
+    total_row = None
+    if not summary_df.empty:
+        tot = summary_df[summary_df["name"] == "total_update"]
+        if not tot.empty:
+            total_row = tot.iloc[0].to_dict()
+    latency_summary = {
+        **summary,
+        "total_update": total_row,
+        "rows": summary_rows,
+    }
+    with open(output_dir / "latency_summary.json", "w") as f:
+        json.dump(latency_summary, f, indent=2)
+
+    # Annotate deployable registry with budget compatibility when present.
+    _annotate_registry_latency(experiment_dir, latency_summary)
+
     print(
         f"  latency benchmark → {output_dir} "
         f"(budget={summary['update_budget_ms']:.1f} ms)"
@@ -254,3 +307,79 @@ def run_latency_benchmark(
                 f"mean={row['mean_ms']:.3f} ms  [{flag}]"
             )
     return summary
+
+
+def _annotate_registry_latency(experiment_dir: Path, latency_summary: dict[str, Any]) -> None:
+    """Record whether selected targets clear the update budget in the registry."""
+    from realtime.deployment_selection import load_best_realtime_decoders
+
+    experiment_dir = Path(experiment_dir)
+    try:
+        payload = load_best_realtime_decoders(experiment_dir)
+    except FileNotFoundError:
+        return
+
+    budget = float(latency_summary.get("update_budget_ms", DEFAULT_UPDATE_BUDGET_MS))
+    total = latency_summary.get("total_update") or {}
+    total_ms = total.get("mean_ms")
+    within = None if total_ms is None else bool(float(total_ms) <= budget)
+
+    # Feature-mode level compatibility from feature_transform rows.
+    feat_ok: dict[str, bool] = {}
+    for row in latency_summary.get("rows") or []:
+        if row.get("category") == "feature_transform":
+            feat_ok[str(row["name"])] = bool(row.get("realtime_compatible", True)) and bool(
+                row.get("within_budget", True)
+            )
+
+    for target, tgt in (payload.get("targets") or {}).items():
+        feature = str(tgt.get("selected_feature_mode", "counts"))
+        decoder = str(tgt.get("selected_decoder", ""))
+        feature_ok = feat_ok.get(feature, True)
+        # Random-forest classifier heads are often over budget at 20 Hz; surface clearly.
+        decoder_warn = None
+        if "random_forest_classifier" in decoder and within is False:
+            decoder_warn = (
+                f"{decoder} selected for {target} but measured total_update "
+                f"mean={total_ms:.2f} ms exceeds {budget:.1f} ms budget"
+            )
+            print(f"  WARNING: {decoder_warn}")
+        tgt["update_budget_ms"] = budget
+        tgt["measured_total_update_mean_ms"] = total_ms
+        tgt["within_update_budget"] = within
+        tgt["feature_realtime_compatible"] = feature_ok
+        tgt["realtime_compatible"] = bool(
+            tgt.get("realtime_compatible", True) and feature_ok and (within is not False)
+        )
+        if decoder_warn:
+            tgt["realtime_budget_warning"] = decoder_warn
+            tgt["realtime_compatible"] = False
+
+    payload["update_budget_ms"] = budget
+    payload["measured_total_update_mean_ms"] = total_ms
+    def _safe(obj: Any) -> Any:
+        if isinstance(obj, dict):
+            return {k: _safe(v) for k, v in obj.items()}
+        if isinstance(obj, (list, tuple)):
+            return [_safe(v) for v in obj]
+        if isinstance(obj, Path):
+            return str(obj)
+        if hasattr(obj, "item"):
+            try:
+                return obj.item()
+            except Exception:
+                pass
+        try:
+            if pd.isna(obj):
+                return None
+        except Exception:
+            pass
+        return obj
+
+    for path in (
+        experiment_dir / "models" / "best_realtime_decoders.json",
+        experiment_dir / "deployment_decoder_selection" / "best_realtime_decoders.json",
+    ):
+        if path.exists():
+            with open(path, "w") as f:
+                json.dump(_safe(payload), f, indent=2)

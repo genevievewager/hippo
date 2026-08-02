@@ -1,0 +1,57 @@
+# Template for a new insertion. Copy and fill — do not edit lab_npx2_default.yaml
+# for one-off animals.
+#
+#   cp configs/trajectories/example_new_insertion.yaml \
+#      configs/trajectories/my_new_insertion.yaml
+#
+# Then point anatomy_regions_file / trajectory_export_file / cell_capture_file
+# at the new tables and run:
+#
+#   python run_simulation.py \
+#     --output outputs/new_insertion_001 \
+#     --trajectory my_new_insertion
+
+animal:
+  strain: null          # e.g. C57_WT
+  species: mouse
+  atlas: Allen_CCF
+  hemisphere: null      # left | right
+  coordinate_status: approximate
+
+probe:
+  type: null            # e.g. NP1.0 | NP2.0
+  shank_count: null
+  selected_shank: null
+  site_pitch_um: null
+  confirm_from_channel_map: true
+  n_channels_recorded: null
+  active_channel_start: null
+  active_channel_end: null
+  channel_map_file: null
+  n_channels: 384
+
+insertion:
+  bregma_to_lambda_mm: null
+  ap_mm_from_bregma: null
+  ml_mm_from_bregma: null
+  dv_mm_from_brain_surface: null
+  dv_uncertain: false
+  horizontal_angle_deg: null
+  vertical_angle_deg: null
+  angle_convention_uncertain: false
+  coordinate_source: null   # e.g. neuropixels_trajectory_explorer_export
+  trajectory_export_file: null
+  histology_registered_file: null
+  notes: ""
+
+simulation:
+  use_trajectory_regions: true
+  anatomy_regions_file: null   # path to region-depth CSV (mm or µm)
+  cell_capture_file: null
+  fallback_to_schematic_hippocampus: false
+  exclude_non_hippocampal_regions_by_default: true
+
+decoder:
+  deployment_spike_source: sorted
+  allow_ground_truth_diagnostics: false
+  use_ground_truth_for_model_selection: false

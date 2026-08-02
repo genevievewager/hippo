@@ -173,11 +173,9 @@ def generate_behavior_plots(data: SimulationOutputs, output_dir: Path) -> None:
     output_dir.mkdir(parents=True, exist_ok=True)
     from visualization.publication_behavior_plots import (
         plot_fig_behavior_dynamics,
-        plot_fig_behavior_overview,
         _cleanup_legacy_pngs,
     )
 
-    plot_fig_behavior_overview(data, output_dir)
     plot_fig_behavior_dynamics(data, output_dir)
     _cleanup_legacy_pngs(output_dir)
 

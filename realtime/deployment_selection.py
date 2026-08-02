@@ -44,6 +44,46 @@ def higher_is_better_for_target(target: str) -> bool:
     return direction == "higher"
 
 
+def _composite_feature_mode(row: pd.Series | dict[str, Any]) -> str:
+    """Resolve the display/path feature mode from a metrics or best-table row.
+
+    Newer runs store the composite key (e.g. ``global_pca``, ``layer_pca``) in
+    ``feature_mode`` and keep the base spike feature (``counts`` / ``rates``) in
+    ``feature_type``. Older runs stored the mode directly in ``feature_type``.
+    """
+    get = row.get if hasattr(row, "get") else lambda k, default=None: row[k] if k in row else default
+    mode = get("feature_mode")
+    if mode is not None and not pd.isna(mode) and str(mode).strip():
+        return str(mode)
+    # Best-table rows may only expose the mode via decoder config JSON.
+    for cfg_key in ("decoder_config_json", "realtime_decoder_config_json"):
+        raw = get(cfg_key)
+        if not raw:
+            continue
+        try:
+            cfg = json.loads(raw) if isinstance(raw, str) else (raw or {})
+        except (TypeError, json.JSONDecodeError):
+            cfg = {}
+        for key in ("feature_mode", "feature_type"):
+            val = cfg.get(key) if isinstance(cfg, dict) else None
+            if val is not None and str(val).strip():
+                return str(val)
+    best = get("best_feature_type")
+    if best is not None and not pd.isna(best) and str(best).strip():
+        return str(best)
+    ft = get("feature_type")
+    emb = get("embedding_type")
+    if (
+        emb is not None
+        and not pd.isna(emb)
+        and str(emb) not in ("", "identity", "none")
+    ):
+        from realtime.search_space import compose_feature_mode
+
+        return compose_feature_mode(str(ft or "counts"), str(emb))
+    return str(ft or "counts")
+
+
 def build_all_window_scores_table(
     metrics_df: pd.DataFrame,
     *,
@@ -68,18 +108,19 @@ def build_all_window_scores_table(
         for _, row in best_df.iterrows():
             if str(row.get("spike_source", spike_source)) != spike_source:
                 continue
+            mode = _composite_feature_mode(row)
             selected_keys.add((
                 str(row.get("target_name")),
                 str(row.get("recommended_realtime_decoder_name") or row.get("best_decoder_name")),
                 round(float(row.get("recommended_realtime_window_s") or row.get("best_decode_window_s")), 6),
-                str(row.get("best_feature_type") or ""),
+                mode,
             ))
             # Also mark absolute best-accuracy row
             selected_keys.add((
                 str(row.get("target_name")),
                 str(row.get("best_decoder_name")),
                 round(float(row.get("best_decode_window_s")), 6),
-                str(row.get("best_feature_type") or ""),
+                mode,
             ))
 
     rows: list[dict[str, Any]] = []
@@ -91,9 +132,8 @@ def build_all_window_scores_table(
         if metric_name not in r or pd.isna(r.get(metric_name)):
             continue
         decoder = str(r.get("decoder_name"))
-        feature = str(r.get("feature_type"))
+        feature = _composite_feature_mode(r)
         window = float(r.get("decode_window_s"))
-        key = (target, decoder, round(window, 6), feature)
         # Prefer realtime-selected key match loosely: target+decoder+window
         selected = False
         for sk in selected_keys:
@@ -162,8 +202,8 @@ def warn_if_uniform_window(
             )
         else:
             msg += (
-                " Inspect all_sorted_window_scores.csv to confirm this window "
-                "actually won for each target."
+                " Inspect deployment_decoder_selection/all_sorted_window_scores.csv "
+                "to confirm this window actually won for each target."
             )
         print(f"  WARNING: {msg}")
         warnings.warn(msg, UserWarning, stacklevel=2)
@@ -210,9 +250,9 @@ def build_best_realtime_decoders_payload(
         if selection_policy == "best_accuracy":
             decoder = str(row["best_decoder_name"])
             window = float(row["best_decode_window_s"])
-            feature = str(row.get("best_feature_type", "counts"))
             model_path = row.get("best_window_model_path") or row.get("model_path")
             cfg_raw = row.get("decoder_config_json", "{}")
+            feature = _composite_feature_mode(row)
         else:
             decoder = str(
                 row.get("recommended_realtime_decoder_name", row["best_decoder_name"])
@@ -222,13 +262,9 @@ def build_best_realtime_decoders_payload(
                 "realtime_decoder_config_json", row.get("decoder_config_json", "{}")
             )
             model_path = row.get("realtime_model_path") or row.get("model_path")
-            feature = str(row.get("best_feature_type", "counts"))
-            try:
-                cfg_probe = json.loads(cfg_raw) if isinstance(cfg_raw, str) else (cfg_raw or {})
-            except json.JSONDecodeError:
-                cfg_probe = {}
-            if cfg_probe.get("feature_type"):
-                feature = str(cfg_probe["feature_type"])
+            feature = _composite_feature_mode(
+                {**row.to_dict(), "decoder_config_json": cfg_raw}
+            )
 
         try:
             cfg = json.loads(cfg_raw) if isinstance(cfg_raw, str) else (cfg_raw or {})
@@ -239,18 +275,69 @@ def build_best_realtime_decoders_payload(
             cfg.get("manifold_transform_path")
             or row.get("manifold_transform_path")
         )
+        remapped_from_offline = False
         # Never deploy offline-only classic Isomap; distilled Isomap is allowed
         # when comparison marked it realtime_compatible.
-        if feature == "global_isomap" or str(cfg.get("manifold_type")) == "isomap":
-            feature = "counts"
-            transform = None
-        if feature == "global_isomap_distilled":
+        if (
+            feature == "global_isomap"
+            or str(feature).endswith("_isomap")
+            or str(cfg.get("manifold_type")) == "isomap"
+        ):
+            # Prefer realtime-recommended artifact when absolute-best was offline Isomap.
+            if selection_policy == "best_accuracy":
+                rt_decoder = row.get("recommended_realtime_decoder_name")
+                rt_window = row.get("recommended_realtime_window_s")
+                rt_path = row.get("realtime_model_path")
+                rt_cfg_raw = row.get("realtime_decoder_config_json", "{}")
+                try:
+                    rt_cfg = (
+                        json.loads(rt_cfg_raw)
+                        if isinstance(rt_cfg_raw, str)
+                        else (rt_cfg_raw or {})
+                    )
+                except json.JSONDecodeError:
+                    rt_cfg = {}
+                rt_feature = str(
+                    rt_cfg.get("feature_type")
+                    or row.get("best_feature_type")
+                    or "counts"
+                )
+                if rt_feature in ("global_isomap",) or str(rt_feature).endswith("_isomap"):
+                    rt_feature = "counts"
+                    rt_cfg = {**rt_cfg, "feature_type": "counts", "manifold_type": "none"}
+                    rt_path = None
+                if rt_decoder is not None and rt_window is not None:
+                    decoder = str(rt_decoder)
+                    window = float(rt_window)
+                    feature = rt_feature
+                    model_path = rt_path
+                    cfg = rt_cfg or {"feature_type": feature}
+                    transform = cfg.get("manifold_transform_path")
+                else:
+                    feature = "counts"
+                    transform = None
+                    model_path = None
+                    cfg = {**cfg, "feature_type": "counts", "manifold_type": "none"}
+            else:
+                feature = "counts"
+                transform = None
+                model_path = None
+                cfg = {**cfg, "feature_type": "counts", "manifold_type": "none"}
+            remapped_from_offline = True
+        if feature == "global_isomap_distilled" or str(feature).endswith("_isomap_distilled"):
             rt_flag = cfg.get("realtime_compatible")
             if rt_flag is False:
                 feature = "counts"
                 transform = None
+                model_path = None
+                cfg = {**cfg, "feature_type": "counts", "manifold_type": "none"}
+                remapped_from_offline = True
 
         n_comp = cfg.get("manifold_n_components", row.get("best_manifold_n_components"))
+        # Latency / budget annotation (filled later by workflow if available).
+        rt_compatible = bool(cfg.get("realtime_compatible", True))
+        if remapped_from_offline and feature == "counts":
+            rt_compatible = True
         targets[target] = {
             "target": target,
             "selected_decoder": decoder,
@@ -272,6 +359,11 @@ def build_best_realtime_decoders_payload(
             "sorted_spike_file": str(sorted_spikes),
             "deployable": True,
             "oracle_non_deployable": False,
+            "realtime_compatible": rt_compatible,
+            "offline_analysis_only": bool(
+                feature == "global_isomap" or str(cfg.get("manifold_type")) == "isomap"
+            ),
+            "remapped_from_offline_isomap": remapped_from_offline,
             "decoder_config": cfg,
         }
 
@@ -330,14 +422,31 @@ def write_deployment_selection_artifacts(
         else:
             metrics_df = pd.DataFrame()
 
-    # Filter to sorted only for deployable artifacts
-    best_sorted = best_df
-    if "spike_source" in best_df.columns:
-        best_sorted = best_df[best_df["spike_source"].astype(str) == DEPLOYMENT_SPIKE_SOURCE].copy()
-    if best_sorted.empty:
-        # Single-source runs may omit spike_source filter match if column missing values
-        best_sorted = best_df.copy()
+    # Filter to sorted only for deployable artifacts. Never promote ground-truth rows.
+    best_sorted = best_df.copy()
+    if "spike_source" in best_sorted.columns:
+        sources = best_sorted["spike_source"].astype(str)
+        has_gt = (sources == "ground_truth").any()
+        has_sorted = (sources == DEPLOYMENT_SPIKE_SOURCE).any()
+        if has_sorted:
+            best_sorted = best_sorted[sources == DEPLOYMENT_SPIKE_SOURCE].copy()
+        elif has_gt:
+            raise ValueError(
+                "Deployable registry requires sorted-spike best_decoder_by_target rows; "
+                "found only ground_truth (oracle / non-deployable). Re-run comparison "
+                "with spike_source='sorted'."
+            )
+        else:
+            # Legacy single-source tables may omit useful spike_source labels —
+            # treat as sorted only when no ground_truth rows are present.
+            best_sorted["spike_source"] = DEPLOYMENT_SPIKE_SOURCE
+    else:
         best_sorted["spike_source"] = DEPLOYMENT_SPIKE_SOURCE
+
+    if best_sorted.empty:
+        raise ValueError(
+            "No sorted-spike rows available for deployable decoder selection."
+        )
 
     scores = build_all_window_scores_table(
         metrics_df, best_df=best_sorted, spike_source=DEPLOYMENT_SPIKE_SOURCE,

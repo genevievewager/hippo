@@ -10,11 +10,11 @@ from matplotlib.backends.backend_pdf import PdfPages
 from visualization.figure_captions import caption_for
 
 SECTION_TITLES: dict[str, str] = {
-    "behavior": "Behavior — spatial overview and dynamics",
-    "features": "Behavioral covariates and neural drivers",
+    "trajectory": "Probe trajectory — Neuropixels insertion anatomy",
+    "behavior": "Behavior — locomotor covariates and neural drivers",
+    "features": "Behavior — locomotor covariates and neural drivers",
     "neural": "Neural activity — rates, rasters, and example units",
-    "sorting": "Sorting vs ground truth and probe anatomy",
-    "report": "Simulation report summary",
+    "sorting": "Sorting vs ground truth",
     "decoder_comparison": "Decoding and manifolds",
     "decoder_comparison/ground_truth": "Decoder comparison — ground-truth spikes (legacy)",
     "decoder_comparison/sorted": "Decoder comparison — Neuropixels sorted (legacy)",
@@ -29,11 +29,10 @@ SECTION_TITLES: dict[str, str] = {
 
 # Preferred section order: simulation → decoding → manifolds → realtime → latency.
 SECTION_ORDER = [
+    "trajectory",
     "behavior",
-    "features",
     "neural",
     "sorting",
-    "report",
     "decoder_comparison",
     "decoder_comparison/ground_truth",
     "decoder_comparison/sorted",
@@ -46,12 +45,28 @@ SECTION_ORDER = [
     "temporal_decoding",
 ]
 
-# Within decoder_comparison, keep dense selection onepagers immediately after
-# fig_manifold_decoding (PDF Figure 28 in the current ratinabox layout).
+# Within decoder_comparison, keep manifold vs spikes onepager after the
+# window-selection story and feature×W / decoder×W / decoder-family pages.
 _DECODER_COMPARISON_TRAILING = (
-    "fig_manifold_decoding",
-    "fig_deployable_decoder_x_window_heatmaps",
+    "fig_decoder_comparison_grid",
+    "fig_window_selection_story",
+    "fig_feature_x_window",
+    "fig_decoder_x_window",
+    "fig_continuous_decoders_feature_x_window",
+    "fig_categorical_decoders_feature_x_window",
     "fig_manifold_vs_spikes_onepager",
+)
+
+# Keep closed-loop primary page before suite auxiliary targets.
+_REALTIME_TRAILING = (
+    "fig_closed_loop",
+    "fig_closed_loop_suite",
+)
+
+# Aggregate benchmark overview before per-update distributions.
+_LATENCY_TRAILING = (
+    "fig_latency",
+    "fig_latency_realtime",
 )
 
 
@@ -92,7 +107,22 @@ def collect_pngs_by_section(figures_dir: Path) -> dict[str, list[Path]]:
             sibling = png.with_name("fig_latent_geometry_position.png")
             if sibling.exists():
                 continue
+        # Obsolete composite; panels already live in behavior/neural/sorting/trajectory.
+        if png.stem == "simulation_report_summary":
+            continue
+        # Retired: superseded by fig_feature_x_window and fig_decoder_x_window.
+        if png.stem in (
+            "fig_manifold_decoding",
+            "fig_manifold_decoder_window_threeway",
+            "fig_deployable_decoder_x_window_heatmaps",
+            "fig_deployable_winner_onepager",
+            "deployable_winner_onepager",
+        ):
+            continue
         key = _section_key(figures_dir, png)
+        # Behavior overview/covariates and neural drivers are one topic.
+        if key == "features":
+            key = "behavior"
         groups.setdefault(key, []).append(png)
     for key, paths in groups.items():
         if key == "decoder_comparison":
@@ -100,11 +130,66 @@ def collect_pngs_by_section(figures_dir: Path) -> dict[str, list[Path]]:
 
             def _decoder_sort_key(p: Path, _trailing=trailing) -> tuple:
                 stem = p.stem
+                if stem.startswith("fig_latent_geometry_"):
+                    return (0.4, stem, p.name.lower())
+                if stem.startswith("fig_decoder_geometry_"):
+                    return (0.5, stem, p.name.lower())
                 if stem in _trailing:
                     return (1, _trailing[stem], p.name.lower())
                 return (0, 0, p.name.lower())
 
             paths.sort(key=_decoder_sort_key)
+        elif key == "realtime_decoding":
+            trailing = {stem: i for i, stem in enumerate(_REALTIME_TRAILING)}
+
+            def _realtime_sort_key(p: Path, _trailing=trailing) -> tuple:
+                stem = p.stem
+                if stem in _trailing:
+                    return (1, _trailing[stem], p.name.lower())
+                return (0, 0, p.name.lower())
+
+            paths.sort(key=_realtime_sort_key)
+        elif key == "latency":
+            trailing = {stem: i for i, stem in enumerate(_LATENCY_TRAILING)}
+
+            def _latency_sort_key(p: Path, _trailing=trailing) -> tuple:
+                stem = p.stem
+                if stem in _trailing:
+                    return (1, _trailing[stem], p.name.lower())
+                return (0, 0, p.name.lower())
+
+            paths.sort(key=_latency_sort_key)
+        elif key == "behavior":
+            # Spatial+covariates first, then neural drivers.
+            order = {
+                "fig_behavior_dynamics": 0,
+                "fig_behavior_overview": 0,
+                "fig_neural_drivers": 1,
+            }
+            paths.sort(key=lambda p: (order.get(p.stem, 50), p.name.lower()))
+        elif key == "neural":
+            def _neural_sort_key(p: Path) -> tuple:
+                stem = p.stem
+                # Spikes → tuning → feedforward → structure → mean-rate last.
+                order = {
+                    "fig_spikes_on_trajectory_by_class": 0,
+                    "fig_population_tuning": 1,
+                    "fig_circuit_feedforward": 2,
+                    "fig_population_structure": 3,
+                    "fig_spike_raster_summary": 3,
+                    "fig_population_activity": 4,
+                    "fig_cell_class_population": 4,
+                    "fig_circuit_population": 4,
+                }
+                if stem in order:
+                    return (order[stem], stem.lower())
+                if stem.startswith("population_tuning_"):
+                    return (1, stem.lower())
+                if stem.startswith("fig_"):
+                    return (5, stem.lower())
+                return (6, stem.lower())
+
+            paths.sort(key=_neural_sort_key)
         else:
             paths.sort(key=lambda p: p.name.lower())
     return groups
@@ -168,17 +253,18 @@ def _add_image_page(
     fig = plt.figure(figsize=(11, 8.5))
     fig.patch.set_facecolor("white")
 
-    ax_img = fig.add_axes([0.05, 0.22, 0.90, 0.74])
+    # Favor the figure: dense multi-panels need the page; caption stays readable.
+    ax_img = fig.add_axes([0.04, 0.16, 0.92, 0.80])
     ax_img.imshow(img)
     ax_img.axis("off")
 
-    ax_cap = fig.add_axes([0.07, 0.04, 0.86, 0.16])
+    ax_cap = fig.add_axes([0.06, 0.02, 0.88, 0.13])
     ax_cap.axis("off")
     ax_cap.text(
-        0.0,
+        0.5,
         1.0,
         caption_wrapped,
-        ha="left",
+        ha="center",
         va="top",
         fontsize=9,
         linespacing=1.35,

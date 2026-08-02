@@ -35,7 +35,12 @@ REGION_SEGMENTS: List[Dict] = [
 
 CELL_TYPES = [
     "CA1_pyr",
-    "CA1_int",
+    "INT_CA1",
+    "INT_CA2",
+    "INT_CA3",
+    "INT_DG",
+    "INT_SUB",
+    "interneuron",  # legacy alias → INT_CA1
     "CA2_pyr",
     "CA3_pyr",
     "DG_granule",
@@ -55,8 +60,14 @@ RATINABOX_PARAMS: Dict = {
     "n_mec_hd_cells": 30,
     "n_sub_bvc_cells": 30,
     "n_mec_speed_cells": 20,
-    "n_ca1_interneurons": 15,
-    # Legacy aliases kept for older configs / scripts.
+    "n_int_ca1": 6,
+    "n_int_ca3": 3,
+    "n_int_dg": 3,
+    "n_int_ca2": 1,
+    "n_int_sub": 2,
+    # Legacy aliases kept for older configs / scripts (map to INT_CA1 budget).
+    "n_interneurons": 6,
+    "n_ca1_interneurons": 6,
     "n_place_cells": 60,
     "n_head_direction_cells": 30,
     "n_boundary_vector_cells": 30,
@@ -72,22 +83,17 @@ RATINABOX_PARAMS: Dict = {
     "apply_hippocampal_dynamics": True,
     "apply_feedforward": True,
     "int_baseline_hz": 18.0,
-    "int_anti_ca1_weight": 0.35,
-    # Trisynaptic / EC feedforward weights (see hippo_sim/feedforward.py).
+    "int_anti_home_weight": 0.35,
+    "int_anti_ca1_weight": 0.35,  # legacy alias of int_anti_home_weight
+    # Feedforward: profile selects weight set (hippo_sim.feedforward / CIRCUIT_PROFILES).
+    # Override individual weights here only when you want to force them.
     "feedforward": {
-        "w_mec_to_dg": 0.20,
-        "w_dg_to_ca3": 0.25,
-        "w_ca3_to_ca1": 0.20,
-        "w_mec_to_ca1": 0.15,
-        "w_int_to_ca1": 0.30,
-        "w_mec_to_ca2": 0.10,
-        "w_ca3_to_ca2": 0.10,
-        "normalize_upstream": True,
+        "profile": "auto",
     },
 }
 
 REGION_TO_CELL_TYPE = {
-    ("CA1", "oriens"): "CA1_int",
+    ("CA1", "oriens"): "INT_CA1",
     ("CA1", "pyramidal"): "CA1_pyr",
     ("CA1", "radiatum"): "CA1_pyr",
     ("CA2", "pyramidal"): "CA2_pyr",
@@ -115,7 +121,7 @@ RATE_PARAMS: Dict[str, Dict] = {
         "w_ripple": 0.5,
         "w_boundary": 0.2,
     },
-    "CA1_int": {
+    "INT_CA1": {
         "tau_s": 0.03,
         "baseline_hz": 18.0,
         "amplitude_hz": 4.0,
@@ -231,6 +237,10 @@ RATE_PARAMS: Dict[str, Dict] = {
     },
 }
 
+# Local INT pools share the same synthetic rate template; legacy names alias INT_CA1.
+for _int_ct in ("INT_CA2", "INT_CA3", "INT_DG", "INT_SUB", "interneuron", "CA1_int"):
+    RATE_PARAMS[_int_ct] = dict(RATE_PARAMS["INT_CA1"])
+
 RIPPLE_PARAMS = {
     "rate_per_min": 2.0,
     "duration_s": 0.08,
@@ -267,6 +277,7 @@ class SimConfig:
     behavior_dt: float = BEHAVIOR_DT
     sample_rate_hz: int = SAMPLE_RATE_HZ
     n_channels: int = N_CHANNELS
+    site_pitch_um: float = SITE_PITCH_UM
     arena_size_cm: float = ARENA_SIZE_CM
     thigmotaxis: float = THIGMOTAXIS
     region_segments: List[Dict] = field(default_factory=lambda: list(REGION_SEGMENTS))
@@ -276,6 +287,11 @@ class SimConfig:
     recording_params: Dict = field(default_factory=lambda: dict(RECORDING_PARAMS))
     sorting_params: Dict = field(default_factory=lambda: dict(SORTING_PARAMS))
     ratinabox_params: Dict = field(default_factory=lambda: dict(RATINABOX_PARAMS))
+    # Trajectory / cell-capture metadata (filled by run_simulation / pipeline).
+    trajectory_meta: Dict = field(default_factory=dict)
+    anatomy_table: List[Dict] = field(default_factory=list)
+    cell_capture_config: Dict = field(default_factory=dict)
+    probe_type: str = "neuropixels_1.0"
 
     @property
     def n_behavior_steps(self) -> int:
@@ -286,7 +302,12 @@ class SimConfig:
         return np.arange(self.n_behavior_steps) * self.behavior_dt
 
 
-def channels_for_segment(z_start_um: float, z_end_um: float, pitch_um: float = SITE_PITCH_UM) -> np.ndarray:
-    depths = np.arange(N_CHANNELS) * pitch_um
+def channels_for_segment(
+    z_start_um: float,
+    z_end_um: float,
+    pitch_um: float = SITE_PITCH_UM,
+    n_channels: int = N_CHANNELS,
+) -> np.ndarray:
+    depths = np.arange(int(n_channels)) * pitch_um
     mask = (depths >= z_start_um) & (depths < z_end_um)
     return np.where(mask)[0]

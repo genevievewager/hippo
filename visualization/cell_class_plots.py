@@ -12,7 +12,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 
-from visualization.constants import CELL_CLASS_ORDER, FIGURE_DPI, MAX_LINE_POINTS, REGION_ORDER
+from visualization.constants import CELL_CLASS_ORDER, FIGURE_DPI, MAX_LINE_POINTS, REGION_ORDER, cell_class_colors
 from visualization.load_outputs import SimulationOutputs, downsample_series
 from visualization.neural_plots import _population_activity
 
@@ -127,12 +127,12 @@ def plot_unit_depth_by_cell_class(data: SimulationOutputs, output_dir: Path) -> 
         raise ValueError("units.csv has no depth_um or channel column for depth plot.")
 
     fig, ax = plt.subplots(figsize=(7, 5))
-    colors = plt.cm.tab10(np.linspace(0, 1, len(CELL_CLASS_ORDER)))
-    for color, ct in zip(colors, data.cell_class_order):
+    colors = cell_class_colors(data.cell_class_order)
+    for ct in data.cell_class_order:
         subset = data.units[data.units["cell_type"] == ct]
         ax.scatter(
             subset["depth_um"], np.random.default_rng(42).normal(0, 0.05, len(subset)),
-            s=12, alpha=0.6, label=ct, color=color,
+            s=12, alpha=0.6, label=ct, color=colors[ct],
         )
     ax.set_xlabel("Unit depth (µm)")
     ax.set_yticks([])
@@ -154,9 +154,12 @@ def plot_unit_count_by_region_and_cell_class(data: SimulationOutputs, output_dir
 
     fig, ax = plt.subplots(figsize=(8, 4))
     bottom = np.zeros(len(counts))
-    colors = plt.cm.tab10(np.linspace(0, 1, len(counts.columns)))
-    for color, ct in zip(colors, counts.columns):
-        ax.bar(counts.index, counts[ct], bottom=bottom, label=ct, color=color, edgecolor="white")
+    colors = cell_class_colors([str(c) for c in counts.columns])
+    for ct in counts.columns:
+        ax.bar(
+            counts.index, counts[ct], bottom=bottom, label=ct,
+            color=colors[str(ct)], edgecolor="white",
+        )
         bottom += counts[ct].to_numpy()
 
     ax.set_ylabel("Number of units")
@@ -171,11 +174,7 @@ def plot_unit_count_by_region_and_cell_class(data: SimulationOutputs, output_dir
 def generate_cell_class_plots(
     data: SimulationOutputs, output_dir: Path, rate_bin_size: float = 0.250,
 ) -> None:
-    output_dir = Path(output_dir)
-    output_dir.mkdir(parents=True, exist_ok=True)
-    plot_sorted_vs_ground_truth_spike_counts(data, output_dir)
-    plot_sorted_vs_ground_truth_population_activity(data, output_dir, rate_bin_size)
-    plot_sorting_loss_by_cell_class(data, output_dir)
-    plot_probe_region_geometry(data, output_dir)
-    plot_unit_depth_by_cell_class(data, output_dir)
-    plot_unit_count_by_region_and_cell_class(data, output_dir)
+    """Write compact sorting/capture publication figure under ``sorting/``."""
+    from visualization.publication_sorting_plots import generate_publication_sorting_plots
+
+    generate_publication_sorting_plots(data, output_dir, rate_bin_size=rate_bin_size)

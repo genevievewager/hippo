@@ -18,23 +18,24 @@ from scipy.ndimage import gaussian_filter1d
 from visualization.constants import (
     CELL_CLASS_ORDER,
     CELL_TYPE_TO_CIRCUIT_NODE,
-    CIRCUIT_NODE_ORDER,
     FIGURE_DPI,
-    MAX_LINE_POINTS,
-    REGION_ORDER,
     REGION_TO_CIRCUIT_NODE,
+    cell_class_colors,
+    circuit_node_colors,
+    circuit_node_order_for_present,
+    region_colors,
 )
 from visualization.load_outputs import SimulationOutputs, downsample_series
 from visualization.neural_plots import _population_activity
+from visualization.publication_circuit_plots import plot_fig_circuit_feedforward
 from visualization.publication_style import (
-    figure_legend_below,
-    legend_below,
+    apply_publication_theme,
     legend_outside,
     panel_label,
     save_pub_figure,
 )
 
-sns.set_theme(style="ticks", context="paper", font_scale=1.0)
+apply_publication_theme()
 
 
 def _smooth(y: np.ndarray, sigma: float = 1.0) -> np.ndarray:
@@ -86,11 +87,13 @@ def _long_traces_by_key(
     order: list[str],
     bin_size: float,
     max_points: int = 1200,
+    units: pd.DataFrame | None = None,
 ) -> pd.DataFrame:
+    units_df = data.units if units is None else units
     rows = []
-    present = [k for k in order if k in set(data.units[key].astype(str))]
+    present = [k for k in order if k in set(units_df[key].astype(str))]
     for label in present:
-        uids = data.units.loc[data.units[key].astype(str) == label, "unit_id"].tolist()
+        uids = units_df.loc[units_df[key].astype(str) == label, "unit_id"].tolist()
         t, y = _mean_rate_trace(data, uids, bin_size)
         t, y = downsample_series(t, _smooth(y), max_points)
         for ti, yi in zip(t, y):
@@ -98,321 +101,180 @@ def _long_traces_by_key(
     return pd.DataFrame(rows)
 
 
-def plot_fig_circuit_population(
+def plot_fig_population_activity(
     data: SimulationOutputs, output_dir: Path, bin_size: float = 0.250,
 ) -> Path:
-    """Fig: circuit population activity (publication panel)."""
+    """Combined cell-class, circuit-node, and regional population activity.
+
+    (A) Mean rate traces by cell class (per-unit mean).
+    (B) Mean rate traces by circuit node (per-unit mean).
+    (C) Mean rate traces by anatomical region (per-unit mean).
+
+    Unit counts live in ``fig_probe_trajectory`` panel D.
+    """
     units = _annotate_units(data)
-    nodes = [n for n in CIRCUIT_NODE_ORDER if n in set(units["circuit_node"])]
-    palette = sns.color_palette("deep", n_colors=max(len(nodes), 1))
-    node_color = {n: c for n, c in zip(nodes, palette)}
+    classes = [c for c in data.cell_class_order if c in set(units["cell_type"].astype(str))]
+    nodes = circuit_node_order_for_present(set(units["circuit_node"]))
+    regions = [r for r in data.region_order if r in set(units["region"].astype(str))]
+    class_palette = cell_class_colors(classes)
+    node_color = circuit_node_colors(nodes)
+    region_palette = region_colors(regions)
 
-    fig = plt.figure(figsize=(12.2, 8.0))
-    gs = GridSpec(2, 2, figure=fig, height_ratios=[1.15, 1.0], hspace=0.38, wspace=0.48)
+    fig = plt.figure(figsize=(12.2, 9.6))
+    gs = GridSpec(
+        3, 1, figure=fig,
+        height_ratios=[1.0, 1.0, 1.0],
+        hspace=0.38,
+    )
 
-    # A — overlay (legend outside axes)
+    # A — cell class mean-rate traces
     ax_a = fig.add_subplot(gs[0, 0])
-    for node in nodes:
-        uids = units.loc[units["circuit_node"] == node, "unit_id"].tolist()
-        t, y = _mean_rate_trace(data, uids, bin_size)
-        t, y = downsample_series(t, _smooth(y), MAX_LINE_POINTS)
-        ax_a.plot(t, y, label=node, color=node_color[node], lw=1.2)
+    trace_df = _long_traces_by_key(data, "cell_type", classes, bin_size, max_points=1000)
+    if not trace_df.empty:
+        sns.lineplot(
+            data=trace_df, x="time_s", y="rate_hz", hue="cell_type",
+            hue_order=classes, palette=class_palette, lw=1.0, ax=ax_a, legend=True,
+        )
+        legend_outside(
+            ax_a, title="Cell class", fontsize=9, ncol=1,
+        )
     ax_a.set_xlabel("Time (s)")
     ax_a.set_ylabel("Mean rate (Hz)")
-    # Figure-level legend below — never overlaps traces
-    handles, labels = ax_a.get_legend_handles_labels()
-    if ax_a.get_legend() is not None:
-        ax_a.get_legend().remove()
     sns.despine(ax=ax_a)
     panel_label(ax_a, "A")
 
-    # B — stacked ridges (compressed)
-    ax_b = fig.add_subplot(gs[0, 1])
-    offset = 0.0
-    yticks, ylabels = [], []
-    for node in nodes:
-        uids = units.loc[units["circuit_node"] == node, "unit_id"].tolist()
-        t, y = _mean_rate_trace(data, uids, bin_size)
-        t, y = downsample_series(t, _smooth(y), 900)
-        scale = max(float(np.percentile(y, 95)), 1e-6)
-        yn = y / scale
-        ax_b.fill_between(t, offset, offset + yn, color=node_color[node], alpha=0.55, lw=0)
-        ax_b.plot(t, offset + yn, color=node_color[node], lw=0.7)
-        yticks.append(offset + 0.45)
-        ylabels.append(node)
-        offset += 1.15
-    ax_b.set_yticks(yticks)
-    ax_b.set_yticklabels(ylabels, fontsize=8)
+    # B — circuit-node mean-rate traces
+    ax_b = fig.add_subplot(gs[1, 0])
+    node_df = _long_traces_by_key(
+        data, "circuit_node", nodes, bin_size, max_points=1000, units=units,
+    )
+    if not node_df.empty:
+        sns.lineplot(
+            data=node_df, x="time_s", y="rate_hz", hue="circuit_node",
+            hue_order=nodes, palette=node_color, lw=1.1, ax=ax_b, legend=True,
+        )
+        legend_outside(
+            ax_b, title="Circuit node", fontsize=9, ncol=1,
+        )
     ax_b.set_xlabel("Time (s)")
-    sns.despine(ax=ax_b, left=False)
+    ax_b.set_ylabel("Mean rate (Hz)")
+    sns.despine(ax=ax_b)
     panel_label(ax_b, "B")
 
-    # C — mean rate by node
-    ax_c = fig.add_subplot(gs[1, 0])
-    node_df = (
-        units.groupby("circuit_node", as_index=False)["mean_rate_hz"]
-        .mean()
-    )
-    node_df["circuit_node"] = pd.Categorical(node_df["circuit_node"], nodes, ordered=True)
-    node_df = node_df.sort_values("circuit_node")
-    sns.barplot(
-        data=node_df, x="circuit_node", y="mean_rate_hz",
-        hue="circuit_node", palette=node_color, legend=False, ax=ax_c,
-    )
-    ax_c.set_xlabel("Circuit node")
+    # C — anatomical region mean-rate traces (legend matches traces)
+    ax_c = fig.add_subplot(gs[2, 0])
+    region_df = _long_traces_by_key(data, "region", regions, bin_size, max_points=1000)
+    if not region_df.empty:
+        sns.lineplot(
+            data=region_df, x="time_s", y="rate_hz", hue="region",
+            hue_order=regions, palette=region_palette, lw=1.1, ax=ax_c, legend=True,
+        )
+        legend_outside(
+            ax_c, title="Region", fontsize=9, ncol=1,
+        )
+    ax_c.set_xlabel("Time (s)")
     ax_c.set_ylabel("Mean rate (Hz)")
     sns.despine(ax=ax_c)
     panel_label(ax_c, "C")
 
-    # D — unit counts × mean rate; color by node only (style legend is too crowded)
-    ax_d = fig.add_subplot(gs[1, 1])
-    summary = (
-        units.groupby(["circuit_node", "cell_type"], as_index=False)
-        .agg(n_units=("unit_id", "count"), mean_rate_hz=("mean_rate_hz", "mean"))
+    path = save_pub_figure(
+        fig, output_dir / "fig_population_activity.png", dpi=FIGURE_DPI,
+        rect=(0.08, 0.05, 0.82, 0.97),
     )
-    summary["circuit_node"] = pd.Categorical(summary["circuit_node"], nodes, ordered=True)
-    sns.scatterplot(
-        data=summary, x="n_units", y="mean_rate_hz",
-        hue="circuit_node", palette=node_color, s=55, ax=ax_d, legend=False,
-    )
-    ax_d.set_xlabel("Units")
-    ax_d.set_ylabel("Mean rate (Hz)")
-    sns.despine(ax=ax_d)
-    panel_label(ax_d, "D")
-
-    src = "rates.npy + feedforward" if data.has_ground_truth_rates else "binned spikes"
-    if handles:
-        figure_legend_below(fig, handles, labels, ncol=min(7, len(handles)), fontsize=7, y=0.02)
-    return save_pub_figure(
-        fig, output_dir / "fig_circuit_population.png", dpi=FIGURE_DPI,
-        rect=(0.08, 0.12, 0.98, 0.92),
-    )
+    # Former split stems — drop stale PNGs so the PDF has one page.
+    for stem in ("fig_cell_class_population", "fig_circuit_population"):
+        (Path(output_dir) / f"{stem}.png").unlink(missing_ok=True)
+    return path
 
 
 def plot_fig_cell_class_population(
     data: SimulationOutputs, output_dir: Path, bin_size: float = 0.250,
 ) -> Path:
-    """Fig: cell-class / region population activity (publication panel)."""
-    units = _annotate_units(data)
-    classes = data.cell_class_order
-    regions = data.region_order
+    """Deprecated: content lives in ``fig_population_activity``."""
+    return plot_fig_population_activity(data, output_dir, bin_size)
 
-    fig = plt.figure(figsize=(10.5, 7.2))
-    gs = GridSpec(2, 2, figure=fig, hspace=0.35, wspace=0.30)
 
-    # A — cell class traces
-    ax_a = fig.add_subplot(gs[0, :])
-    trace_df = _long_traces_by_key(data, "cell_type", classes, bin_size, max_points=1000)
-    if not trace_df.empty:
-        sns.lineplot(
-            data=trace_df, x="time_s", y="rate_hz", hue="cell_type",
-            hue_order=classes, palette="tab10", lw=1.0, ax=ax_a,
-        )
-    ax_a.set_xlabel("Time (s)")
-    ax_a.set_ylabel("Mean rate (Hz)")
-    legend_outside(ax_a, fontsize=6, ncol=1, bbox=(1.01, 1.0))
-    sns.despine(ax=ax_a)
-    panel_label(ax_a, "A")
-
-    # B — region traces
-    ax_b = fig.add_subplot(gs[1, 0])
-    region_df = _long_traces_by_key(data, "region", regions, bin_size, max_points=1000)
-    if not region_df.empty:
-        sns.lineplot(
-            data=region_df, x="time_s", y="rate_hz", hue="region",
-            hue_order=regions, palette="Set2", lw=1.1, ax=ax_b,
-        )
-    ax_b.set_xlabel("Time (s)")
-    ax_b.set_ylabel("Mean rate (Hz)")
-    legend_outside(ax_b, fontsize=6)
-    sns.despine(ax=ax_b)
-    panel_label(ax_b, "B")
-
-    # C — violin of per-unit mean rates
-    ax_c = fig.add_subplot(gs[1, 1])
-    plot_df = units.copy()
-    plot_df["cell_type"] = pd.Categorical(plot_df["cell_type"], classes, ordered=True)
-    sns.violinplot(
-        data=plot_df, x="cell_type", y="mean_rate_hz",
-        hue="cell_type", palette="tab10", legend=False,
-        cut=0, inner="quartile", density_norm="width", ax=ax_c,
-    )
-    ax_c.set_xlabel("Cell class")
-    ax_c.set_ylabel("Unit mean rate (Hz)")
-    ax_c.tick_params(axis="x", rotation=35, labelsize=7)
-    sns.despine(ax=ax_c)
-    panel_label(ax_c, "C")
-
-    src = "rates.npy" if data.has_ground_truth_rates else "spikes"
-    return save_pub_figure(
-        fig, output_dir / "fig_cell_class_population.png", dpi=FIGURE_DPI,
-        rect=(0.02, 0.08, 0.98, 0.94),
-    )
+def plot_fig_circuit_population(
+    data: SimulationOutputs, output_dir: Path, bin_size: float = 0.250,
+) -> Path:
+    """Deprecated: content lives in ``fig_population_activity``."""
+    return plot_fig_population_activity(data, output_dir, bin_size)
 
 
 def plot_fig_population_structure(
-    data: SimulationOutputs, output_dir: Path,
+    data: SimulationOutputs, output_dir: Path, max_units: int = 180,
 ) -> Path:
-    """Fig: anatomy / composition / rate heatmap (publication panel)."""
+    """Compressed ground-truth spike raster ordered by circuit node.
+
+    Region × cell-class unit counts live in ``fig_probe_trajectory`` panel D.
+    GT vs sorted spike counts live in ``fig_sorting_summary`` (not repeated here).
+    """
     units = _annotate_units(data)
+    nodes = circuit_node_order_for_present(set(units["circuit_node"]))
 
-    fig = plt.figure(figsize=(10.5, 7.0))
-    gs = GridSpec(2, 2, figure=fig, height_ratios=[1.0, 1.15], hspace=0.35, wspace=0.28)
-
-    # A — unit counts by region × cell class
-    ax_a = fig.add_subplot(gs[0, 0])
-    ct = pd.crosstab(units["region"], units["cell_type"])
-    ct = ct.reindex(
-        index=[r for r in REGION_ORDER if r in ct.index],
-        columns=[c for c in CELL_CLASS_ORDER if c in ct.columns],
-    ).fillna(0)
-    sns.heatmap(ct, annot=True, fmt=".0f", cmap="Blues", cbar=False, ax=ax_a)
-    ax_a.set_xlabel("Cell class")
-    ax_a.set_ylabel("Region")
-    ax_a.tick_params(labelsize=7)
-    panel_label(ax_a, "A")
-
-    # B — mean rate by region × cell class
-    ax_b = fig.add_subplot(gs[0, 1])
-    pivot = units.pivot_table(
-        index="region", columns="cell_type", values="mean_rate_hz", aggfunc="mean",
+    units_r = units.copy()
+    node_rank = {n: i for i, n in enumerate(nodes)}
+    class_rank = {c: i for i, c in enumerate(CELL_CLASS_ORDER)}
+    units_r["node_rank"] = units_r["circuit_node"].map(node_rank).fillna(99)
+    units_r["class_rank"] = units_r["cell_type"].map(class_rank).fillna(99)
+    units_r = units_r.sort_values(
+        ["node_rank", "class_rank", "mean_rate_hz"], ascending=[True, True, False]
     )
-    pivot = pivot.reindex(
-        index=[r for r in REGION_ORDER if r in pivot.index],
-        columns=[c for c in CELL_CLASS_ORDER if c in pivot.columns],
-    )
-    sns.heatmap(pivot, annot=True, fmt=".1f", cmap="mako", ax=ax_b)
-    ax_b.set_xlabel("Cell class")
-    ax_b.set_ylabel("Region")
-    ax_b.tick_params(labelsize=7)
-    panel_label(ax_b, "B")
-
-    # C — rate heatmap (subset of units)
-    ax_c = fig.add_subplot(gs[1, :])
-    if data.has_ground_truth_rates:
-        assert data.rates_hz is not None and data.rate_times_s is not None
-        node_rank = {n: i for i, n in enumerate(CIRCUIT_NODE_ORDER)}
-        class_rank = {c: i for i, c in enumerate(CELL_CLASS_ORDER)}
-        units_h = _annotate_units(data)
-        units_h["node_rank"] = units_h["circuit_node"].map(node_rank).fillna(99)
-        units_h["class_rank"] = units_h["cell_type"].map(class_rank).fillna(99)
-        units_h = units_h.sort_values(
-            ["node_rank", "class_rank", "mean_rate_hz"], ascending=[True, True, False]
-        )
+    if len(units_r) > max_units:
         keep = []
-        for _, grp in units_h.groupby("circuit_node", sort=False):
-            keep.append(grp.head(12))
-        units_h = pd.concat(keep, ignore_index=True)
-        idx_map = _unit_index_map(data.units)
-        rows = [idx_map[int(u)] for u in units_h["unit_id"] if int(u) in idx_map]
-        mat = data.rates_hz[rows]
-        t = data.rate_times_s
-        if len(t) > 800:
-            step = int(np.ceil(len(t) / 800))
-            mat = mat[:, ::step]
-            t = t[::step]
-        sns.heatmap(
-            mat, cmap="viridis", cbar_kws={"label": "Rate (Hz)", "shrink": 0.8},
-            xticklabels=False, yticklabels=False, ax=ax_c,
-        )
-        ax_c.set_xlabel("Time →")
-        ax_c.set_ylabel("Units (by circuit node)")
-        y = 0
-        for node in CIRCUIT_NODE_ORDER:
-            n_here = int((units_h["circuit_node"] == node).sum())
-            if n_here == 0:
-                continue
-            ax_c.text(2, y + n_here / 2, node, color="white", fontsize=7, va="center")
-            y += n_here
-            if y < len(rows):
-                ax_c.axhline(y, color="white", lw=0.6, alpha=0.55)
-    else:
-        ax_c.text(0.5, 0.5, "rates.npy not available", ha="center", va="center")
-        ax_c.set_axis_off()
-    panel_label(ax_c, "C")
+        per = max(8, max_units // max(len(nodes), 1))
+        for _, grp in units_r.groupby("circuit_node", sort=False):
+            keep.append(grp.head(per))
+        units_r = pd.concat(keep, ignore_index=True)
 
-    return save_pub_figure(
-        fig, output_dir / "fig_population_structure.png", dpi=FIGURE_DPI,
-        rect=(0.10, 0.08, 0.98, 0.94),
+    fig, ax = plt.subplots(figsize=(14.0, 9.0))
+    fig.subplots_adjust(left=0.10, right=0.98, top=0.96, bottom=0.08)
+
+    spike_groups = data.spikes_gt.groupby("unit_id")["time"].apply(list).to_dict()
+    spike_rows = [
+        spike_groups.get(int(uid), [])
+        for uid in units_r["unit_id"].tolist()
+    ]
+    ax.eventplot(
+        spike_rows,
+        orientation="horizontal",
+        colors="black",
+        linewidths=0.28,
+        linelengths=0.35,
+        lineoffsets=np.arange(len(spike_rows)),
     )
+    y = 0
+    for node in nodes:
+        n_here = int((units_r["circuit_node"] == node).sum())
+        if n_here == 0:
+            continue
+        ax.axhline(y - 0.5, color="crimson", lw=0.5, alpha=0.45)
+        ax.text(
+            -0.02 * data.session_duration_s, y + n_here / 2, node,
+            fontsize=9, va="center", ha="right",
+        )
+        y += n_here
+    ax.set_xlim(0, data.session_duration_s)
+    ax.set_ylim(len(units_r) - 0.5, -0.5)
+    ax.set_xlabel("Time (s)")
+    ax.set_ylabel("")
+    ax.set_yticks([])
+    sns.despine(ax=ax)
+
+    path = save_pub_figure(
+        fig, output_dir / "fig_population_structure.png", dpi=FIGURE_DPI,
+        pad_inches=0.25,
+        adjust=False,
+    )
+    (Path(output_dir) / "fig_spike_raster_summary.png").unlink(missing_ok=True)
+    return path
 
 
 def plot_fig_spike_raster_summary(
-    data: SimulationOutputs, output_dir: Path, max_units: int = 150,
+    data: SimulationOutputs, output_dir: Path, max_units: int = 180,
 ) -> Path:
-    """Fig: compressed spike raster + sorting comparison (publication panel)."""
-    units = _annotate_units(data)
-    node_rank = {n: i for i, n in enumerate(CIRCUIT_NODE_ORDER)}
-    class_rank = {c: i for i, c in enumerate(CELL_CLASS_ORDER)}
-    units["node_rank"] = units["circuit_node"].map(node_rank).fillna(99)
-    units["class_rank"] = units["cell_type"].map(class_rank).fillna(99)
-    units = units.sort_values(
-        ["node_rank", "class_rank", "mean_rate_hz"], ascending=[True, True, False]
-    )
-    if len(units) > max_units:
-        keep = []
-        per = max(10, max_units // max(len(CIRCUIT_NODE_ORDER), 1))
-        for _, grp in units.groupby("circuit_node", sort=False):
-            keep.append(grp.head(per))
-        units = pd.concat(keep, ignore_index=True)
-
-    fig = plt.figure(figsize=(10.5, 6.5))
-    gs = GridSpec(1, 2, figure=fig, width_ratios=[2.2, 1.0], wspace=0.28)
-
-    # A — raster
-    ax_a = fig.add_subplot(gs[0, 0])
-    spike_groups = data.spikes_gt.groupby("unit_id")["time"].apply(list).to_dict()
-    for y, uid in enumerate(units["unit_id"].tolist()):
-        times = spike_groups.get(int(uid), [])
-        if times:
-            ax_a.scatter(
-                times, np.full(len(times), y),
-                s=0.25, c="black", marker="|", linewidths=0.15,
-            )
-    y = 0
-    for node in CIRCUIT_NODE_ORDER:
-        n_here = int((units["circuit_node"] == node).sum())
-        if n_here == 0:
-            continue
-        ax_a.axhline(y - 0.5, color="crimson", lw=0.5, alpha=0.45)
-        ax_a.text(
-            -0.02 * data.session_duration_s, y + n_here / 2, node,
-            fontsize=7, va="center", ha="right",
-        )
-        y += n_here
-    ax_a.set_xlim(0, data.session_duration_s)
-    ax_a.set_ylim(len(units), -1)
-    ax_a.set_xlabel("Time (s)")
-    ax_a.set_ylabel("Units")
-    ax_a.set_yticks([])
-    sns.despine(ax=ax_a)
-    panel_label(ax_a, "A")
-
-    # B — GT vs sorted spike counts
-    ax_b = fig.add_subplot(gs[0, 1])
-    rows = []
-    for ct in data.cell_class_order:
-        uids = data.units.loc[data.units["cell_type"] == ct, "unit_id"]
-        gt_n = int(data.spikes_gt[data.spikes_gt["unit_id"].isin(uids)].shape[0])
-        so_n = int(data.spikes_sorted[data.spikes_sorted["unit_id"].isin(uids)].shape[0])
-        rows.append({"cell_type": ct, "source": "ground_truth", "spikes": gt_n})
-        rows.append({"cell_type": ct, "source": "sorted", "spikes": so_n})
-    cmp = pd.DataFrame(rows)
-    sns.barplot(
-        data=cmp, x="spikes", y="cell_type", hue="source",
-        palette={"ground_truth": "#4C72B0", "sorted": "#DD8452"},
-        ax=ax_b,
-    )
-    ax_b.set_xlabel("Total spikes")
-    ax_b.set_ylabel("")
-    legend_outside(ax_b, fontsize=7, ncol=1, bbox=(1.02, 1.0))
-    sns.despine(ax=ax_b)
-    panel_label(ax_b, "B")
-
-    return save_pub_figure(
-        fig, output_dir / "fig_spike_raster_summary.png", dpi=FIGURE_DPI,
-        rect=(0.02, 0.08, 0.98, 0.94),
-    )
+    """Deprecated: raster lives in ``fig_population_structure``."""
+    return plot_fig_population_structure(data, output_dir, max_units=max_units)
 
 
 def generate_population_activity_plots(
@@ -422,9 +284,14 @@ def generate_population_activity_plots(
     output_dir = Path(output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
     paths = [
-        plot_fig_circuit_population(data, output_dir, rate_bin_size),
-        plot_fig_cell_class_population(data, output_dir, rate_bin_size),
+        plot_fig_circuit_feedforward(data, output_dir),
+        plot_fig_population_activity(data, output_dir, rate_bin_size),
         plot_fig_population_structure(data, output_dir),
-        plot_fig_spike_raster_summary(data, output_dir),
     ]
+    for stem in (
+        "fig_spike_raster_summary",
+        "fig_cell_class_population",
+        "fig_circuit_population",
+    ):
+        (output_dir / f"{stem}.png").unlink(missing_ok=True)
     return paths

@@ -1,0 +1,7 @@
+region,layer,acronym,depth_start_um,depth_end_um,ccf_ap_um,ccf_ml_um,ccf_dv_um,insertion_ap_mm,insertion_ml_mm,insertion_depth_um,insertion_angle_ap_deg,insertion_angle_ml_deg,probe_type,active_site_pitch_um,notes
+CA1,oriens,CA1so,0,180,5400,3500,1200,-1.8,1.5,2200,5,0,neuropixels_1.0,20,example NTE-style export: dorsal CA1 oriens
+CA1,pyramidal,CA1sp,180,420,5400,3500,1400,-1.8,1.5,2200,5,0,neuropixels_1.0,20,CA1 pyramidal layer
+CA1,radiatum,CA1sr,420,650,5400,3500,1600,-1.8,1.5,2200,5,0,neuropixels_1.0,20,CA1 radiatum
+CA3,pyramidal,CA3,650,1100,5200,3600,2000,-1.8,1.5,2200,5,0,neuropixels_1.0,20,CA3 pyramidal
+DG,granule,DG-sg,1100,1500,5100,3550,2400,-1.8,1.5,2200,5,0,neuropixels_1.0,20,DG granule cell layer
+DG,hilus,DG-po,1500,1750,5100,3550,2600,-1.8,1.5,2200,5,0,neuropixels_1.0,20,DG hilus / polymorph

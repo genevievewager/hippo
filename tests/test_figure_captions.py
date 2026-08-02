@@ -15,10 +15,10 @@ def test_caption_for_known_stem_is_numbered_and_descriptive():
 
 
 def test_caption_for_cell_class_pattern():
-    path = Path("figures/neural/example_units_CA1_pyr.png")
+    path = Path("figures/neural/fig_population_tuning.png")
     text = caption_for(path, figure_number=1)
-    assert "CA1 pyramidal" in text
-    assert "spike" in text.lower()
+    assert "cell class" in text.lower()
+    assert "heatmap" in text.lower() or "rate" in text.lower()
 
 
 def test_caption_includes_sorted_source_note_for_decoder_path():
@@ -51,13 +51,16 @@ def test_simulation_pngs_group_by_category_subdir(tmp_path: Path):
         ("features", "behavior_features_over_time.png"),
         ("neural", "ground_truth_spike_raster_all_cell_classes.png"),
         ("sorting", "sorting_loss_by_cell_class.png"),
-        ("report", "simulation_report_summary.png"),
     ):
         folder = figures / subdir
         folder.mkdir(parents=True)
         (folder / name).write_bytes(b"")
 
     groups = collect_pngs_by_section(figures)
-    assert set(groups) == {"behavior", "features", "neural", "sorting", "report"}
-    assert len(groups["behavior"]) == 1
+    # features/ collapses into the behavior section.
+    assert set(groups) == {"behavior", "neural", "sorting"}
+    assert len(groups["behavior"]) == 2
     assert len(groups["neural"]) == 1
+    assert "simulation_report_summary" not in {
+        p.stem for paths in groups.values() for p in paths
+    }
