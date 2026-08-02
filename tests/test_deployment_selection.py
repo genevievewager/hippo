@@ -126,6 +126,41 @@ def test_scores_table_has_all_windows():
     assert {"target", "decoder", "feature_mode", "metric_value", "selected_best"} <= set(scores.columns)
 
 
+def test_scores_table_preserves_composite_feature_modes():
+    """F×E schema: feature_type is base spikes; feature_mode is the composite key."""
+    from realtime.deployment_selection import _composite_feature_mode
+
+    rows = []
+    for mode, emb in (
+        ("counts", "identity"),
+        ("global_pca", "global_pca"),
+        ("layer_pca", "layer_pca"),
+        ("global_isomap", "global_isomap"),
+    ):
+        rows.append({
+            "spike_source": "sorted",
+            "target_name": "speed",
+            "decoder_name": "ridge",
+            "feature_type": "counts",
+            "feature_mode": mode,
+            "embedding_type": emb,
+            "decode_window_s": 0.25,
+            "primary_metric": "r2",
+            "r2": 0.5,
+            "n_train_samples": 100,
+            "n_test_samples": 40,
+            "realtime_compatible": mode != "global_isomap",
+            "manifold_n_components": None if mode == "counts" else 8,
+        })
+    metrics = pd.DataFrame(rows)
+    scores = build_all_window_scores_table(metrics)
+    assert set(scores["feature_mode"]) == {
+        "counts", "global_pca", "layer_pca", "global_isomap",
+    }
+    # Helper must not collapse composite modes back to base feature_type.
+    assert _composite_feature_mode(metrics.iloc[2]) == "layer_pca"
+
+
 def test_uniform_window_warning_when_collapsed():
     best = _fake_best()
     best["recommended_realtime_window_s"] = 0.25
@@ -193,3 +228,70 @@ def test_payload_rejects_empty_sorted():
             comparison_dir=Path("/tmp"),
             input_dir=Path("/tmp"),
         )
+
+
+def test_write_artifacts_rejects_ground_truth_only(tmp_path: Path):
+    exp = tmp_path / "run_gt"
+    comp = exp / "decoder_comparison"
+    comp.mkdir(parents=True)
+    gt_only = pd.DataFrame([{
+        "target_name": "position",
+        "best_decoder_name": "ridge",
+        "best_decode_window_s": 0.25,
+        "recommended_realtime_window_s": 0.25,
+        "recommended_realtime_decoder_name": "ridge",
+        "best_feature_type": "counts",
+        "best_metric_value": 1.0,
+        "primary_metric": "mean_position_error_cm",
+        "spike_source": "ground_truth",
+        "decoder_config_json": "{}",
+        "realtime_decoder_config_json": "{}",
+    }])
+    with pytest.raises(ValueError, match="sorted"):
+        write_deployment_selection_artifacts(
+            experiment_dir=exp,
+            comparison_dir=comp,
+            input_dir=tmp_path,
+            metrics_df=pd.DataFrame(),
+            best_df=gt_only,
+        )
+
+
+def test_isomap_best_accuracy_remaps_model_path():
+    row = {
+        "target_name": "position",
+        "best_decoder_name": "ridge",
+        "best_decode_window_s": 0.5,
+        "recommended_realtime_window_s": 0.25,
+        "recommended_realtime_decoder_name": "ridge",
+        "best_feature_type": "global_isomap",
+        "best_metric_value": 1.0,
+        "primary_metric": "mean_position_error_cm",
+        "spike_source": "sorted",
+        "best_window_model_path": "models/by_window/global_isomap/k8/w0.500s/position.joblib",
+        "realtime_model_path": "models/by_window/counts/kna/w0.250s/position.joblib",
+        "manifold_transform_path": "models/manifold_transforms/global_isomap_k8_w0500ms",
+        "decoder_config_json": json.dumps({
+            "decoder_name": "ridge",
+            "feature_type": "global_isomap",
+            "manifold_type": "isomap",
+            "manifold_transform_path": "models/manifold_transforms/global_isomap_k8_w0500ms",
+        }),
+        "realtime_decoder_config_json": json.dumps({
+            "decoder_name": "ridge",
+            "feature_type": "counts",
+            "manifold_type": "none",
+        }),
+    }
+    payload = build_best_realtime_decoders_payload(
+        pd.DataFrame([row]),
+        comparison_dir=Path("/tmp/comp"),
+        input_dir=Path("/tmp"),
+        selection_policy="best_accuracy",
+    )
+    tgt = payload["targets"]["position"]
+    assert tgt["selected_feature_mode"] == "counts"
+    assert tgt["model_artifact_path"] == "models/by_window/counts/kna/w0.250s/position.joblib"
+    assert tgt["manifold_transform_path"] is None
+    assert tgt["selected_causal_window_s"] == 0.25
+    assert tgt.get("remapped_from_offline_isomap") is True

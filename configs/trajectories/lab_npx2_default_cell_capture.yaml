@@ -1,0 +1,67 @@
+# Probabilistic cell-type capture for the default lab NP2.0 trajectory.
+# Densities are per mm of probe depth within each region band.
+# Replace or override when a Trajectory Explorer export / histology table is available.
+
+cell_capture:
+  visual_cortex:
+    include: false
+    unit_density_per_mm: 0
+    cell_type_probabilities:
+      visual_units_optional: 1.0
+    note: "Probe traverses visual cortex superficially; excluded by default unless modeling cortical contamination."
+
+  HPF_ProS_transition:
+    include: true
+    unit_density_per_mm: 20
+    cell_type_probabilities:
+      Sub_bvc: 0.40
+      CA1_pyr: 0.20
+      INT_SUB: 0.20
+      MEC_hd: 0.20
+
+  subiculum:
+    include: true
+    unit_density_per_mm: 45
+    cell_type_probabilities:
+      Sub_bvc: 0.70
+      MEC_hd: 0.10
+      MEC_speed: 0.10
+      INT_SUB: 0.10
+
+  dentate_gyrus:
+    include: true
+    unit_density_per_mm: 20
+    cell_type_probabilities:
+      DG_granule: 0.30
+      INT_DG: 0.20
+      Sub_bvc: 0.20
+      MEC_hd: 0.15
+      MEC_speed: 0.15
+    note: "Screenshot suggests DG molecular layer rather than clear dense granule layer, so DG_granule is not dominant."
+
+  entorhinal_cortex:
+    include: true
+    unit_density_per_mm: 50
+    cell_type_probabilities:
+      MEC_grid: 0.40
+      MEC_hd: 0.30
+      MEC_speed: 0.20
+      Sub_bvc: 0.10
+
+  deep_entorhinal_HATA:
+    include: true
+    unit_density_per_mm: 25
+    cell_type_probabilities:
+      MEC_hd: 0.30
+      MEC_speed: 0.30
+      Sub_bvc: 0.20
+      MEC_grid: 0.20
+
+recording_capture:
+  detection_radius_um: 60
+  amplitude_decay_um: 35
+  min_template_amplitude_uv: 20
+  max_template_amplitude_uv: 200
+  sorting_miss_rate_default: 0.12
+  jitter_ms_default: 0.3
+  contamination_rate_default: 0.03

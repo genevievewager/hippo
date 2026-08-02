@@ -70,7 +70,11 @@ def parse_args() -> argparse.Namespace:
     )
     p.add_argument("--isomap-latent-dim", type=int, default=8)
     p.add_argument("--max-models", choices=["quick", "full"], default="quick")
-    p.add_argument("--closed-loop-target", default="spatial_context")
+    p.add_argument(
+        "--closed-loop-target",
+        default="position",
+        help="Primary closed-loop / realtime target (default: continuous position)",
+    )
     p.add_argument(
         "--selection-policy",
         choices=["best_accuracy", "shortest_near_optimal"],
@@ -79,8 +83,11 @@ def parse_args() -> argparse.Namespace:
     p.add_argument(
         "--partitions",
         nargs="+",
-        default=["all_units", "subfield", "layer", "ca1_deep_superficial", "cell_class"],
-        help=f"Partition names. Available: {available_partitions()}",
+        default=["auto"],
+        help=(
+            "Partition names, or 'auto' to choose from captured regions "
+            f"(SUB/ENT-aware). Available: {available_partitions()}"
+        ),
     )
     p.add_argument("--integration-window", type=float, default=0.250)
     p.add_argument("--enable-temporal-manifold", action="store_true")
@@ -184,14 +191,22 @@ def stage_fit_manifolds(args: argparse.Namespace) -> None:
 
 
 def stage_compare_partitions(args: argparse.Namespace) -> None:
+    from hippo.anatomy.hippocampal_system import geometry_summary, recommended_partitions
+
     input_dir = _require_input(args, "compare-partitions")
     units_path = input_dir / "units.csv"
     if not units_path.exists():
         raise FileNotFoundError(f"Missing {units_path}")
     units = normalize_unit_metadata(pd.read_csv(units_path))
-    results = apply_partitions(units, args.partitions, min_units_per_group=5)
+    partition_names = list(args.partitions)
+    if not partition_names or partition_names == ["auto"] or "auto" in partition_names:
+        partition_names = recommended_partitions(units_df=units)
+    geom = geometry_summary(units)
+    results = apply_partitions(units, partition_names, min_units_per_group=5)
     out = Path(args.output) / "manifolds" / "partitions"
     out.mkdir(parents=True, exist_ok=True)
+    with open(out / "geometry_summary.json", "w") as f:
+        json.dump(geom, f, indent=2)
     summary = []
     for name, part in results.items():
         part.group_metadata.to_csv(out / f"{name}_groups.csv", index=False)

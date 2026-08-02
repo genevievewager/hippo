@@ -17,6 +17,34 @@ def _metric_direction(target: str) -> tuple[str, str]:
     return PRIMARY_METRIC[target]
 
 
+def _embedding_series(df: pd.DataFrame) -> pd.Series:
+    """Resolve embedding column; fall back to legacy feature_type."""
+    if "embedding_type" in df.columns:
+        emb = df["embedding_type"].astype(str)
+        # Legacy rows may leave embedding blank; fall back to feature_type.
+        legacy = df["feature_type"].astype(str) if "feature_type" in df.columns else emb
+        return emb.where(emb.notna() & (emb != "") & (emb != "nan"), legacy)
+    return df["feature_type"].astype(str)
+
+
+def _is_counts_like_row(df: pd.DataFrame) -> pd.Series:
+    emb = _embedding_series(df)
+    feat = df["feature_type"].astype(str) if "feature_type" in df.columns else emb
+    identity_f = (emb == "identity") & feat.isin(
+        ("counts", "rates", "sqrt_counts", "log1p_counts", "zscore_counts")
+    )
+    legacy_f = feat.isin(("counts", "rates")) & ~emb.isin(set(MANIFOLD_FEATURE_MODES))
+    return identity_f | legacy_f
+
+
+def _is_manifold_row(df: pd.DataFrame) -> pd.Series:
+    emb = _embedding_series(df)
+    return emb.isin(MANIFOLD_FEATURE_MODES) | emb.isin({
+        "pls", "bayesian_place_tuning",
+        "global_pca", "region_pca", "layer_pca", "cell_type_pca", "rate_model_pca",
+    })
+
+
 def interpret_manifold_vs_counts(
     manifold_value: float,
     counts_value: float,
@@ -50,7 +78,7 @@ def interpret_manifold_vs_counts(
 def build_best_manifold_decoder_table(metrics_df: pd.DataFrame) -> pd.DataFrame:
     """Best manifold-informed setup per target (excludes raw counts/rates)."""
     rows = []
-    man = metrics_df[metrics_df["feature_type"].isin(MANIFOLD_FEATURE_MODES)].copy()
+    man = metrics_df[_is_manifold_row(metrics_df)].copy()
     if man.empty:
         return pd.DataFrame()
     for target in ALL_TARGETS:
@@ -65,7 +93,8 @@ def build_best_manifold_decoder_table(metrics_df: pd.DataFrame) -> pd.DataFrame:
         rows.append({
             "target_name": target,
             "primary_metric": metric_key,
-            "best_feature_type": best.get("feature_type"),
+            "best_feature_type": best.get("feature_mode", best.get("feature_type")),
+            "best_embedding_type": best.get("embedding_type"),
             "best_manifold_type": best.get("manifold_type"),
             "best_manifold_grouping": best.get("manifold_grouping"),
             "best_manifold_n_components": best.get("manifold_n_components"),
@@ -90,8 +119,8 @@ def build_manifold_vs_counts_summary(metrics_df: pd.DataFrame) -> pd.DataFrame:
             metric_key, direction = _metric_direction(target)
             if metric_key not in target_df.columns:
                 continue
-            counts_df = target_df[target_df["feature_type"].isin(("counts", "rates"))]
-            man_df = target_df[target_df["feature_type"].isin(MANIFOLD_FEATURE_MODES)]
+            counts_df = target_df[_is_counts_like_row(target_df)]
+            man_df = target_df[_is_manifold_row(target_df)]
             if counts_df.empty or man_df.empty:
                 continue
             c_idx = counts_df[metric_key].idxmin() if direction == "lower" else counts_df[metric_key].idxmax()
@@ -108,11 +137,12 @@ def build_manifold_vs_counts_summary(metrics_df: pd.DataFrame) -> pd.DataFrame:
                 "spike_source": spike_source,
                 "target_name": target,
                 "primary_metric": metric_key,
-                "best_counts_feature_type": c_row["feature_type"],
+                "best_counts_feature_type": c_row.get("feature_mode", c_row["feature_type"]),
                 "best_counts_decoder": c_row["decoder_name"],
                 "best_counts_window_s": c_row["decode_window_s"],
                 "best_counts_metric_value": c_val,
-                "best_manifold_feature_type": m_row["feature_type"],
+                "best_manifold_feature_type": m_row.get("feature_mode", m_row["feature_type"]),
+                "best_manifold_embedding_type": m_row.get("embedding_type"),
                 "best_manifold_decoder": m_row["decoder_name"],
                 "best_manifold_window_s": m_row["decode_window_s"],
                 "best_manifold_n_components": m_row.get("manifold_n_components"),
@@ -145,7 +175,12 @@ def enrich_best_decoder_table(best_df: pd.DataFrame, metrics_df: pd.DataFrame) -
         direction = PRIMARY_METRIC[target][1]
         idx = target_df[metric_key].idxmin() if direction == "lower" else target_df[metric_key].idxmax()
         win = target_df.loc[idx]
-        out.at[i, "best_feature_type"] = win.get("feature_type", row.get("best_feature_type"))
+        # Prefer composite feature_mode (e.g. layer_pca); feature_type alone is the
+        # base spike feature (counts/rates) in the F×E schema.
+        mode = win.get("feature_mode")
+        if mode is None or (isinstance(mode, float) and pd.isna(mode)) or not str(mode).strip():
+            mode = win.get("feature_type", row.get("best_feature_type"))
+        out.at[i, "best_feature_type"] = mode
         out.at[i, "best_manifold_type"] = win.get("manifold_type")
         out.at[i, "best_manifold_grouping"] = win.get("manifold_grouping")
         out.at[i, "best_manifold_n_components"] = win.get("manifold_n_components")
@@ -159,16 +194,72 @@ def write_manifold_decoder_report(
     vs_counts: pd.DataFrame,
     best_manifold: pd.DataFrame,
     explained_df: pd.DataFrame | None = None,
+    *,
+    units_df: pd.DataFrame | None = None,
+    geometry: dict[str, Any] | None = None,
 ) -> Path:
     """Generate manifold_decoder_report.md from metrics (no hard-coded conclusions)."""
     output_dir = Path(output_dir)
+    if geometry is None and units_df is not None:
+        from hippo.anatomy.hippocampal_system import geometry_summary
+
+        geometry = geometry_summary(units_df)
+    elif geometry is None:
+        # Try experiment root or parent summary if present.
+        geometry = {}
+        for candidate in (
+            output_dir / "geometry_summary.json",
+            output_dir.parent / "summary.json",
+            output_dir.parent.parent / "summary.json",
+        ):
+            if candidate.exists():
+                try:
+                    payload = json.loads(candidate.read_text())
+                    if "circuit_profile" in payload:
+                        geometry = payload
+                    elif "geometry" in payload:
+                        geometry = payload["geometry"]
+                    break
+                except Exception:
+                    pass
+
+    profile = (geometry or {}).get("circuit_profile", "trisynaptic_full")
+    present = (geometry or {}).get("present_regions") or []
+    if profile == "sub_ent_dominant":
+        intro = (
+            "Region-specific PCA tests whether Subiculum / MEC (entorhinal) "
+            "populations — the dominant capture on this trajectory — contain "
+            "distinct low-dimensional codes for behavioral variables. If "
+            "region-specific manifolds outperform global PCA, preserving "
+            "anatomical structure helps decoding."
+        )
+        flow_note = (
+            f"Circuit profile: `{profile}` (MEC→SUB coupling emphasized; "
+            f"present regions: {', '.join(present) or 'unknown'})."
+        )
+    elif present:
+        intro = (
+            "Region-specific PCA tests whether each captured hippocampal-system "
+            f"region ({', '.join(present)}) contains a distinct low-dimensional "
+            "code for behavioral variables. If region-specific manifolds "
+            "outperform global PCA, preserving anatomical structure helps decoding."
+        )
+        flow_note = f"Circuit profile: `{profile}`."
+    else:
+        intro = (
+            "Region-specific PCA tests whether each hippocampal-system region "
+            "contains a distinct low-dimensional code for behavioral variables. "
+            "If region-specific manifolds outperform global PCA, this suggests "
+            "that preserving anatomical structure helps decoding."
+        )
+        flow_note = f"Circuit profile: `{profile}`."
+
     lines = [
         "# Manifold-informed decoder report",
         "",
-        "Region-specific PCA tests whether each hippocampal subregion contains a "
-        "distinct low-dimensional code for behavioral variables. If region-specific "
-        "manifolds outperform global PCA, this suggests that preserving anatomical "
-        "structure helps decoding.",
+        intro,
+        "",
+        flow_note,
         "",
         "## 1. Manifold vs raw counts",
         "",

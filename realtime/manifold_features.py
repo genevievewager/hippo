@@ -15,10 +15,12 @@ from typing import Any
 import joblib
 import numpy as np
 import pandas as pd
+from sklearn.cross_decomposition import PLSRegression
 from sklearn.decomposition import PCA
 from sklearn.base import BaseEstimator, TransformerMixin
 
 # Feature modes understood by the decoder comparison / realtime pipeline.
+# Legacy combined modes (F+E) kept for backward compatibility with --feature-modes.
 IDENTITY_FEATURE_MODES = ("counts", "rates")
 MANIFOLD_FEATURE_MODES = (
     "global_pca",
@@ -26,10 +28,25 @@ MANIFOLD_FEATURE_MODES = (
     "layer_pca",
     "cell_type_pca",
     "rate_model_pca",
+    "pls",
+    "bayesian_place_tuning",
     "global_isomap",
     "global_isomap_distilled",
 )
 ALL_FEATURE_MODES = IDENTITY_FEATURE_MODES + MANIFOLD_FEATURE_MODES
+# Embedding-only names (search dimension E); identity is pass-through after F.
+EMBEDDING_TYPES = (
+    "identity",
+    "global_pca",
+    "region_pca",
+    "layer_pca",
+    "cell_type_pca",
+    "rate_model_pca",
+    "pls",
+    "bayesian_place_tuning",
+    "global_isomap",
+    "global_isomap_distilled",
+)
 
 # Offline-only static modes: evaluated in comparison, not auto-deployed realtime.
 # Distilled Isomap is realtime-eligible when latency/distortion gates pass.
@@ -56,6 +73,9 @@ GROUPING_COLUMN = {
     "global_pca": None,
     "global_isomap": None,
     "global_isomap_distilled": None,
+    "pls": None,
+    "bayesian_place_tuning": None,
+    "identity": None,
     "region_pca": "region",
     "layer_pca": "layer",
     "cell_type_pca": "cell_type",
@@ -87,8 +107,12 @@ def grouping_for_feature_mode(feature_mode: str) -> str | None:
 
 
 def manifold_type_for_feature_mode(feature_mode: str) -> str:
-    if feature_mode in IDENTITY_FEATURE_MODES:
+    if feature_mode in IDENTITY_FEATURE_MODES or feature_mode == "identity":
         return "none"
+    if feature_mode == "pls":
+        return "pls"
+    if feature_mode == "bayesian_place_tuning":
+        return "bayesian_place_tuning"
     if feature_mode.endswith("_pca") or feature_mode == "global_pca":
         return "pca"
     if feature_mode == "global_isomap_distilled" or feature_mode.endswith(
@@ -103,6 +127,126 @@ def manifold_type_for_feature_mode(feature_mode: str) -> str:
 def is_realtime_compatible_feature_mode(feature_mode: str) -> bool:
     """Return False for offline-only modes such as standard Isomap."""
     return feature_mode not in OFFLINE_ONLY_FEATURE_MODES
+
+
+class PassThroughEmbedding(BaseEstimator, TransformerMixin):
+    """Identity embedding E: pass feature vectors through unchanged."""
+
+    def __init__(self, embedding_type: str = "identity"):
+        self.embedding_type = embedding_type
+        self.n_features_in_: int | None = None
+        self.n_features_out_: int | None = None
+
+    def fit(self, X: np.ndarray, y: Any = None):
+        X = np.asarray(X, dtype=float)
+        self.n_features_in_ = int(X.shape[1])
+        self.n_features_out_ = self.n_features_in_
+        return self
+
+    def transform(self, X: np.ndarray) -> np.ndarray:
+        return np.asarray(X, dtype=float)
+
+    def get_metadata(self) -> dict[str, Any]:
+        return {
+            "manifold_type": manifold_type_for_feature_mode(self.embedding_type),
+            "manifold_grouping": None,
+            "manifold_n_components": None,
+            "actual_n_features": self.n_features_out_,
+            "explained_variance_ratio": None,
+            "groups": [],
+            "realtime_compatible": True,
+        }
+
+    def save(self, output_dir: Path) -> None:
+        output_dir = Path(output_dir)
+        output_dir.mkdir(parents=True, exist_ok=True)
+        with open(output_dir / "meta.json", "w") as f:
+            json.dump({
+                "class_name": "PassThroughEmbedding",
+                "embedding_type": self.embedding_type,
+                "n_features_in": self.n_features_in_,
+                "n_features_out": self.n_features_out_,
+            }, f, indent=2)
+
+    @classmethod
+    def load(cls, input_dir: Path) -> "PassThroughEmbedding":
+        with open(Path(input_dir) / "meta.json") as f:
+            meta = json.load(f)
+        obj = cls(embedding_type=meta.get("embedding_type", "identity"))
+        obj.n_features_in_ = meta.get("n_features_in")
+        obj.n_features_out_ = meta.get("n_features_out")
+        return obj
+
+
+class PLSEmbedding(BaseEstimator, TransformerMixin):
+    """Supervised PLS projection fit on training features + continuous targets."""
+
+    def __init__(self, n_components: int = 3, random_state: int = 42):
+        self.n_components = int(n_components)
+        self.random_state = int(random_state)
+        self.pls_: PLSRegression | None = None
+        self.actual_n_components_: int | None = None
+
+    def fit(self, X: np.ndarray, y: Any = None):
+        if y is None:
+            raise ValueError("PLSEmbedding.fit requires y (supervised targets)")
+        X = np.asarray(X, dtype=float)
+        y = np.asarray(y, dtype=float)
+        if y.ndim == 1:
+            y = y.reshape(-1, 1)
+        n_comp = min(self.n_components, X.shape[0] - 1, X.shape[1], y.shape[1] * X.shape[1])
+        n_comp = max(1, int(n_comp))
+        self.pls_ = PLSRegression(n_components=n_comp)
+        self.pls_.fit(X, y)
+        self.actual_n_components_ = n_comp
+        return self
+
+    def transform(self, X: np.ndarray) -> np.ndarray:
+        if self.pls_ is None:
+            raise RuntimeError("PLSEmbedding must be fit before transform")
+        return np.asarray(self.pls_.transform(np.asarray(X, dtype=float)))
+
+    def get_metadata(self) -> dict[str, Any]:
+        return {
+            "manifold_type": "pls",
+            "manifold_grouping": None,
+            "manifold_n_components": self.n_components,
+            "actual_n_features": self.actual_n_components_,
+            "explained_variance_ratio": None,
+            "groups": [{
+                "group_name": "all",
+                "n_units": None,
+                "n_components": self.actual_n_components_,
+                "explained_variance_sum": None,
+                "explained_variance_by_component": None,
+            }],
+            "realtime_compatible": True,
+        }
+
+    def save(self, output_dir: Path) -> None:
+        output_dir = Path(output_dir)
+        output_dir.mkdir(parents=True, exist_ok=True)
+        joblib.dump(self.pls_, output_dir / "pls.joblib")
+        with open(output_dir / "meta.json", "w") as f:
+            json.dump({
+                "class_name": "PLSEmbedding",
+                "n_components": self.n_components,
+                "actual_n_components": self.actual_n_components_,
+                "random_state": self.random_state,
+            }, f, indent=2)
+
+    @classmethod
+    def load(cls, input_dir: Path) -> "PLSEmbedding":
+        input_dir = Path(input_dir)
+        with open(input_dir / "meta.json") as f:
+            meta = json.load(f)
+        obj = cls(
+            n_components=meta["n_components"],
+            random_state=meta.get("random_state", 42),
+        )
+        obj.pls_ = joblib.load(input_dir / "pls.joblib")
+        obj.actual_n_components_ = meta.get("actual_n_components")
+        return obj
 
 
 class IdentityFeatures(BaseEstimator, TransformerMixin):
@@ -529,11 +673,17 @@ def _group_labels_from_units(
     grouping_col: str,
 ) -> list[str] | None:
     """Return group label per unit_id column order, or None if column missing."""
+    from hippo.anatomy.hippocampal_system import canonicalize_region
+
     units_df = units_df.copy()
     col = grouping_col
     if col not in units_df.columns:
         if grouping_col == "rate_model" and "ratinabox_class" in units_df.columns:
             col = "ratinabox_class"
+        elif grouping_col == "region" and "region_canonical" in units_df.columns:
+            col = "region_canonical"
+        elif grouping_col == "region" and "subfield" in units_df.columns:
+            col = "subfield"
         else:
             return None
     unit_ids = list(unit_ids)
@@ -543,7 +693,11 @@ def _group_labels_from_units(
         if uid not in indexed.index:
             labels.append("unknown")
         else:
-            labels.append(str(indexed.loc[uid, col]))
+            val = indexed.loc[uid, col]
+            if grouping_col == "region" or col in ("region", "region_canonical", "subfield"):
+                labels.append(canonicalize_region(val))
+            else:
+                labels.append(str(val))
     return labels
 
 
@@ -568,6 +722,12 @@ def make_feature_transformer(
     """
     if feature_mode in IDENTITY_FEATURE_MODES:
         return IdentityFeatures(feature_mode=feature_mode, decode_window=decode_window)
+
+    if feature_mode in ("identity", "bayesian_place_tuning"):
+        return PassThroughEmbedding(embedding_type=feature_mode)
+
+    if feature_mode == "pls":
+        return PLSEmbedding(n_components=n_components, random_state=random_state)
 
     if feature_mode == "global_pca":
         return GlobalPCAManifold(n_components=n_components, random_state=random_state)
@@ -625,6 +785,10 @@ def load_feature_transformer(input_dir: Path) -> Any:
     name = meta.get("class_name")
     if name == "IdentityFeatures":
         return IdentityFeatures.load(input_dir)
+    if name == "PassThroughEmbedding":
+        return PassThroughEmbedding.load(input_dir)
+    if name == "PLSEmbedding":
+        return PLSEmbedding.load(input_dir)
     if name == "GlobalPCAManifold":
         return GlobalPCAManifold.load(input_dir)
     if name == "GroupwisePCAManifold":

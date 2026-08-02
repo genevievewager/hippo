@@ -4,7 +4,8 @@ from __future__ import annotations
 
 from typing import Any
 
-from sklearn.base import clone
+import numpy as np
+from sklearn.base import BaseEstimator, RegressorMixin, clone
 from sklearn.cross_decomposition import PLSRegression
 from sklearn.decomposition import PCA
 from sklearn.ensemble import (
@@ -20,6 +21,38 @@ from sklearn.neural_network import MLPClassifier, MLPRegressor
 from sklearn.pipeline import Pipeline
 from sklearn.preprocessing import StandardScaler
 from sklearn.svm import LinearSVC, SVC, SVR
+
+
+class _CausalSmoothRegressor(BaseEstimator, RegressorMixin):
+    """Ridge predictions with causal exponential smoothing (past-only)."""
+
+    def __init__(self, base=None, smooth_alpha: float = 0.7):
+        self.base = Ridge(alpha=1.0) if base is None else base
+        self.smooth_alpha = float(smooth_alpha)
+
+    def fit(self, X, y):
+        self.base_ = clone(self.base)
+        self.base_.fit(X, y)
+        self._state_ = None
+        return self
+
+    def predict(self, X):
+        raw = np.asarray(self.base_.predict(X), dtype=float)
+        if raw.ndim == 1:
+            raw = raw.reshape(-1, 1)
+            squeeze = True
+        else:
+            squeeze = False
+        out = np.zeros_like(raw)
+        state = None
+        a = self.smooth_alpha
+        for i in range(len(raw)):
+            if state is None:
+                state = raw[i].copy()
+            else:
+                state = a * raw[i] + (1.0 - a) * state
+            out[i] = state
+        return out.ravel() if squeeze else out
 
 from realtime.bayesian_decoder import (
     BayesianDistanceToWallDecoder,
@@ -41,6 +74,7 @@ FULL_CONTINUOUS = (
     "mlp_regressor",
     "bayesian_place_decoder",
     "bayesian_place_decoder_smoothed",
+    "state_space_or_kalman_optional",
 )
 
 QUICK_CATEGORICAL = ("logistic_regression", "random_forest_classifier")
@@ -122,6 +156,9 @@ def categorical_model_names(mode: str, target: str | None = None) -> tuple[str, 
 def _continuous_model_allowed(name: str, target: str) -> bool:
     if name in ("bayesian_place_decoder", "bayesian_place_decoder_smoothed"):
         return target in BAYESIAN_POSITION_TARGETS or target in BAYESIAN_DISTANCE_TARGETS
+    if name == "state_space_or_kalman_optional":
+        # Optional causal smoother; most useful for position-like continuous targets.
+        return target in {"position", "speed", "distance_to_wall"}
     return True
 
 
@@ -219,6 +256,9 @@ def _base_continuous_estimator(name: str, seed: int, n_jobs: int):
         return MLPRegressor(
             hidden_layer_sizes=(64, 32), max_iter=400, random_state=seed,
         )
+    if name == "state_space_or_kalman_optional":
+        # Causal exponential smoother over ridge predictions (Kalman-like optional).
+        return _CausalSmoothRegressor(base=Ridge(alpha=1.0), smooth_alpha=0.7)
     raise ValueError(f"Unknown continuous model: {name}")
 
 
@@ -274,7 +314,10 @@ def make_continuous_pipeline(
         )
 
     estimator = _base_continuous_estimator(name, seed, n_jobs)
-    needs_multi = target_name in MULTI_OUTPUT_CONTINUOUS and name != "pls_regression"
+    needs_multi = (
+        target_name in MULTI_OUTPUT_CONTINUOUS
+        and name not in ("pls_regression", "state_space_or_kalman_optional")
+    )
     if needs_multi:
         estimator = MultiOutputRegressor(estimator)
 

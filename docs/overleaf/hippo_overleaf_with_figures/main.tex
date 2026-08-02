@@ -374,8 +374,8 @@ where $\overline{R}_{G}(t)=\frac{1}{|G|}\sum_{j\in G} R_j(t)$ is the within-grou
 CA1 phase-precessing place cells skip the multiplicative theta overlay because phase precession is already built into the RiaB contrib class.
 Rates are finally clipped: $R_i\leftarrow\max(R_i,0)$.
 
-\subsection{CA1 interneuron equation}
-Synthetic oriens interneurons are not a RiaB class.
+\subsection{Interneuron equation}
+Synthetic interneurons are not a RiaB class (region comes from probe placement).
 With baseline $b_{\mathrm{int}}$, anti-CA1 weight $w_{\mathrm{anti}}$ (default $0.35$), and normalized CA1 pyramidal population mean
 $\tilde R_{\mathrm{CA1}}(t)=\overline{R}_{\mathrm{CA1}}(t)/\max_t\overline{R}_{\mathrm{CA1}}$,
 \begin{equation}
@@ -396,7 +396,7 @@ This is explicit \emph{cross-population} coupling: interneurons are anti-correla
 \label{sec:interregion}
 % ============================================================
 
-After Stage~B local overlays, Hippo applies a directed rate coupling that sketches the classic trisynaptic loop, direct EC$\to$CA1, CA2 collateral drive, and CA1 interneuron feedback.
+After Stage~B local overlays, Hippo applies a directed rate coupling that sketches the classic trisynaptic loop, direct EC$\to$CA1, CA2 collateral drive, and interneuron feedback onto CA1.
 Implementation: \texttt{hippo\_sim/feedforward.py}, invoked from \texttt{ratinabox\_neural\_backend.py}.
 Disable with \texttt{apply\_feedforward=false} (or \texttt{feedforward.enabled=false}).
 
@@ -447,7 +447,7 @@ CA3 autoassociative recurrence $w_{\mathrm{CA3}\to\mathrm{CA3}}$ is \emph{not} r
 After each addition, rates are rectified: $R\leftarrow\max(R,0)$.
 
 \subsection{Interneuron feedback (applied second)}
-Synthetic CA1 interneurons are constructed from the \emph{post-feedforward} CA1 mean
+Synthetic interneurons are constructed from the \emph{post-feedforward} CA1 mean
 (Eq.~\ref{eq:ca1-int}), then inhibit CA1 pyramids:
 \begin{equation}
   R_i^{\mathrm{CA1}}(t)

@@ -1,0 +1,59 @@
+# Cell-type capture model for trajectory-driven hippocampal simulation.
+#
+# Probabilities are relative weights within each region/layer band.
+# Population sizes for RatInABox are scaled from these expectations and
+# zeroed for regions the probe does not cross.
+# Interneurons are region-local (INT_CA1 / INT_CA2 / …) matching Stage-C
+# local feedback pools.
+
+unit_density_per_channel: 0.8
+detection_radius_um: 50.0
+amplitude_decay_length_um: 40.0
+zero_uncrossed_populations: true
+
+# Optional multiplicative capture bias per cell type (1.0 = unchanged).
+capture_bias: {}
+
+# Optional over/under-sampling multipliers applied to expected counts.
+oversample: {}
+undersample: {}
+
+region_layer_probabilities:
+  CA1:
+    oriens:
+      INT_CA1: 0.70
+      CA1_pyr: 0.30
+    pyramidal:
+      CA1_pyr: 0.85
+      INT_CA1: 0.15
+    radiatum:
+      CA1_pyr: 0.55
+      INT_CA1: 0.45
+  CA2:
+    pyramidal:
+      CA2_pyr: 0.90
+      INT_CA2: 0.10
+  CA3:
+    pyramidal:
+      CA3_pyr: 0.90
+      INT_CA3: 0.10
+  DG:
+    granule:
+      DG_granule: 0.92
+      INT_DG: 0.08
+    hilus:
+      DG_granule: 0.40
+      INT_DG: 0.60
+  Subiculum:
+    pyramidal:
+      Sub_bvc: 0.90
+      INT_SUB: 0.10
+  MEC:
+    layer2:
+      MEC_grid: 0.55
+      MEC_speed: 0.25
+      MEC_hd: 0.20
+    layer3:
+      MEC_hd: 0.70
+      MEC_grid: 0.20
+      MEC_speed: 0.10

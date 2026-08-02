@@ -23,6 +23,7 @@ DEFAULT_UPDATE_BUDGET_MS = 50.0
 STAGE_ORDER = (
     "spike_binning",
     "feature_transform",
+    "manifold_transform",
     "decode_position",
     "decode_speed",
     "decode_spatial_context",

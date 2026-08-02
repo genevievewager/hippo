@@ -32,7 +32,7 @@ EVENT_COLUMNS = [
 
 def evaluate_closed_loop(
     decoded_df: pd.DataFrame,
-    closed_loop_target: str | None = "spatial_context",
+    closed_loop_target: str | None = "position",
     trigger_context: str | None = "wall",
     trigger_confidence: float = 0.80,
     trigger_movement: str | None = None,
@@ -50,7 +50,7 @@ def evaluate_closed_loop(
     A trigger fires when decoded conditions are met. It is correct when the
     true behavioral state matches the target condition.
     """
-    target = closed_loop_target or "spatial_context"
+    target = closed_loop_target or "position"
     events = []
 
     for _, row in decoded_df.iterrows():

@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
-"""Public decoder entry point (only recommended decoding script).
+"""Public decoder entry point (full workflow).
 
 Runs comparison → best-window selection → causal closed-loop replay →
-optional figures/PDF. Prefer this over ``run_decoder_comparison.py`` or
-``run_realtime_decoding.py``.
+optional figures/PDF. For comparison-only research grids over
+``F × E × D × W × C``, use ``run_decoder_comparison.py``.
 
 Default ``--profile manifolds`` searches realtime-relevant embeddings
 (counts + global/region/layer PCA + classic/distilled Isomap) on a lean
@@ -119,7 +119,11 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument("--region-ablation", action="store_true")
     parser.add_argument("--layer-ablation", action="store_true")
-    parser.add_argument("--closed-loop-target", default="spatial_context")
+    parser.add_argument(
+        "--closed-loop-target",
+        default="position",
+        help="Primary closed-loop / realtime target (default: continuous position)",
+    )
     parser.add_argument(
         "--selection-policy",
         choices=["best_accuracy", "shortest_near_optimal"],

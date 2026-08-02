@@ -13,7 +13,7 @@ import numpy as np
 from scipy.special import i0
 
 from hippo_sim.config import RATE_PARAMS
-from visualization.constants import CELL_CLASS_ORDER, FIGURE_DPI, MAX_LINE_POINTS
+from visualization.constants import CELL_CLASS_ORDER, FIGURE_DPI, MAX_LINE_POINTS, cell_class_colors
 from visualization.load_outputs import SimulationOutputs, downsample_series
 
 
@@ -145,15 +145,15 @@ def plot_neural_driver_features_over_time(data: SimulationOutputs, output_dir: P
               "Boundary drive", "Theta drive", "Ripple drive"]
 
     fig, axes = plt.subplots(len(driver_names), 1, figsize=(10, 2.2 * len(driver_names)), sharex=True)
-    colors = plt.cm.tab10(np.linspace(0, 1, len(CELL_CLASS_ORDER)))
+    colors = cell_class_colors(CELL_CLASS_ORDER)
 
     for ax, driver, label in zip(axes, driver_names, labels):
-        for color, ct in zip(colors, CELL_CLASS_ORDER):
+        for ct in CELL_CLASS_ORDER:
             if ct not in class_drivers:
                 continue
             y = class_drivers[ct][driver]
             t_ds, y_ds = downsample_series(t, y, MAX_LINE_POINTS)
-            ax.plot(t_ds, y_ds, linewidth=0.7, label=ct, color=color)
+            ax.plot(t_ds, y_ds, linewidth=0.7, label=ct, color=colors[ct])
         ax.set_ylabel(label)
         ax.legend(loc="upper right", fontsize=7, ncol=2)
 
@@ -200,16 +200,15 @@ def plot_neural_driver_features_by_cell_class(data: SimulationOutputs, output_di
 
 
 def generate_feature_plots(data: SimulationOutputs, output_dir: Path) -> None:
-    """Generate compressed publication-style feature / driver figures."""
+    """Generate neural-driver figures (covariates live in behavior/)."""
     output_dir = Path(output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
     from visualization.publication_behavior_plots import (
-        plot_fig_behavior_features,
         plot_fig_neural_drivers,
         _cleanup_legacy_pngs,
     )
 
-    plot_fig_behavior_features(data, output_dir)
+    (output_dir / "fig_behavior_features.png").unlink(missing_ok=True)
     plot_fig_neural_drivers(data, output_dir)
     _cleanup_legacy_pngs(output_dir)
 

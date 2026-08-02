@@ -9,6 +9,8 @@ from visualization.constants import (
     FIGURE_DPI,
     MAX_LINE_POINTS,
     REGION_ORDER,
+    cell_class_colors,
+    circuit_node_colors,
 )
 from visualization.experiment_viz import generate_experiment_figures
 from visualization.load_outputs import SimulationOutputs, load_simulation_outputs
@@ -19,6 +21,8 @@ __all__ = [
     "REGION_ORDER",
     "FIGURE_DPI",
     "MAX_LINE_POINTS",
+    "cell_class_colors",
+    "circuit_node_colors",
     "SimulationOutputs",
     "load_simulation_outputs",
     "generate_experiment_figures",

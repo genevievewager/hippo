@@ -2,12 +2,17 @@
 """Public visualization entry point (only recommended plotting script).
 
 Generates all available figures (simulation, decoder comparison, realtime)
-under ``<experiment>/figures/``. Reads saved outputs only — never retrains
-decoders or recomputes comparison metrics.
+under ``<experiment>/figures/``.
+
+Read-only contract:
+  - may read comparison / realtime / latency / deployment CSVs and JSON
+  - must not fit decoders, run comparison, run realtime replay, or overwrite
+    artifacts under ``models/``, ``decoder_comparison/``, or ``realtime_decoding/``
+  - derived plot-only summaries stay in memory or under ``figures/``
 
 Example::
 
-    python run_visualizations.py --experiment outputs/ratinabox_002 --all --compile-pdf
+    python run_visualizations.py --experiment outputs/ratinabox_006 --all --compile-pdf
 """
 
 from __future__ import annotations
@@ -20,6 +25,9 @@ import matplotlib
 matplotlib.use("Agg")
 
 from visualization.experiment_viz import generate_experiment_figures
+from visualization.publication_style import enable_open_axes
+
+enable_open_axes()
 
 
 def parse_args() -> argparse.Namespace:

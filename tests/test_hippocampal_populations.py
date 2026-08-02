@@ -31,13 +31,17 @@ def test_population_table_has_expected_groups():
         "MEC_hd",
         "Sub_bvc",
         "MEC_speed",
-        "CA1_int",
+        "INT_CA1",
+        "INT_CA3",
+        "INT_DG",
+        "INT_CA2",
+        "INT_SUB",
     ]
 
 
 def test_population_table_total_default_count():
     total = sum(population_count(s, {}) for s in HIPPOCAMPAL_RIA_B_POPULATIONS)
-    assert total == 305
+    assert total == 305  # 290 principals + 15 local INT
 
 
 def test_population_cell_types_have_rate_params():
@@ -47,22 +51,38 @@ def test_population_cell_types_have_rate_params():
 
 
 def test_region_mapping_is_anatomically_plausible():
-    assert REGION_TO_CELL_TYPE[("CA1", "oriens")] == "CA1_int"
+    assert REGION_TO_CELL_TYPE[("CA1", "oriens")] == "INT_CA1"
     assert REGION_TO_CELL_TYPE[("CA1", "pyramidal")] == "CA1_pyr"
     assert REGION_TO_CELL_TYPE[("MEC", "layer2")] == "MEC_grid"
     assert REGION_TO_CELL_TYPE[("MEC", "layer3")] == "MEC_hd"
     assert REGION_TO_CELL_TYPE[("Subiculum", "pyramidal")] == "Sub_bvc"
 
 
-def test_ca1_int_is_inhibitory_in_metadata():
+def test_interneuron_is_inhibitory_in_metadata():
     df = normalize_unit_metadata(pd.DataFrame({
-        "unit_id": [0, 1],
-        "cell_type": ["CA1_int", "CA1_pyr"],
-        "region": ["CA1", "CA1"],
-        "layer": ["oriens", "pyramidal"],
+        "unit_id": [0, 1, 2],
+        "cell_type": ["INT_CA1", "INT_DG", "CA1_pyr"],
+        "region": ["CA1", "DG", "CA1"],
+        "layer": ["oriens", "hilus", "pyramidal"],
     }))
     assert df.loc[0, "cell_class"] == "inhibitory"
-    assert df.loc[1, "cell_class"] == "excitatory"
+    assert df.loc[1, "cell_class"] == "inhibitory"
+    assert df.loc[2, "cell_class"] == "excitatory"
+
+
+def test_local_int_specs_have_home_nodes():
+    homes = {
+        s["name"]: s["home_node"]
+        for s in HIPPOCAMPAL_RIA_B_POPULATIONS
+        if s["name"].startswith("INT_")
+    }
+    assert homes == {
+        "INT_CA1": "CA1",
+        "INT_CA3": "CA3",
+        "INT_DG": "DG",
+        "INT_CA2": "CA2",
+        "INT_SUB": "SUB",
+    }
 
 
 def test_population_table_summary_rows():
@@ -97,5 +117,8 @@ def test_ratinabox_backend_smoke_short_session(tmp_path):
     cell_types = {u.cell_type for u in units}
     assert "CA1_pyr" in cell_types
     assert "MEC_grid" in cell_types or "MEC_hd" in cell_types
+    assert any(ct.startswith("INT_") for ct in cell_types)
     assert "population_table" in str(meta) or "ratinabox_population_table" in meta
     assert meta["ratinabox_cell_groups"]
+    ff = meta.get("feedforward") or {}
+    assert "local_int_inhibition" in ff or "int_to_ca1" in ff

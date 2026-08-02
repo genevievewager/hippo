@@ -96,7 +96,7 @@ def run_realtime_pipeline(
     update_dt: float = 0.050,
     decode_window: float = 0.250,
     train_frac: float = 0.70,
-    closed_loop_target: str = "spatial_context",
+    closed_loop_target: str = "position",
     trigger_context: str | None = "wall",
     trigger_confidence: float = 0.80,
     trigger_movement: str | None = None,
@@ -554,7 +554,7 @@ def run_compare_sources(
     trigger_context: str | None = "wall",
     trigger_confidence: float = 0.80,
     trigger_movement: str | None = None,
-    closed_loop_target: str = "spatial_context",
+    closed_loop_target: str = "position",
 ) -> pd.DataFrame:
     """Run decoding for ground-truth and sorted spikes and save comparison metrics."""
     output_dir = Path(output_dir)

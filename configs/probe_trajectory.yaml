@@ -1,0 +1,38 @@
+# Probe / trajectory configuration for hippocampal Neuropixels simulation.
+#
+# Point `trajectory.export_file` at a Neuropixels Trajectory Explorer export
+# (CSV / TSV / JSON / YAML region-depth table, or native .mat), or leave null
+# and fill manual stereotaxic / CCF fields + optional `regions:` list.
+
+probe:
+  type: neuropixels_1.0
+  n_channels: 384
+  site_pitch_um: 20
+  active_length_um: 3840
+  shank_count: 1
+
+trajectory:
+  source: neuropixels_trajectory_explorer
+  # Path relative to the project root (or absolute).
+  export_file: data/probe_trajectories/lab_insertion_001.csv
+  insertion_ap_mm: null
+  insertion_ml_mm: null
+  insertion_depth_um: null
+  angle_ap_deg: null
+  angle_ml_deg: null
+  # Optional manual region bands when no export file is available:
+  # regions:
+  #   - region: CA1
+  #     layer: pyramidal
+  #     acronym: CA1
+  #     depth_start_um: 200
+  #     depth_end_um: 600
+  #   - region: DG
+  #     layer: granule
+  #     acronym: DG
+  #     depth_start_um: 1200
+  #     depth_end_um: 1600
+
+simulation:
+  use_trajectory_regions: true
+  fallback_to_schematic_hippocampus: true

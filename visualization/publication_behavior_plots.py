@@ -6,6 +6,7 @@ small set of ``fig_*`` panels matching neural publication style.
 
 from __future__ import annotations
 
+import colorsys
 from pathlib import Path
 
 import matplotlib.pyplot as plt
@@ -14,19 +15,42 @@ import pandas as pd
 import seaborn as sns
 from matplotlib.collections import LineCollection
 from matplotlib.gridspec import GridSpec
-from matplotlib.lines import Line2D
 
 from visualization.behavior_plots import _overlay_arena_features
-from visualization.constants import CELL_CLASS_ORDER, FIGURE_DPI, MAX_LINE_POINTS
+from visualization.constants import CELL_CLASS_ORDER, FIGURE_DPI, MAX_LINE_POINTS, cell_class_colors
 from visualization.load_outputs import SimulationOutputs, downsample_series
 from visualization.publication_style import (
+    apply_publication_theme,
+    enable_open_axes,
     figure_legend_below,
-    legend_below,
     panel_label,
     save_pub_figure,
+    style_figure_axes,
+    strip_box_frames,
 )
 
-sns.set_theme(style="ticks", context="paper", font_scale=1.0)
+apply_publication_theme()
+
+# Locomotor covariate trace hierarchy (panels D–I): one hue, stepped saturation.
+_BEHAVIOR_TRACE_HUE = 0.52  # teal (~187°)
+_BEHAVIOR_TRACE_TIERS: dict[str, tuple[float, float]] = {
+    # Primary — position (darkest)
+    "x": (0.72, 0.22),
+    "y": (0.72, 0.22),
+    # Secondary — first derivatives / kinematic covariates (middle)
+    "speed": (0.52, 0.40),
+    "head_direction": (0.52, 0.40),
+    "distance_to_wall": (0.52, 0.40),
+    # Tertiary — acceleration (lightest)
+    "acceleration": (0.28, 0.68),
+}
+_BEHAVIOR_TRACE_DEFAULT_TIER = (0.48, 0.44)
+
+
+def behavior_covariate_trace_color(column: str) -> tuple[float, float, float]:
+    """RGB for a covariate time-series: location darkest → accel lightest."""
+    sat, light = _BEHAVIOR_TRACE_TIERS.get(column, _BEHAVIOR_TRACE_DEFAULT_TIER)
+    return colorsys.hls_to_rgb(_BEHAVIOR_TRACE_HUE, light, sat)
 
 
 def _cleanup_legacy_pngs(folder: Path) -> None:
@@ -67,51 +91,276 @@ def _speed_map(data: SimulationOutputs, n_bins: int = 40) -> tuple[np.ndarray, l
     return smap, [x_min, x_max, y_min, y_max]
 
 
-def _draw_trajectory_xy(ax, data: SimulationOutputs) -> list:
-    """Draw trajectory; return legend handles (caller places legend outside)."""
-    beh = data.behavior
-    t = beh["time"].to_numpy()
-    x = beh["x"].to_numpy()
-    y = beh["y"].to_numpy()
-    if len(t) > MAX_LINE_POINTS:
-        idx = np.linspace(0, len(t) - 1, MAX_LINE_POINTS).astype(int)
-        x, y = x[idx], y[idx]
-    ax.plot(x, y, lw=0.55, color="steelblue", alpha=0.85)
-    ax.scatter(beh["x"].iloc[0], beh["y"].iloc[0], c="#2ca02c", s=28, zorder=4)
-    ax.scatter(beh["x"].iloc[-1], beh["y"].iloc[-1], c="#d62728", s=28, zorder=4)
-    _overlay_arena_features(ax, data)
-    ax.set_xlabel("x (cm)")
-    ax.set_ylabel("y (cm)")
-    ax.set_aspect("equal", adjustable="box")
-    sns.despine(ax=ax)
-    return [
-        Line2D([0], [0], marker="o", color="w", markerfacecolor="#2ca02c", markersize=7, label="Start"),
-        Line2D([0], [0], marker="o", color="w", markerfacecolor="#d62728", markersize=7, label="End"),
-    ]
+def _draw_trajectory_colored(
+    ax,
+    data: SimulationOutputs,
+    *,
+    color_col: str = "time",
+    cbar_label: str = "Time (s)",
+    cmap: str = "viridis",
+    mark_endpoints: bool = False,
+    cax=None,
+    equal_aspect: bool = True,
+    draw_cbar: bool = True,
+):
+    """Path segments colored by a behavioral column (default: elapsed time).
 
-
-def _draw_trajectory_time(ax, data: SimulationOutputs) -> None:
+    Returns the LineCollection mappable (for attaching a colorbar externally).
+    """
     beh = data.behavior
     x, y = beh["x"].to_numpy(), beh["y"].to_numpy()
-    t = beh["time"].to_numpy()
-    if len(t) > MAX_LINE_POINTS:
-        idx = np.linspace(0, len(t) - 1, MAX_LINE_POINTS).astype(int)
-        x, y, t = x[idx], y[idx], t[idx]
+    c = beh[color_col].to_numpy(dtype=float)
+    if len(c) > MAX_LINE_POINTS:
+        idx = np.linspace(0, len(c) - 1, MAX_LINE_POINTS).astype(int)
+        x, y, c = x[idx], y[idx], c[idx]
     points = np.column_stack([x, y]).reshape(-1, 1, 2)
     segments = np.concatenate([points[:-1], points[1:]], axis=1)
-    norm = plt.Normalize(t.min(), t.max())
-    lc = LineCollection(segments, cmap="viridis", norm=norm, linewidths=0.7)
-    lc.set_array(t[:-1])
+    c_seg = c[:-1]
+    finite = np.isfinite(c_seg)
+    if finite.any():
+        norm = plt.Normalize(float(np.nanmin(c_seg)), float(np.nanmax(c_seg)))
+    else:
+        norm = plt.Normalize(0.0, 1.0)
+    lc = LineCollection(segments, cmap=cmap, norm=norm, linewidths=0.7)
+    lc.set_array(c_seg)
     ax.add_collection(lc)
     ax.autoscale()
+    if mark_endpoints:
+        ax.scatter(beh["x"].iloc[0], beh["y"].iloc[0], c="#2ca02c", s=28, zorder=4)
+        ax.scatter(beh["x"].iloc[-1], beh["y"].iloc[-1], c="#d62728", s=28, zorder=4)
+        ax.annotate(
+            "Start", (beh["x"].iloc[0], beh["y"].iloc[0]),
+            textcoords="offset points", xytext=(6, 6), fontsize=8, color="#2ca02c",
+        )
+        ax.annotate(
+            "End", (beh["x"].iloc[-1], beh["y"].iloc[-1]),
+            textcoords="offset points", xytext=(6, -10), fontsize=8, color="#d62728",
+        )
     _overlay_arena_features(ax, data)
     ax.set_xlabel("x (cm)")
     ax.set_ylabel("y (cm)")
-    ax.set_aspect("equal", adjustable="box")
-    cbar = plt.colorbar(lc, ax=ax, fraction=0.046, pad=0.04)
-    cbar.set_label("Time (s)", fontsize=8)
-    cbar.ax.tick_params(labelsize=7)
+    x_min, x_max, y_min, y_max = data.bounds
+    ax.set_xlim(x_min, x_max)
+    ax.set_ylim(y_min, y_max)
+    if equal_aspect:
+        ax.set_aspect("equal", adjustable="box")
+    else:
+        ax.set_aspect("auto")
+    if draw_cbar:
+        if cax is not None:
+            cbar = ax.figure.colorbar(lc, cax=cax)
+        else:
+            cbar = plt.colorbar(lc, ax=ax, fraction=0.046, pad=0.04)
+        cbar.set_label(cbar_label, fontsize=10)
+        cbar.ax.tick_params(labelsize=8)
     sns.despine(ax=ax)
+    return lc
+
+
+def plot_fig_behavior_dynamics(
+    data: SimulationOutputs,
+    output_dir: Path,
+    n_bins: int = 40,
+) -> Path:
+    """Merged behavior page: spatial overview (A–C) + covariate traces (D–I).
+
+    Top row (former overview A–C): time-colored trajectory, speed map, occupancy.
+    Below (former ``fig_behavior_features`` A–F): x, y, speed, heading, wall
+    distance, acceleration over time.
+    """
+    output_dir = Path(output_dir)
+    output_dir.mkdir(parents=True, exist_ok=True)
+    beh = data.behavior
+    t = beh["time"].to_numpy()
+
+    cov_panels = [
+        ("x", "x (cm)"),
+        ("y", "y (cm)"),
+        ("speed", "Speed (cm/s)"),
+        ("head_direction", "HD (rad)"),
+        ("distance_to_wall", "Wall dist (cm)"),
+        ("acceleration", "Accel (cm/s²)"),
+    ]
+    available = [(c, lab) for c, lab in cov_panels if c in beh.columns][:6]
+    n_cov = max(len(available), 1)
+    cov_rows = int(np.ceil(n_cov / 2))
+
+    # Larger page: A–C are big squares; D–I keep mutual scaling (1.25 each).
+    # Top row height ≈ one-third figure width so squares fill their slots.
+    fig_w = 14.0
+    fig_h = 5.5 + 2.9 * cov_rows
+    fig = plt.figure(figsize=(fig_w, fig_h))
+    outer = GridSpec(
+        1 + cov_rows, 1, figure=fig,
+        height_ratios=[1.85] + [1.25] * cov_rows,
+        hspace=0.28,
+        left=0.07,
+        right=0.98,
+        top=0.98,
+        bottom=0.045,
+    )
+    gs_top = outer[0].subgridspec(1, 3, wspace=0.18)
+    gs_cov = outer[1:].subgridspec(cov_rows, 2, hspace=0.28, wspace=0.16)
+
+    def _label(ax, letter: str) -> None:
+        # Outside the axes, top-left corner (not over data).
+        panel_label(ax, letter, x=0.0, y=1.10, ha="left", va="bottom")
+
+    def _square_with_cbar(ax, mappable, cbar_label: str):
+        """Attach a colorbar; square sizing is applied later when packing A–C."""
+        from mpl_toolkits.axes_grid1 import make_axes_locatable
+
+        divider = make_axes_locatable(ax)
+        cax = divider.append_axes("right", size="5%", pad=0.05)
+        cbar = fig.colorbar(mappable, cax=cax)
+        cbar.set_label(cbar_label, fontsize=13, labelpad=4)
+        cbar.ax.tick_params(labelsize=11, length=4, width=1.0)
+        return cbar
+
+    def _style_spatial(ax) -> None:
+        """Larger labels/ticks for the enlarged A–C squares."""
+        ax.xaxis.label.set_size(14)
+        ax.yaxis.label.set_size(14)
+        ax.tick_params(axis="both", labelsize=12, length=5, width=1.1)
+        for label in ax.get_xticklabels() + ax.get_yticklabels():
+            label.set_fontsize(12)
+
+    # A — trajectory colored by time (square: arena is square)
+    ax_a = fig.add_subplot(gs_top[0, 0])
+    lc_a = _draw_trajectory_colored(
+        ax_a, data, mark_endpoints=True, equal_aspect=True, draw_cbar=False,
+    )
+    cbar_a = _square_with_cbar(ax_a, lc_a, "s")
+    _label(ax_a, "A")
+
+    # B — speed over the maze
+    ax_b = fig.add_subplot(gs_top[0, 1])
+    smap, extent = _speed_map(data, n_bins=n_bins)
+    im_b = ax_b.imshow(smap.T, origin="lower", aspect="equal", extent=extent, cmap="plasma")
+    ax_b.set_xlabel("x (cm)")
+    ax_b.set_ylabel("")
+    ax_b.tick_params(labelleft=False)
+    cbar_b = _square_with_cbar(ax_b, im_b, "cm/s")
+    sns.despine(ax=ax_b)
+    _label(ax_b, "B")
+
+    # C — occupancy in the maze
+    ax_c = fig.add_subplot(gs_top[0, 2])
+    occ, extent = _occupancy(data, n_bins=n_bins)
+    im_c = ax_c.imshow(occ.T, origin="lower", aspect="equal", extent=extent, cmap="hot")
+    ax_c.set_xlabel("x (cm)")
+    ax_c.set_ylabel("")
+    ax_c.tick_params(labelleft=False)
+    cbar_c = _square_with_cbar(ax_c, im_c, "s")
+    sns.despine(ax=ax_c)
+    _label(ax_c, "C")
+
+    # D–I — behavioral covariates (former fig_behavior_features A–F)
+    letters = "DEFGHI"
+    cov_axes: list = []
+    for i, (col, lab) in enumerate(available):
+        ax = fig.add_subplot(gs_cov[i // 2, i % 2])
+        cov_axes.append(ax)
+        t_ds, y_ds = downsample_series(t, beh[col].to_numpy(), MAX_LINE_POINTS)
+        ax.plot(t_ds, y_ds, lw=0.75, color=behavior_covariate_trace_color(col))
+        ax.set_ylabel(lab, fontsize=10)
+        on_bottom = i >= n_cov - 2
+        if on_bottom:
+            ax.set_xlabel("Time (s)")
+        sns.despine(ax=ax)
+        _label(ax, letters[i])
+
+    for j in range(len(available), cov_rows * 2):
+        ax = fig.add_subplot(gs_cov[j // 2, j % 2])
+        ax.axis("off")
+
+    # Keep GridSpec gutters (avoid save_pub_figure subplots_adjust widening them).
+    path = Path(output_dir) / "fig_behavior_dynamics.png"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    enable_open_axes()
+    style_figure_axes(fig)
+    strip_box_frames(fig)
+    # Re-apply after style_figure_axes (it resets tick visibility / sizes).
+    ax_b.tick_params(labelleft=False)
+    ax_c.tick_params(labelleft=False)
+    for ax in (ax_a, ax_b, ax_c):
+        _style_spatial(ax)
+    for cbar, cbar_lab in ((cbar_a, "s"), (cbar_b, "cm/s"), (cbar_c, "s")):
+        cbar.set_label(cbar_lab, fontsize=13, labelpad=4)
+        cbar.ax.tick_params(labelsize=11, length=4, width=1.0)
+        cbar.ax.yaxis.label.set_size(13)
+    for i, ax in enumerate(cov_axes):
+        if i < n_cov - 2:
+            ax.tick_params(labelbottom=False)
+
+    # Pack A–C as equal squares spanning the same left/right edges as D–I.
+    fig.canvas.draw()
+    top_cells = [gs_top[0, i].get_position(fig) for i in range(3)]
+    band_y0 = min(c.y0 for c in top_cells)
+    band_y1 = max(c.y1 for c in top_cells)
+    band_h = band_y1 - band_y0
+
+    # Match outer edges of the lower D–I block (plot boxes).
+    left_cov = [cov_axes[i] for i in range(0, len(cov_axes), 2)]
+    right_cov = [cov_axes[i] for i in range(1, len(cov_axes), 2)]
+    left = min(ax.get_position().x0 for ax in left_cov)
+    right = max(ax.get_position().x1 for ax in right_cov)
+
+    spatial = [ax_a, ax_b, ax_c]
+
+    def _cbar_for(ax):
+        bb = ax.get_position()
+        best = None
+        best_dx = 1e9
+        for other in fig.axes:
+            if other is ax:
+                continue
+            ob = other.get_position()
+            if abs(ob.height - bb.height) < 0.08 and ob.x0 >= bb.x1 - 0.02:
+                dx = ob.x0 - bb.x1
+                if -0.01 <= dx < best_dx and ob.width < bb.width * 0.5:
+                    best_dx = dx
+                    best = other
+        return best
+
+    pairs = [(ax, _cbar_for(ax)) for ax in spatial]
+    n = 3
+    cbar_frac = 0.048
+    pad = 0.006
+    width_budget = right - left
+    # Solve for side and equal inter-group gaps so:
+    #   A.x0 == left  and  C.cbar.x1 == right
+    # n*(side + pad + side*cbar_frac) + (n-1)*gap = width_budget
+    # Prefer max square that fits the top band; leftover width → equal gaps.
+    side = min(
+        band_h * 0.90,  # leave room for x labels under squares
+        width_budget / (n * (1.0 + cbar_frac) + 0.02),
+    )
+    unit = side * (1.0 + cbar_frac) + pad
+    gap = max(0.012, (width_budget - n * unit) / (n - 1))
+    # If gaps went negative, shrink side to fit with a minimum gap.
+    min_gap = 0.012
+    if gap < min_gap:
+        gap = min_gap
+        side = (width_budget - (n - 1) * gap - n * pad) / (n * (1.0 + cbar_frac))
+        unit = side * (1.0 + cbar_frac) + pad
+
+    y0 = band_y1 - side - 0.025
+    y0 = max(y0, band_y0)
+    x = left
+    for ax, cax in pairs:
+        ax.set_position([x, y0, side, side])
+        ax.set_aspect("equal", adjustable="datalim")
+        cx = x + side + pad
+        if cax is not None:
+            cax.set_position([cx, y0, side * cbar_frac, side])
+        x = cx + side * cbar_frac + gap
+
+    fig.savefig(path, dpi=FIGURE_DPI, bbox_inches="tight", pad_inches=0.18)
+    plt.close(fig)
+    (output_dir / "fig_behavior_overview.png").unlink(missing_ok=True)
+    (output_dir / "fig_behavior_features.png").unlink(missing_ok=True)
+    return path
 
 
 def plot_fig_behavior_overview(
@@ -119,171 +368,13 @@ def plot_fig_behavior_overview(
     output_dir: Path,
     n_bins: int = 40,
 ) -> Path:
-    """Trajectory + occupancy + speed map (publication 2×2)."""
-    output_dir = Path(output_dir)
-    output_dir.mkdir(parents=True, exist_ok=True)
-
-    fig = plt.figure(figsize=(11.0, 7.6))
-    gs = GridSpec(2, 2, figure=fig, hspace=0.42, wspace=0.38)
-
-    ax_a = fig.add_subplot(gs[0, 0])
-    handles = _draw_trajectory_xy(ax_a, data)
-    # Annotate start/end beside points (no legend over trajectory)
-    beh = data.behavior
-    ax_a.annotate("Start", (beh["x"].iloc[0], beh["y"].iloc[0]),
-                  textcoords="offset points", xytext=(6, 6), fontsize=7, color="#2ca02c")
-    ax_a.annotate("End", (beh["x"].iloc[-1], beh["y"].iloc[-1]),
-                  textcoords="offset points", xytext=(6, -10), fontsize=7, color="#d62728")
-    panel_label(ax_a, "A")
-
-    ax_b = fig.add_subplot(gs[0, 1])
-    _draw_trajectory_time(ax_b, data)
-    panel_label(ax_b, "B")
-
-    ax_c = fig.add_subplot(gs[1, 0])
-    occ, extent = _occupancy(data, n_bins=n_bins)
-    im = ax_c.imshow(occ.T, origin="lower", aspect="equal", extent=extent, cmap="hot")
-    ax_c.set_xlabel("x (cm)")
-    ax_c.set_ylabel("y (cm)")
-    cbar = plt.colorbar(im, ax=ax_c, fraction=0.046, pad=0.04)
-    cbar.set_label("Time (s)", fontsize=8)
-    sns.despine(ax=ax_c)
-    panel_label(ax_c, "C")
-
-    ax_d = fig.add_subplot(gs[1, 1])
-    smap, extent = _speed_map(data, n_bins=n_bins)
-    im = ax_d.imshow(smap.T, origin="lower", aspect="equal", extent=extent, cmap="plasma")
-    ax_d.set_xlabel("x (cm)")
-    ax_d.set_ylabel("y (cm)")
-    cbar = plt.colorbar(im, ax=ax_d, fraction=0.046, pad=0.04)
-    cbar.set_label("cm/s", fontsize=8)
-    sns.despine(ax=ax_d)
-    panel_label(ax_d, "D")
-
-    dur = float(data.session_duration_s) if hasattr(data, "session_duration_s") else float(data.behavior["time"].iloc[-1])
-    return save_pub_figure(
-        fig, output_dir / "fig_behavior_overview.png", dpi=FIGURE_DPI,
-        rect=(0.02, 0.08, 0.98, 0.94),
-    )
-
-
-def plot_fig_behavior_dynamics(data: SimulationOutputs, output_dir: Path) -> Path:
-    """Speed, heading, wall distance over time + feature distributions."""
-    output_dir = Path(output_dir)
-    output_dir.mkdir(parents=True, exist_ok=True)
-    beh = data.behavior
-    t = beh["time"].to_numpy()
-
-    # No twinx: twin y-labels collide with the neighboring panel.
-    fig = plt.figure(figsize=(11.0, 7.6))
-    gs = GridSpec(2, 2, figure=fig, hspace=0.42, wspace=0.35)
-
-    ax_a = fig.add_subplot(gs[0, 0])
-    t_ds, y_ds = downsample_series(t, beh["speed"].to_numpy(), MAX_LINE_POINTS)
-    ax_a.plot(t_ds, y_ds, lw=0.7, color="#e07a2f")
-    ax_a.set_xlabel("Time (s)")
-    ax_a.set_ylabel("Speed (cm/s)")
-    sns.despine(ax=ax_a)
-    panel_label(ax_a, "A")
-
-    ax_b = fig.add_subplot(gs[0, 1])
-    t_ds, y_ds = downsample_series(t, beh["head_direction"].to_numpy(), MAX_LINE_POINTS)
-    ax_b.plot(t_ds, y_ds, lw=0.7, color="#6b4c9a")
-    ax_b.set_xlabel("Time (s)")
-    ax_b.set_ylabel("Head direction (rad)")
-    sns.despine(ax=ax_b)
-    panel_label(ax_b, "B")
-
-    ax_c = fig.add_subplot(gs[1, 0])
-    if "distance_to_wall" in beh.columns:
-        t_ds, y_ds = downsample_series(t, beh["distance_to_wall"].to_numpy(), MAX_LINE_POINTS)
-        ax_c.plot(t_ds, y_ds, lw=0.7, color="#2a9d8f")
-        ax_c.set_ylabel("Distance to wall (cm)")
-    elif "acceleration" in beh.columns:
-        t_ds, y_ds = downsample_series(t, beh["acceleration"].to_numpy(), MAX_LINE_POINTS)
-        ax_c.plot(t_ds, y_ds, lw=0.7, color="#264653")
-        ax_c.set_ylabel("Acceleration (cm/s²)")
-    else:
-        ax_c.text(0.5, 0.5, "No wall/accel columns", ha="center", va="center", transform=ax_c.transAxes)
-    ax_c.set_xlabel("Time (s)")
-    sns.despine(ax=ax_c)
-    panel_label(ax_c, "C")
-
-    ax_d = fig.add_subplot(gs[1, 1])
-    dist_cols = [
-        ("speed", "Speed"),
-        ("head_direction", "HD"),
-        ("distance_to_wall", "Wall dist"),
-        ("acceleration", "Accel"),
-    ]
-    zrows = []
-    for col, label in dist_cols:
-        if col not in beh.columns:
-            continue
-        vals = beh[col].to_numpy(dtype=float)
-        std = float(np.std(vals))
-        if std < 1e-12:
-            continue
-        z = (vals - float(np.mean(vals))) / std
-        zrows.append(pd.DataFrame({"z": z, "feature": label}))
-    if zrows:
-        long = pd.concat(zrows, ignore_index=True)
-        sns.violinplot(
-            data=long, x="feature", y="z", hue="feature",
-            palette="deep", legend=False, cut=0, inner="quartile",
-            density_norm="width", ax=ax_d,
-        )
-        ax_d.set_xlabel("")
-        ax_d.set_ylabel("z-scored value")
-        ax_d.tick_params(axis="x", labelsize=8)
-        sns.despine(ax=ax_d)
-    else:
-        ax_d.axis("off")
-    panel_label(ax_d, "D")
-
-    return save_pub_figure(fig, output_dir / "fig_behavior_dynamics.png", dpi=FIGURE_DPI)
+    """Deprecated: absorbed into ``fig_behavior_dynamics``."""
+    return plot_fig_behavior_dynamics(data, output_dir, n_bins=n_bins)
 
 
 def plot_fig_behavior_features(data: SimulationOutputs, output_dir: Path) -> Path:
-    """Key behavioral covariates over time (compact multi-trace panel)."""
-    output_dir = Path(output_dir)
-    output_dir.mkdir(parents=True, exist_ok=True)
-    beh = data.behavior
-    t = beh["time"].to_numpy()
-
-    panels = [
-        ("x", "x (cm)"),
-        ("y", "y (cm)"),
-        ("speed", "Speed (cm/s)"),
-        ("head_direction", "HD (rad)"),
-        ("distance_to_wall", "Wall dist (cm)"),
-        ("acceleration", "Accel (cm/s²)"),
-        ("theta_phase", "Theta phase"),
-        ("ripple", "Ripple"),
-    ]
-    available = [(c, lab) for c, lab in panels if c in beh.columns][:6]
-
-    fig = plt.figure(figsize=(11.0, 7.6))
-    n = max(len(available), 1)
-    nrows = int(np.ceil(n / 2))
-    gs = GridSpec(nrows, 2, figure=fig, hspace=0.48, wspace=0.35)
-    labels = "ABCDEF"
-
-    for i, (col, lab) in enumerate(available):
-        ax = fig.add_subplot(gs[i // 2, i % 2])
-        t_ds, y_ds = downsample_series(t, beh[col].to_numpy(), MAX_LINE_POINTS)
-        ax.plot(t_ds, y_ds, lw=0.65, color=sns.color_palette("deep")[i % 6])
-        ax.set_ylabel(lab, fontsize=8)
-        if i >= n - 2:
-            ax.set_xlabel("Time (s)")
-        sns.despine(ax=ax)
-        panel_label(ax, labels[i])
-
-    for j in range(len(available), nrows * 2):
-        ax = fig.add_subplot(gs[j // 2, j % 2])
-        ax.axis("off")
-
-    return save_pub_figure(fig, output_dir / "fig_behavior_features.png", dpi=FIGURE_DPI)
+    """Deprecated: covariate traces now live under ``fig_behavior_dynamics``."""
+    return plot_fig_behavior_dynamics(data, output_dir)
 
 
 def plot_fig_neural_drivers(data: SimulationOutputs, output_dir: Path) -> Path | None:
@@ -304,8 +395,7 @@ def plot_fig_neural_drivers(data: SimulationOutputs, output_dir: Path) -> Path |
     t = data.behavior["time"].to_numpy()
     driver_keys = ["place", "hd", "speed", "boundary"]
     driver_labels = {"place": "Place", "hd": "HD", "speed": "Speed", "boundary": "Boundary"}
-    palette = sns.color_palette("deep", n_colors=max(len(present), 1))
-    ct_color = {ct: c for ct, c in zip(present, palette)}
+    ct_color = cell_class_colors(present)
 
     fig = plt.figure(figsize=(11.0, 8.0))
     gs = GridSpec(2, 2, figure=fig, hspace=0.42, wspace=0.35)
@@ -345,13 +435,13 @@ def plot_fig_neural_drivers(data: SimulationOutputs, output_dir: Path) -> Path |
             legend_handles,
             [h.get_label() for h in legend_handles],
             ncol=min(5, len(legend_handles)),
-            fontsize=7,
             y=0.01,
+            title="Cell class (A–C)",
         )
 
     return save_pub_figure(
         fig, output_dir / "fig_neural_drivers.png", dpi=FIGURE_DPI,
-        rect=(0.02, 0.08, 0.98, 0.94),
+        rect=(0.08, 0.14, 0.96, 0.94),
     )
 
 
@@ -360,23 +450,24 @@ def generate_publication_behavior_plots(
     behavior_dir: Path,
     features_dir: Path | None = None,
 ) -> list[Path]:
-    """Write publication behavior (+ optional features) figures and clean legacy."""
+    """Write merged behavior figure (+ neural drivers) and clean legacy."""
     behavior_dir = Path(behavior_dir)
     behavior_dir.mkdir(parents=True, exist_ok=True)
     written: list[Path] = []
 
-    for fn in (plot_fig_behavior_overview, plot_fig_behavior_dynamics):
-        written.append(fn(data, behavior_dir))
-
+    # Spatial A–C + covariate D–I live in the behavior folder.
+    written.append(plot_fig_behavior_dynamics(data, behavior_dir))
     _cleanup_legacy_pngs(behavior_dir)
 
-    if features_dir is not None:
-        features_dir = Path(features_dir)
-        features_dir.mkdir(parents=True, exist_ok=True)
-        written.append(plot_fig_behavior_features(data, features_dir))
-        nd = plot_fig_neural_drivers(data, features_dir)
-        if nd is not None:
-            written.append(nd)
-        _cleanup_legacy_pngs(features_dir)
+    # Neural drivers stay with covariates (same conceptual section).
+    out_features = Path(features_dir) if features_dir is not None else behavior_dir
+    out_features.mkdir(parents=True, exist_ok=True)
+    # Drop standalone covariate page if a previous run left it in features/.
+    (out_features / "fig_behavior_features.png").unlink(missing_ok=True)
+    (out_features / "fig_behavior_dynamics.png").unlink(missing_ok=True)
+    nd = plot_fig_neural_drivers(data, out_features)
+    if nd is not None:
+        written.append(nd)
+    _cleanup_legacy_pngs(out_features)
 
     return written

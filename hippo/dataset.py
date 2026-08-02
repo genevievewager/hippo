@@ -10,16 +10,6 @@ import numpy as np
 import pandas as pd
 
 from hippo.unit_metadata import normalize_unit_metadata
-from realtime.data_loading import load_simulation_data, make_decode_times
-from realtime.decoding_targets import align_extended_behavior_to_decoder_times
-from realtime.spike_features import apply_feature_mode, build_causal_spike_matrix
-from realtime.timing import (
-    assert_alignment,
-    extract_behavior_times,
-    resolve_update_dt_s,
-    validate_behavior_timestamps,
-)
-from realtime.train_decoder import causal_train_test_split
 
 
 @dataclass
@@ -105,6 +95,18 @@ def load_manifold_dataset(
       - ``counts``: raw spike counts in ``[t-W, t)``
       - ``rates``: counts / W
     """
+    # Deferred imports avoid cycle: realtime.data_loading → hippo → dataset → data_loading
+    from realtime.data_loading import load_simulation_data, make_decode_times
+    from realtime.decoding_targets import align_extended_behavior_to_decoder_times
+    from realtime.spike_features import apply_feature_mode, build_causal_spike_matrix
+    from realtime.timing import (
+        assert_alignment,
+        extract_behavior_times,
+        resolve_update_dt_s,
+        validate_behavior_timestamps,
+    )
+    from realtime.train_decoder import causal_train_test_split
+
     input_dir = Path(input_dir)
     data = load_simulation_data(input_dir, spike_source)
     behavior_times = extract_behavior_times(data["behavior_df"])

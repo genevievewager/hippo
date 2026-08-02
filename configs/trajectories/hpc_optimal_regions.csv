@@ -1,0 +1,11 @@
+depth_start_mm,depth_end_mm,region,layer_or_area,acronym,include_in_hippocampal_simulation,candidate_cell_classes,notes
+0.00,0.20,CA1,oriens,CA1so,true,"INT_CA1;CA1_pyr","Optimal dorsal HPC stack: stratum oriens (interneuron-rich)."
+0.20,0.40,CA1,pyramidal,CA1sp,true,"CA1_pyr;INT_CA1","Optimal dorsal HPC stack: CA1 pyramidal layer."
+0.40,0.60,CA1,radiatum,CA1sr,true,"CA1_pyr;INT_CA1","Optimal dorsal HPC stack: CA1 radiatum."
+0.60,0.80,CA2,pyramidal,CA2sp,true,"CA2_pyr;INT_CA2","Optimal dorsal HPC stack: CA2 pyramidal band."
+0.80,1.30,CA3,pyramidal,CA3sp,true,"CA3_pyr;INT_CA3","Optimal dorsal HPC stack: CA3 pyramidal band."
+1.30,1.65,DG,granule,DG-sg,true,"DG_granule;INT_DG","Optimal dorsal HPC stack: dentate granule layer."
+1.65,1.85,DG,hilus,DG-po,true,"DG_granule;INT_DG","Optimal dorsal HPC stack: hilus / polymorphic layer."
+1.85,2.05,Subiculum,pyramidal,SUB,true,"Sub_bvc;INT_SUB","Optimal dorsal HPC stack: subiculum (BVC-rich)."
+2.05,2.35,MEC,layer2,ENTl2,true,"MEC_grid;MEC_hd;MEC_speed","Optimal dorsal HPC stack: MEC layer 2 (grid/speed)."
+2.35,2.60,MEC,layer3,ENTl3,true,"MEC_hd;MEC_grid;MEC_speed","Optimal dorsal HPC stack: MEC layer 3 (HD-rich)."

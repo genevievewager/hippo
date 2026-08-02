@@ -1,0 +1,59 @@
+# Probabilistic cell-type capture for the optimal dorsal hippocampal stack.
+# Densities are per mm of probe depth within each region band.
+# Region keys must match hpc_optimal_regions.csv.
+# Interneurons are region-local INT pools (RiaB one-group-per-role).
+
+cell_capture:
+  CA1:
+    include: true
+    unit_density_per_mm: 45
+    cell_type_probabilities:
+      CA1_pyr: 0.75
+      INT_CA1: 0.25
+    note: "Merged CA1 oriens/pyramidale/radiatum bands share this capture block."
+
+  CA2:
+    include: true
+    unit_density_per_mm: 40
+    cell_type_probabilities:
+      CA2_pyr: 0.90
+      INT_CA2: 0.10
+
+  CA3:
+    include: true
+    unit_density_per_mm: 42
+    cell_type_probabilities:
+      CA3_pyr: 0.90
+      INT_CA3: 0.10
+
+  DG:
+    include: true
+    unit_density_per_mm: 48
+    cell_type_probabilities:
+      DG_granule: 0.85
+      INT_DG: 0.15
+
+  Subiculum:
+    include: true
+    unit_density_per_mm: 35
+    cell_type_probabilities:
+      Sub_bvc: 0.90
+      INT_SUB: 0.10
+
+  MEC:
+    include: true
+    unit_density_per_mm: 40
+    cell_type_probabilities:
+      MEC_grid: 0.40
+      MEC_hd: 0.35
+      MEC_speed: 0.25
+    note: "Merged MEC layer2/layer3 bands; grid/HD/speed all present."
+
+recording_capture:
+  detection_radius_um: 60
+  amplitude_decay_um: 35
+  min_template_amplitude_uv: 20
+  max_template_amplitude_uv: 200
+  sorting_miss_rate_default: 0.12
+  jitter_ms_default: 0.3
+  contamination_rate_default: 0.03

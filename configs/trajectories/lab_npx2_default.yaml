@@ -1,0 +1,52 @@
+# Default lab-derived NP2.0 insertion for initial simulation / visualization runs.
+# Coordinates live here — not hard-coded in plotting or simulation logic.
+# Copy example_new_insertion.yaml for future animals / insertions.
+
+animal:
+  strain: C57_WT
+  species: mouse
+  atlas: Allen_CCF
+  hemisphere: right
+  hemisphere_note: "Inferred from positive ML; confirm coordinate convention."
+  coordinate_status: approximate_not_histology_confirmed
+
+probe:
+  type: NP2.0
+  shank_count: null
+  selected_shank: null
+  site_pitch_um: 15
+  site_pitch_note: "Typical NP2.0 value; confirm from channel map."
+  confirm_from_channel_map: true
+  n_channels_recorded: null
+  active_channel_start: null
+  active_channel_end: null
+  channel_map_file: null
+  n_channels: 384
+
+insertion:
+  bregma_to_lambda_mm: 3.8
+  ap_mm_from_bregma: -3.967
+  ml_mm_from_bregma: 3.758
+  dv_mm_from_brain_surface: 3.0
+  dv_uncertain: true
+  horizontal_angle_deg: 330
+  vertical_angle_deg: 80
+  angle_convention_uncertain: true
+  coordinate_source: neuropixels_trajectory_explorer_screenshot
+  trajectory_export_file: null
+  histology_registered_file: null
+  notes: >-
+    Initial lab-derived NP2.0 trajectory. DV written as 3? and angle written as
+    330h/80V; confirm NTE convention before exact CCF registration.
+
+simulation:
+  use_trajectory_regions: true
+  anatomy_regions_file: configs/trajectories/lab_npx2_default_regions.csv
+  cell_capture_file: configs/trajectories/lab_npx2_default_cell_capture.yaml
+  fallback_to_schematic_hippocampus: false
+  exclude_non_hippocampal_regions_by_default: true
+
+decoder:
+  deployment_spike_source: sorted
+  allow_ground_truth_diagnostics: false
+  use_ground_truth_for_model_selection: false

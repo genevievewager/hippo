@@ -9,7 +9,9 @@ Region mapping rationale
 - Place / phase-precessing place → CA1 / CA2 / CA3 / DG (hippocampus proper)
 - Grid / HD / speed → MEC (entorhinal afferents), not CA1/CA2/DG fillers
 - Boundary vector → subiculum (boundary-rich), not CA3
-- CA1 oriens interneurons → synthetic inhibitory population
+- Local interneurons → one synthetic INT pool per principal region
+  (INT_CA1 / INT_CA2 / INT_CA3 / INT_DG / INT_SUB), matching RiaB's
+  one-group-per-role pattern and regional organization
 
 Dynamics flags
 --------------
@@ -20,8 +22,8 @@ Dynamics flags
 - ``recurrent``: CA3-like population-mean recurrent boost
 - ``speed_gain``: mild multiplicative speed modulation
 
-Trisynaptic / EC feedforward (MEC→DG→CA3→CA1, INT→CA1) is applied after
-these flags, in ``hippo_sim.feedforward``.
+Trisynaptic / EC feedforward (MEC→DG→CA3→CA1 plus local INT→home) is
+applied after these flags, in ``hippo_sim.feedforward``.
 """
 
 from __future__ import annotations
@@ -177,12 +179,15 @@ HIPPOCAMPAL_RIA_B_POPULATIONS: list[dict[str, Any]] = [
         },
         "notes": "MEC speed cells (RiaB SpeedCell is n=1; use population fallback)",
     },
+    # Local per-region interneurons (RiaB-style: one synthetic group per home).
+    # Defaults sum to 15 to preserve the prior global INT budget.
     {
-        "name": "CA1_int",
-        "n_key": "n_ca1_interneurons",
-        "n_default": 15,
-        "ratinabox_class": "CA1_Interneurons_synthetic",
-        "cell_type": "CA1_int",
+        "name": "INT_CA1",
+        "n_key": "n_int_ca1",
+        "n_default": 6,
+        "ratinabox_class": "Interneurons_synthetic",
+        "cell_type": "INT_CA1",
+        "home_node": "CA1",
         "riab_params": {},
         "dynamics": {
             "theta": True,
@@ -191,14 +196,107 @@ HIPPOCAMPAL_RIA_B_POPULATIONS: list[dict[str, Any]] = [
             "recurrent": False,
             "speed_gain": False,
         },
-        "notes": "CA1 oriens interneurons: high tonic rate, anti-correlated with CA1 pyr",
+        "notes": (
+            "CA1-local interneurons: high tonic + theta/ripple; "
+            "anti-correlated with CA1 pyr; Stage-C feedback onto CA1"
+        ),
+    },
+    {
+        "name": "INT_CA3",
+        "n_key": "n_int_ca3",
+        "n_default": 3,
+        "ratinabox_class": "Interneurons_synthetic",
+        "cell_type": "INT_CA3",
+        "home_node": "CA3",
+        "riab_params": {},
+        "dynamics": {
+            "theta": True,
+            "ripple": True,
+            "sparsity": False,
+            "recurrent": False,
+            "speed_gain": False,
+        },
+        "notes": (
+            "CA3-local interneurons: anti-correlated with CA3 pyr; "
+            "Stage-C feedback onto CA3"
+        ),
+    },
+    {
+        "name": "INT_DG",
+        "n_key": "n_int_dg",
+        "n_default": 3,
+        "ratinabox_class": "Interneurons_synthetic",
+        "cell_type": "INT_DG",
+        "home_node": "DG",
+        "riab_params": {},
+        "dynamics": {
+            "theta": True,
+            "ripple": True,
+            "sparsity": False,
+            "recurrent": False,
+            "speed_gain": False,
+        },
+        "notes": (
+            "DG-local interneurons: anti-correlated with DG granule; "
+            "Stage-C feedback onto DG"
+        ),
+    },
+    {
+        "name": "INT_CA2",
+        "n_key": "n_int_ca2",
+        "n_default": 1,
+        "ratinabox_class": "Interneurons_synthetic",
+        "cell_type": "INT_CA2",
+        "home_node": "CA2",
+        "riab_params": {},
+        "dynamics": {
+            "theta": True,
+            "ripple": True,
+            "sparsity": False,
+            "recurrent": False,
+            "speed_gain": False,
+        },
+        "notes": (
+            "CA2-local interneurons: anti-correlated with CA2 pyr; "
+            "Stage-C feedback onto CA2"
+        ),
+    },
+    {
+        "name": "INT_SUB",
+        "n_key": "n_int_sub",
+        "n_default": 2,
+        "ratinabox_class": "Interneurons_synthetic",
+        "cell_type": "INT_SUB",
+        "home_node": "SUB",
+        "riab_params": {},
+        "dynamics": {
+            "theta": True,
+            "ripple": True,
+            "sparsity": False,
+            "recurrent": False,
+            "speed_gain": False,
+        },
+        "notes": (
+            "Subiculum-local interneurons: anti-correlated with Sub BVC; "
+            "Stage-C feedback onto SUB"
+        ),
     },
 ]
+
+# Legacy count keys that still feed the CA1-local INT pool.
+_INT_CA1_LEGACY_N_KEYS = ("n_interneurons", "n_ca1_interneurons")
 
 
 def population_count(spec: dict[str, Any], ratinabox_params: dict) -> int:
     """Resolve population size from config params with table default."""
-    return int(ratinabox_params.get(spec["n_key"], spec["n_default"]))
+    if spec["n_key"] in ratinabox_params:
+        return int(ratinabox_params[spec["n_key"]])
+    # Legacy global INT counts map onto the CA1-local pool.
+    if spec["n_key"] == "n_int_ca1":
+        for legacy in _INT_CA1_LEGACY_N_KEYS:
+            if legacy in ratinabox_params:
+                return int(ratinabox_params[legacy])
+    return int(spec["n_default"])
 
 
 def population_table_summary(ratinabox_params: dict | None = None) -> list[dict[str, Any]]:
