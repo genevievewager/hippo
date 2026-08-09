@@ -60,6 +60,7 @@ def build_sorted_information_loss_summary(
     key_cols = [
         c for c in (
             "target_name",
+            "feature_set",
             "feature_type",
             "embedding_type",
             "feature_mode",
@@ -100,6 +101,7 @@ def build_sorted_information_loss_summary(
         rows.append({
             "target_name": target,
             "target_family": srow.get("target_family"),
+            "feature_set": srow.get("feature_set", "counts"),
             "feature_type": srow.get("feature_type"),
             "embedding_type": srow.get("embedding_type", srow.get("feature_type")),
             "decoder_name": srow.get("decoder_name"),

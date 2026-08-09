@@ -12,8 +12,10 @@ animal:
 
 probe:
   type: NP2.0
-  shank_count: null
-  selected_shank: null
+  shank_count: 4
+  selected_shank: 1
+  selected_probe_column: 1
+  selected_probe_column_note: "Far-left red-boxed trajectory in the Neuropixels Trajectory Explorer probe-areas screenshot."
   site_pitch_um: 15
   site_pitch_note: "Typical NP2.0 value; confirm from channel map."
   confirm_from_channel_map: true
@@ -37,7 +39,9 @@ insertion:
   histology_registered_file: null
   notes: >-
     Initial lab-derived NP2.0 trajectory. DV written as 3? and angle written as
-    330h/80V; confirm NTE convention before exact CCF registration.
+    330h/80V; confirm NTE convention before exact CCF registration. The current
+    anatomy table is a screenshot-derived approximation for probe 1 / the far-left
+    trajectory only.
 
 simulation:
   use_trajectory_regions: true

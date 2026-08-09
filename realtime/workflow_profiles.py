@@ -1,12 +1,14 @@
-"""Decoder workflow profiles: quick / standard / full / manifolds.
+"""Decoder workflow profiles: quick / standard / full / manifolds / feature_robustness.
 
 Profiles set lean defaults so a casual user gets a strong decoder without a
 research-scale sweep. Explicit CLI flags always override profile values.
-Manifold feature modes stay in quick/standard so Step 1 still reports whether
-manifold features help vs raw counts.
 
 ``manifolds`` is the one-command path for testing all realtime-relevant
 embeddings (PCA family + classic / distilled Isomap) with a bounded grid.
+
+``feature_robustness`` is the public modular full-grid path:
+W × FeatureSet × Manifold × Decoder (re-runnable on existing sim outputs
+without re-simulating).
 """
 
 from __future__ import annotations
@@ -22,6 +24,7 @@ from realtime.manifold_features import (
     MANIFOLDS_N_COMPONENTS,
     QUICK_FEATURE_MODES,
 )
+from realtime.neural_features import ALL_FEATURE_SETS
 from realtime.timing import DEFAULT_LATENT_HISTORY_FRAMES
 
 
@@ -39,6 +42,17 @@ FULL_TEMPORAL_MODELS: tuple[str, ...] = (
     "flattened_history",
     "shuffled_sequence",
     "averaged_history",
+)
+
+# Embedding / manifold grid for the feature-robustness public path.
+# ``identity`` = no manifold (CLI alias ``counts``).
+FEATURE_ROBUSTNESS_EMBEDDINGS: tuple[str, ...] = (
+    "identity",
+    "global_pca",
+    "region_pca",
+    "layer_pca",
+    "global_isomap",
+    "global_isomap_distilled",
 )
 
 
@@ -61,12 +75,16 @@ class WorkflowProfile:
     prediction_lags: tuple[float, ...]
     isomap_n_neighbors: tuple[int, ...] = (DEFAULT_ISOMAP_N_NEIGHBORS,)
     enable_isomap_distillation: bool = False
+    # Neural feature-set axis (upstream of manifolds). Default preserves counts-only.
+    feature_sets: tuple[str, ...] = ("counts",)
+    # When set, expand F×E grid with feature_types=("counts",) passthrough.
+    embedding_types: tuple[str, ...] | None = None
+    run_feature_ablation: bool = False
 
 
 PROFILES: dict[str, WorkflowProfile] = {
     "quick": WorkflowProfile(
         name="quick",
-        # Coarse grid for a fast smoke test; prefer standard/full for deployment.
         decode_windows=COARSE_DECODE_WINDOWS,
         adaptive_windows=False,
         feature_modes=QUICK_FEATURE_MODES,
@@ -82,7 +100,6 @@ PROFILES: dict[str, WorkflowProfile] = {
     ),
     "standard": WorkflowProfile(
         name="standard",
-        # Full causal-window grid so deployment selection is not forced to 0.250 s.
         decode_windows=WINDOW_CANDIDATE_POOL,
         adaptive_windows=False,
         feature_modes=QUICK_FEATURE_MODES,
@@ -111,8 +128,6 @@ PROFILES: dict[str, WorkflowProfile] = {
         temporal_models=FULL_TEMPORAL_MODELS,
         prediction_lags=(0.0,),
     ),
-    # One-command manifold suite: all RT-relevant embeddings + Isomap teacher/student.
-    # Bounded W / k / nn and quick decoder zoo to avoid combinatorial explosion.
     "manifolds": WorkflowProfile(
         name="manifolds",
         decode_windows=COARSE_DECODE_WINDOWS,
@@ -130,6 +145,27 @@ PROFILES: dict[str, WorkflowProfile] = {
         isomap_n_neighbors=MANIFOLDS_ISOMAP_N_NEIGHBORS,
         enable_isomap_distillation=True,
     ),
+    # Public modular full grid (reuses existing simulation outputs).
+    "feature_robustness": WorkflowProfile(
+        name="feature_robustness",
+        decode_windows=DEFAULT_DECODE_WINDOWS,
+        adaptive_windows=False,
+        feature_modes=MANIFOLDS_FEATURE_MODES,
+        manifold_n_components=MANIFOLDS_N_COMPONENTS,
+        max_models="quick",
+        compare_sources=False,
+        enable_temporal_manifold=False,
+        temporal_inherit_windows=True,
+        representations=LEAN_TEMPORAL_REPRESENTATIONS,
+        latent_history_frames=LEAN_LATENT_HISTORY_FRAMES,
+        temporal_models=LEAN_TEMPORAL_MODELS,
+        prediction_lags=(0.0,),
+        isomap_n_neighbors=MANIFOLDS_ISOMAP_N_NEIGHBORS,
+        enable_isomap_distillation=True,
+        feature_sets=ALL_FEATURE_SETS,
+        embedding_types=FEATURE_ROBUSTNESS_EMBEDDINGS,
+        run_feature_ablation=True,
+    ),
 }
 
 
@@ -142,9 +178,9 @@ def get_profile(name: str) -> WorkflowProfile:
     return PROFILES[key]
 
 
-# Re-export for callers that want the candidate pool used by adaptive refine.
 __all__ = [
     "COARSE_DECODE_WINDOWS",
+    "FEATURE_ROBUSTNESS_EMBEDDINGS",
     "FULL_TEMPORAL_MODELS",
     "FULL_TEMPORAL_REPRESENTATIONS",
     "LEAN_LATENT_HISTORY_FRAMES",

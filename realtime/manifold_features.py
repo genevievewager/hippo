@@ -32,6 +32,9 @@ MANIFOLD_FEATURE_MODES = (
     "bayesian_place_tuning",
     "global_isomap",
     "global_isomap_distilled",
+    # Dynamic latent-state embeddings (parallel to static manifolds).
+    "global_lds",
+    "gpfa",
 )
 ALL_FEATURE_MODES = IDENTITY_FEATURE_MODES + MANIFOLD_FEATURE_MODES
 # Embedding-only names (search dimension E); identity is pass-through after F.
@@ -46,11 +49,29 @@ EMBEDDING_TYPES = (
     "bayesian_place_tuning",
     "global_isomap",
     "global_isomap_distilled",
+    "global_lds",
+    "gpfa",
 )
 
-# Offline-only static modes: evaluated in comparison, not auto-deployed realtime.
+# Offline-only static/dynamic modes: evaluated in comparison, not auto-deployed realtime.
 # Distilled Isomap is realtime-eligible when latency/distortion gates pass.
-OFFLINE_ONLY_FEATURE_MODES = frozenset({"global_isomap"})
+# GPFA is an offline / acausal dynamic benchmark.
+OFFLINE_ONLY_FEATURE_MODES = frozenset({"global_isomap", "gpfa"})
+
+# Representation-family helpers (static manifold vs dynamic latent state).
+STATIC_REPRESENTATION_TYPES = (
+    "identity",
+    "global_pca",
+    "region_pca",
+    "layer_pca",
+    "cell_type_pca",
+    "rate_model_pca",
+    "pls",
+    "bayesian_place_tuning",
+    "global_isomap",
+    "global_isomap_distilled",
+)
+DYNAMIC_REPRESENTATION_TYPES = ("global_lds", "gpfa")
 
 QUICK_FEATURE_MODES = ("counts", "global_pca", "region_pca")
 # Lean “test all RT-relevant manifolds” set used by ``--profile manifolds``.
@@ -76,6 +97,8 @@ GROUPING_COLUMN = {
     "pls": None,
     "bayesian_place_tuning": None,
     "identity": None,
+    "global_lds": None,
+    "gpfa": None,
     "region_pca": "region",
     "layer_pca": "layer",
     "cell_type_pca": "cell_type",
@@ -113,6 +136,10 @@ def manifold_type_for_feature_mode(feature_mode: str) -> str:
         return "pls"
     if feature_mode == "bayesian_place_tuning":
         return "bayesian_place_tuning"
+    if feature_mode == "global_lds":
+        return "lds"
+    if feature_mode == "gpfa":
+        return "gpfa"
     if feature_mode.endswith("_pca") or feature_mode == "global_pca":
         return "pca"
     if feature_mode == "global_isomap_distilled" or feature_mode.endswith(
@@ -124,8 +151,15 @@ def manifold_type_for_feature_mode(feature_mode: str) -> str:
     return feature_mode
 
 
+def representation_family_for_mode(feature_mode: str) -> str:
+    """Return ``static`` or ``dynamic`` representation family."""
+    if feature_mode in DYNAMIC_REPRESENTATION_TYPES:
+        return "dynamic"
+    return "static"
+
+
 def is_realtime_compatible_feature_mode(feature_mode: str) -> bool:
-    """Return False for offline-only modes such as standard Isomap."""
+    """Return False for offline-only modes such as standard Isomap / GPFA."""
     return feature_mode not in OFFLINE_ONLY_FEATURE_MODES
 
 
@@ -714,11 +748,18 @@ def make_feature_transformer(
     isomap_pre_pca_n_components: int = 50,
     isomap_require_connected_graph: bool = True,
     n_jobs: int | None = -1,
+    isomap_transform: str = "sqrt_counts",
+    update_dt: float = 0.025,
+    feature_set: str | None = None,
+    spike_source: str | None = None,
 ) -> Any:
     """
     Construct an unfitted feature transformer for a feature mode.
 
     Returns None when a requested groupwise mode cannot be built (missing metadata).
+
+    ``isomap_transform`` selects Isomap preprocessing. Use ``\"counts\"`` (no
+    square-root) when feeding signed / mixed neural feature sets.
     """
     if feature_mode in IDENTITY_FEATURE_MODES:
         return IdentityFeatures(feature_mode=feature_mode, decode_window=decode_window)
@@ -732,10 +773,25 @@ def make_feature_transformer(
     if feature_mode == "global_pca":
         return GlobalPCAManifold(n_components=n_components, random_state=random_state)
 
+    if feature_mode in DYNAMIC_REPRESENTATION_TYPES:
+        from realtime.dynamic_latents.adapters import DynamicLatentEmbedding
+
+        return DynamicLatentEmbedding(
+            model_name=feature_mode,
+            n_components=n_components,
+            update_dt=update_dt,
+            decode_window=decode_window,
+            feature_set=feature_set,
+            spike_source=spike_source,
+            random_state=random_state,
+            causal_default=(feature_mode != "gpfa"),
+        )
+
     if feature_mode == "global_isomap":
         return IsomapManifold(
             n_components=n_components,
             n_neighbors=n_neighbors,
+            transform=isomap_transform,
             pre_pca_enabled=isomap_pre_pca_enabled,
             pre_pca_n_components=isomap_pre_pca_n_components,
             require_connected_graph=isomap_require_connected_graph,
@@ -749,6 +805,7 @@ def make_feature_transformer(
         return IsomapDistilledManifold(
             n_components=n_components,
             n_neighbors=n_neighbors,
+            transform=isomap_transform,
             pre_pca_enabled=isomap_pre_pca_enabled,
             pre_pca_n_components=isomap_pre_pca_n_components,
             require_connected_graph=isomap_require_connected_graph,
@@ -799,6 +856,10 @@ def load_feature_transformer(input_dir: Path) -> Any:
         from realtime.manifolds.isomap_distilled_features import IsomapDistilledManifold
 
         return IsomapDistilledManifold.load(input_dir)
+    if name in ("DynamicLatentEmbedding", "LinearDynamicalSystem", "GPFAModel"):
+        from realtime.dynamic_latents.adapters import DynamicLatentEmbedding
+
+        return DynamicLatentEmbedding.load(input_dir)
     raise ValueError(f"Unknown manifold class in {input_dir}: {name}")
 
 

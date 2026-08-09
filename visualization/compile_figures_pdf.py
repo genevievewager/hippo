@@ -65,6 +65,7 @@ _REALTIME_TRAILING = (
 
 # Aggregate benchmark overview before per-update distributions.
 _LATENCY_TRAILING = (
+    "fig_pipeline_stage_timing",
     "fig_latency",
     "fig_latency_realtime",
 )

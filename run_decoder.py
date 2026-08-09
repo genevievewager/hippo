@@ -44,9 +44,10 @@ def parse_args() -> argparse.Namespace:
         choices=sorted(PROFILES.keys()),
         default="manifolds",
         help=(
-            "Workflow profile: manifolds (default; all RT embeddings + Isomap "
-            "teacher/student, lean grid), standard (counts+PCA, full W), "
-            "quick (coarse W smoke), full (dense research grid + full model zoo). "
+            "Workflow profile: manifolds (default day-to-day RT embeddings), "
+            "feature_robustness (public full grid: W × FeatureSet × Manifold "
+            "× Decoder on existing sim outputs), "
+            "standard (counts+PCA, full W), quick (smoke), full (dense research). "
             "Explicit flags below override the profile."
         ),
     )

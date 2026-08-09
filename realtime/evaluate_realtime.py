@@ -168,20 +168,45 @@ def run_realtime_pipeline(
     beh_test = aligned_all.loc[test_mask].reset_index(drop=True)
 
     if feature_transformer is None:
+        from realtime.manifold_features import (
+            OFFLINE_ONLY_FEATURE_MODES,
+            is_realtime_compatible_feature_mode,
+        )
+        from realtime.search_space import resolve_manifold_alias
+
+        feature_type_resolved = resolve_manifold_alias(feature_type)
+        if feature_type_resolved in OFFLINE_ONLY_FEATURE_MODES or not is_realtime_compatible_feature_mode(
+            feature_type_resolved
+        ):
+            raise ValueError(
+                f"Representation {feature_type!r} is offline-only / acausal and "
+                "cannot be launched for realtime replay. Use global_lds, "
+                "global_pca, counts, or another realtime-compatible method."
+            )
         feature_transformer = make_feature_transformer(
-            feature_type,
+            feature_type_resolved,
             decode_window=decode_window,
             n_components=manifold_n_components or 3,
             units_df=data["units_df"],
             unit_ids=data["unit_ids"],
+            update_dt=update_dt,
+            spike_source=spike_source,
         )
         if feature_transformer is None:
             raise ValueError(f"Could not build feature transformer for {feature_type}")
         feature_transformer.fit(X_counts[train_mask])
         feature_transformer.save(models_dir / "feature_transformer")
 
-    X_train = feature_transformer.transform(X_counts[train_mask])
-    X_test = feature_transformer.transform(X_counts[test_mask])
+    from realtime.search_space import is_dynamic_embedding
+    from realtime.search_space import resolve_manifold_alias as _resolve_alias
+
+    emb_name = _resolve_alias(feature_type)
+    if is_dynamic_embedding(emb_name) and hasattr(feature_transformer, "transform"):
+        X_train = feature_transformer.transform(X_counts[train_mask], causal=True, reset=True)
+        X_test = feature_transformer.transform(X_counts[test_mask], causal=True, reset=False)
+    else:
+        X_train = feature_transformer.transform(X_counts[train_mask])
+        X_test = feature_transformer.transform(X_counts[test_mask])
 
     if pretrained_decoders is not None:
         decoders = pretrained_decoders

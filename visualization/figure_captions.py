@@ -316,6 +316,13 @@ CAPTIONS: dict[str, str] = {
         "Dashed line marks the update budget (typically 50 ms); green bars are "
         "realtime-compatible."
     ),
+    "fig_pipeline_stage_timing": (
+        "Full-run pipeline stage timing (wall clock). "
+        "Shows how long simulation, decoder comparison axes "
+        "(W × FeatureSet × Manifold × Decoder), closed-loop replay, "
+        "and visualization take for a complete experiment. "
+        "This is orchestration cost, not per-update causal latency."
+    ),
     "fig_latency_realtime": (
         "Per-update closed-loop latency on sorted spikes. "
         "(A) Distribution of total update latency with mean, p95, and budget "

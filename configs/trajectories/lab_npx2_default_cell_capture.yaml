@@ -1,6 +1,8 @@
 # Probabilistic cell-type capture for the default lab NP2.0 trajectory.
 # Densities are per mm of probe depth within each region band.
-# Replace or override when a Trajectory Explorer export / histology table is available.
+# This file must match the region names in:
+# configs/trajectories/lab_npx2_default_regions.csv
+# Current version is for probe 1 / far-left screenshot-derived trajectory.
 
 cell_capture:
   visual_cortex:
@@ -10,52 +12,75 @@ cell_capture:
       visual_units_optional: 1.0
     note: "Probe traverses visual cortex superficially; excluded by default unless modeling cortical contamination."
 
-  HPF_ProS_transition:
-    include: true
-    unit_density_per_mm: 20
-    cell_type_probabilities:
-      Sub_bvc: 0.40
-      CA1_pyr: 0.20
-      INT_SUB: 0.20
-      MEC_hd: 0.20
-
-  subiculum:
-    include: true
-    unit_density_per_mm: 45
-    cell_type_probabilities:
-      Sub_bvc: 0.70
-      MEC_hd: 0.10
-      MEC_speed: 0.10
-      INT_SUB: 0.10
-
-  dentate_gyrus:
-    include: true
-    unit_density_per_mm: 20
-    cell_type_probabilities:
-      DG_granule: 0.30
-      INT_DG: 0.20
-      Sub_bvc: 0.20
-      MEC_hd: 0.15
-      MEC_speed: 0.15
-    note: "Screenshot suggests DG molecular layer rather than clear dense granule layer, so DG_granule is not dominant."
-
-  entorhinal_cortex:
-    include: true
-    unit_density_per_mm: 50
-    cell_type_probabilities:
-      MEC_grid: 0.40
-      MEC_hd: 0.30
-      MEC_speed: 0.20
-      Sub_bvc: 0.10
-
-  deep_entorhinal_HATA:
+  entorhinal_transition:
     include: true
     unit_density_per_mm: 25
     cell_type_probabilities:
+      MEC_hd: 0.35
+      MEC_speed: 0.25
+      MEC_grid: 0.25
+      Sub_bvc: 0.15
+    note: "Approximate transition into entorhinal/hippocampal formation zone."
+
+  hippocampal_formation_transition:
+    include: true
+    unit_density_per_mm: 25
+    cell_type_probabilities:
+      Sub_bvc: 0.35
+      MEC_hd: 0.25
+      MEC_speed: 0.20
+      CA1_int: 0.20
+    note: "Approximate HPF band visible on probe 1; not a clear CA1/CA3/DG layer."
+
+  entorhinal_cortex_layer6a:
+    include: true
+    unit_density_per_mm: 40
+    cell_type_probabilities:
+      MEC_grid: 0.35
       MEC_hd: 0.30
-      MEC_speed: 0.30
-      Sub_bvc: 0.20
+      MEC_speed: 0.25
+      Sub_bvc: 0.10
+    note: "Large entorhinal layer 6a band visible on the leftmost trajectory."
+
+  entorhinal_cortex_layer5:
+    include: true
+    unit_density_per_mm: 45
+    cell_type_probabilities:
+      MEC_grid: 0.40
+      MEC_hd: 0.25
+      MEC_speed: 0.25
+      Sub_bvc: 0.10
+    note: "Deep entorhinal layer 5 region."
+
+  medial_entorhinal_layer3:
+    include: true
+    unit_density_per_mm: 35
+    cell_type_probabilities:
+      MEC_grid: 0.45
+      MEC_hd: 0.25
+      MEC_speed: 0.25
+      Sub_bvc: 0.05
+    note: "Medial entorhinal layer 3."
+
+  medial_entorhinal_layer2:
+    include: true
+    unit_density_per_mm: 35
+    cell_type_probabilities:
+      MEC_grid: 0.45
+      MEC_hd: 0.30
+      MEC_speed: 0.20
+      Sub_bvc: 0.05
+    note: "Medial entorhinal layer 2."
+
+  medial_entorhinal_layer1:
+    include: true
+    unit_density_per_mm: 20
+    cell_type_probabilities:
+      MEC_hd: 0.35
+      MEC_speed: 0.35
       MEC_grid: 0.20
+      Sub_bvc: 0.10
+    note: "Medial entorhinal layer 1 near deepest visible extent."
 
 recording_capture:
   detection_radius_um: 60

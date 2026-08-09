@@ -188,6 +188,13 @@ def generate_experiment_figures(
         )
     if lat_dir.exists() or rt_has_latency:
         needs_publication = True
+        try:
+            from visualization.latency_plots import plot_latency_outputs
+
+            print(f"Generating latency / pipeline-timing figures from {experiment_dir}...")
+            plot_latency_outputs(experiment_dir, figures_dir)
+        except Exception as exc:
+            print(f"  warning: latency figures skipped ({exc})")
 
     if needs_publication:
         try:

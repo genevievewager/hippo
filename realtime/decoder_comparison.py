@@ -66,15 +66,30 @@ from realtime.manifold_features import (
     make_feature_transformer,
     manifold_transform_dirname,
     manifold_type_for_feature_mode,
+    representation_family_for_mode,
 )
+from realtime.neural_features import (
+    NeuralFeatureExtractor,
+)
+from realtime.neural_features.ablation import ablation_feature_sets
+from realtime.neural_features.comparison import (
+    effective_spike_feature_type,
+    filter_fe_jobs_for_feature_set,
+    summarize_feature_set_performance,
+)
+from realtime.neural_features.stability import compute_latent_stability
+from realtime.pipeline_timing import PipelineTimer
 from realtime.search_space import (
     compose_feature_mode,
     embedding_needs_targets,
     expand_fe_jobs,
+    is_dynamic_embedding,
 )
 from realtime.spike_features import build_causal_spike_matrix
 from realtime.train_decoder import causal_train_test_split, infer_arena_bounds
 from realtime.trigger_comparison import default_trigger_rules
+
+import time
 
 DEFAULT_DECODE_WINDOWS = (0.025, 0.050, 0.100, 0.250, 0.500, 1.000)
 DEFAULT_MANIFOLD_N_COMPONENTS = (3,)
@@ -128,6 +143,15 @@ class ComparisonRunConfig:
     feature_types: tuple[str, ...] | None = None
     embedding_types: tuple[str, ...] | None = None
     use_fe_grid: bool = False
+    # Neural feature-set search (upstream of F scaling / E manifold).
+    # Default ("counts",) preserves the historical spike-count baseline.
+    feature_sets: tuple[str, ...] = ("counts",)
+    coactivity_bin_dt: float | None = None
+    include_count_derivative: bool = False
+    allow_full_pairwise: bool = False
+    lagged_coupling_lags: tuple[int, ...] = (1, 2)
+    run_feature_ablation: bool = False
+    compute_latent_stability: bool = True
     manifold_n_components: tuple[int, ...] = DEFAULT_MANIFOLD_N_COMPONENTS
     isomap_n_neighbors: tuple[int, ...] = (DEFAULT_ISOMAP_N_NEIGHBORS,)
     isomap_pre_pca_enabled: bool = True
@@ -370,6 +394,12 @@ def run_decoder_comparison(config: ComparisonRunConfig) -> pd.DataFrame:
         ),
     )
 
+    feature_sets = list(dict.fromkeys(config.feature_sets or ("counts",)))
+    if config.run_feature_ablation:
+        for name in ablation_feature_sets():
+            if name not in feature_sets:
+                feature_sets.append(name)
+
     trigger_rules = (
         default_trigger_rules(
             trigger_context=config.trigger_context,
@@ -389,10 +419,16 @@ def run_decoder_comparison(config: ComparisonRunConfig) -> pd.DataFrame:
     explained_rows: list[dict[str, Any]] = []
     trigger_rows_all: list[dict[str, Any]] = []
     control_rows_all: list[dict[str, Any]] = []
+    stability_rows: list[dict[str, Any]] = []
     best_fits: dict[str, FitResult] = {}
     best_meta: dict[str, dict[str, Any]] = {}
     best_by_window: dict[tuple[str, float, str, str], FitResult] = {}
     best_by_window_meta: dict[tuple[str, float, str, str], dict[str, Any]] = {}
+
+    spikes_clean = data["spikes_df"]
+    neural_dir = models_dir / "neural_feature_extractors"
+    neural_dir.mkdir(parents=True, exist_ok=True)
+    timer = PipelineTimer()
 
     window_queue = list(dict.fromkeys(float(w) for w in config.decode_windows))
     tested_windows: list[float] = []
@@ -403,6 +439,7 @@ def run_decoder_comparison(config: ComparisonRunConfig) -> pd.DataFrame:
         wi += 1
         print(f"  window W={decode_window:.3f}s "
               f"({len(tested_windows) + 1}/{len(window_queue)} queued)...")
+        t_window = time.perf_counter()
         decode_times = make_decode_times(
             data["session_duration"],
             decode_window,
@@ -412,265 +449,492 @@ def run_decoder_comparison(config: ComparisonRunConfig) -> pd.DataFrame:
         aligned = align_extended_behavior_to_decoder_times(
             data["behavior_df"], decode_times, data["summary"]
         )
+        train_mask, test_mask = causal_train_test_split(decode_times, config.train_frac)
+        beh_train = aligned.loc[train_mask].reset_index(drop=True)
+        beh_test = aligned.loc[test_mask].reset_index(drop=True)
+        decode_times_test = decode_times[test_mask]
+
+        spikes_df = spikes_clean
         X_counts = build_causal_spike_matrix(
-            data["spikes_df"],
+            spikes_df,
             data["unit_ids"],
             decode_times,
             decode_window,
         )
         w_stats = window_matrix_stats(X_counts)
-        train_mask, test_mask = causal_train_test_split(decode_times, config.train_frac)
-        beh_train = aligned.loc[train_mask].reset_index(drop=True)
-        beh_test = aligned.loc[test_mask].reset_index(drop=True)
-        decode_times_test = decode_times[test_mask]
         X_counts_test = X_counts[test_mask]
 
-        # Persist per-sample window metadata for this W (overwrite each window).
         per_sample_window_frame(
             decode_times, X_counts,
             decode_window_s=decode_window, update_dt_s=update_dt,
-        ).to_csv(output_dir / f"window_samples_w{decode_window:.3f}s.csv", index=False)
+        ).to_csv(
+            output_dir / f"window_samples_w{decode_window:.3f}s.csv",
+            index=False,
+        )
 
-        for feature_type, embedding_type, n_components, n_neighbors in fe_jobs:
-            feature_mode = compose_feature_mode(feature_type, embedding_type)
-            try:
-                f_transform = make_spike_feature_transformer(
-                    feature_type,
-                    decode_window=decode_window,
-                    units_df=data["units_df"],
-                    unit_ids=data["unit_ids"],
-                )
-            except Exception as exc:
-                print(f"  skip F={feature_type}: {exc}")
-                continue
+        for feature_set in feature_sets:
+            t_fs = time.perf_counter()
+            extractor = NeuralFeatureExtractor.from_feature_set(
+                feature_set,
+                units_df=data["units_df"],
+                unit_ids=data["unit_ids"],
+                decode_window=decode_window,
+                update_dt=update_dt,
+                coactivity_bin_dt=config.coactivity_bin_dt,
+                include_count_derivative=config.include_count_derivative,
+                allow_full_pairwise=config.allow_full_pairwise,
+                lagged_coupling_lags=config.lagged_coupling_lags,
+            )
+            feat_result = extractor.extract_matrix(
+                spikes_df,
+                decode_times,
+                counts=None if extractor.needs_coactivity_bins() else X_counts,
+            )
+            timer.add(
+                "feature_extraction",
+                time.perf_counter() - t_fs,
+                detail=f"W={decode_window:.3f}|set={feature_set}",
+                notes="NeuralFeatureExtractor.extract_matrix",
+                decode_window_s=decode_window,
+                feature_set=feature_set,
+            )
+            X_feat = np.asarray(feat_result.feature_vector, dtype=float)
+            feat_dim = int(X_feat.shape[1])
+            feat_extract_ms = float(feat_result.extras.get("feature_extract_ms", 0.0))
 
-            X_train_raw = X_counts[train_mask]
-            X_test_raw = X_counts[test_mask]
-            f_transform.fit(X_train_raw)
-            X_train_f = f_transform.transform(X_train_raw)
-            X_test_f = f_transform.transform(X_test_raw)
+            ext_name = (
+                f"{feature_set}_w{int(round(decode_window * 1000)):04d}ms"
+            )
+            extractor.save(neural_dir / ext_name)
 
-            f_name = f"{feature_type}_w{int(round(decode_window * 1000)):04d}ms"
-            f_path = feature_dir / f_name
-            f_transform.save(f_path)
+            jobs = filter_fe_jobs_for_feature_set(fe_jobs, feature_set)
+            print(
+                f"    feature_set={feature_set} "
+                f"dim={feat_dim} jobs={len(jobs)}"
+            )
 
-            # Supervised embeddings are fit inside the target loop.
-            if embedding_needs_targets(embedding_type):
-                unsupervised_embed = None
-            else:
-                unsupervised_embed = make_feature_transformer(
-                    embedding_type if embedding_type != "identity" else "identity",
-                    decode_window=decode_window,
-                    n_components=n_components or 3,
-                    units_df=data["units_df"],
-                    unit_ids=data["unit_ids"],
-                    random_state=config.seed,
-                    n_neighbors=n_neighbors or DEFAULT_ISOMAP_N_NEIGHBORS,
-                    isomap_pre_pca_enabled=config.isomap_pre_pca_enabled,
-                    isomap_pre_pca_n_components=config.isomap_pre_pca_n_components,
-                    isomap_require_connected_graph=config.isomap_require_connected_graph,
-                    n_jobs=config.n_jobs,
-                )
-                if unsupervised_embed is None:
-                    print(f"  skip E={embedding_type} (missing unit metadata)")
-                    continue
+            t_fs_total = time.perf_counter()
+            for feature_type, embedding_type, n_components, n_neighbors in jobs:
+                t_emb = time.perf_counter()
+                feature_mode = compose_feature_mode(feature_type, embedding_type)
+                f_type_eff = effective_spike_feature_type(feature_set, feature_type)
                 try:
-                    unsupervised_embed.fit(X_train_f)
+                    f_transform = make_spike_feature_transformer(
+                        f_type_eff,
+                        decode_window=decode_window,
+                        units_df=data["units_df"],
+                        unit_ids=data["unit_ids"],
+                    )
                 except Exception as exc:
-                    from realtime.manifolds.isomap_diagnostics import DisconnectedGraphError
+                    print(f"  skip F={feature_type}: {exc}")
+                    continue
 
-                    if isinstance(exc, DisconnectedGraphError) or "disconnected" in str(exc).lower():
-                        print(
-                            f"  exclude {feature_mode} k={n_components} "
-                            f"nn={n_neighbors}: {exc}"
-                        )
-                        rows.append({
-                            **_base_row(
-                                config, data, feature_type, decode_window, update_dt,
-                                embedding_type=embedding_type,
-                            ),
-                            "manifold_type": manifold_type_for_feature_mode(embedding_type),
-                            "manifold_n_components": n_components,
-                            "n_neighbors": n_neighbors,
-                            "exclusion_reason": str(exc),
-                            "graph_connected": False,
-                            "realtime_compatible": False,
-                            "target_name": None,
-                            "n_train_samples": int(train_mask.sum()),
-                            "n_test_samples": int(test_mask.sum()),
-                        })
-                        continue
-                    raise
+                # Leakage rule: fit F / E on train partition only.
+                X_train_raw = X_feat[train_mask]
+                X_test_raw = X_feat[test_mask]
+                f_transform.fit(X_train_raw)
+                X_train_f = f_transform.transform(X_train_raw)
+                X_test_f = f_transform.transform(X_test_raw)
 
-                X_train_shared = unsupervised_embed.transform(X_train_f)
-                X_test_shared = unsupervised_embed.transform(X_test_f)
-                meta = unsupervised_embed.get_metadata()
-                transform_name = manifold_transform_dirname(
-                    feature_mode, decode_window, n_components, n_neighbors,
+                f_name = (
+                    f"{feature_set}__{f_type_eff}_w"
+                    f"{int(round(decode_window * 1000)):04d}ms"
                 )
-                transform_path = manifold_dir / transform_name
-                unsupervised_embed.save(transform_path)
-                for group in meta.get("groups", []) or []:
-                    explained_rows.append({
-                        "spike_source": config.spike_source,
-                        "decode_window_s": float(decode_window),
-                        "feature_type": feature_type,
-                        "embedding_type": embedding_type,
-                        "group_name": group.get("group_name"),
-                        "n_units": group.get("n_units"),
-                        "n_components": group.get("n_components"),
-                        "explained_variance_sum": group.get("explained_variance_sum"),
-                        "explained_variance_by_component": json.dumps(
-                            group.get("explained_variance_by_component")
-                        ),
-                    })
-                geo = meta.get("geometry_metrics") or {}
-                diag = meta.get("graph_diagnostics") or {}
-                shared_extras = {
-                    "manifold_type": meta.get("manifold_type")
-                    or manifold_type_for_feature_mode(embedding_type),
-                    "manifold_grouping": meta.get("manifold_grouping"),
-                    "manifold_n_components": n_components,
-                    "n_neighbors": n_neighbors if n_neighbors is not None else meta.get("n_neighbors"),
-                    "pre_pca_enabled": meta.get("pre_pca_enabled"),
-                    "pre_pca_dim": meta.get("pre_pca_dim"),
-                    "actual_n_features": meta.get("actual_n_features"),
-                    "explained_variance_ratio": (
-                        json.dumps(meta.get("explained_variance_ratio"))
-                        if meta.get("explained_variance_ratio") is not None else None
-                    ),
-                    "manifold_transform_path": str(transform_path),
-                    "embedding_transform_path": str(transform_path),
-                    "realtime_compatible": bool(
-                        meta.get(
-                            "realtime_compatible",
-                            is_realtime_compatible_feature_mode(embedding_type)
-                            if embedding_type != "identity"
-                            else True,
-                        )
-                    ),
-                    "graph_connected": diag.get("graph_connected"),
-                    "largest_component_fraction": diag.get("largest_component_fraction"),
-                    "trustworthiness": geo.get("trustworthiness"),
-                    "residual_variance": geo.get("residual_variance"),
-                    "geodesic_distance_correlation": geo.get("geodesic_distance_correlation"),
-                }
-            # Evaluate all targets/decoders for this (F, E, W)
-            target_list = list(CONTINUOUS_TARGETS) + list(CATEGORICAL_TARGETS)
-            for target in target_list:
+                f_path = feature_dir / f_name
+                f_transform.save(f_path)
+
+                # Supervised embeddings are fit inside the target loop.
                 if embedding_needs_targets(embedding_type):
-                    emb = make_feature_transformer(
-                        embedding_type,
+                    unsupervised_embed = None
+                else:
+                    unsupervised_embed = make_feature_transformer(
+                        embedding_type if embedding_type != "identity" else "identity",
                         decode_window=decode_window,
                         n_components=n_components or 3,
                         units_df=data["units_df"],
                         unit_ids=data["unit_ids"],
                         random_state=config.seed,
+                        n_neighbors=n_neighbors or DEFAULT_ISOMAP_N_NEIGHBORS,
+                        isomap_pre_pca_enabled=config.isomap_pre_pca_enabled,
+                        isomap_pre_pca_n_components=config.isomap_pre_pca_n_components,
+                        isomap_require_connected_graph=config.isomap_require_connected_graph,
+                        n_jobs=config.n_jobs,
+                        isomap_transform=(
+                            "sqrt_counts" if feature_set == "counts" else "counts"
+                        ),
+                        update_dt=update_dt,
+                        feature_set=feature_set,
+                        spike_source=config.spike_source,
                     )
-                    if emb is None:
+                    if unsupervised_embed is None:
+                        print(f"  skip E={embedding_type} (missing unit metadata)")
                         continue
-                    y_emb = _get_y_for_embedding(beh_train, target)
                     try:
-                        emb.fit(X_train_f, y_emb)
+                        unsupervised_embed.fit(X_train_f)
                     except Exception as exc:
-                        print(f"  skip supervised E={embedding_type} target={target}: {exc}")
-                        continue
-                    X_train = emb.transform(X_train_f)
-                    X_test = emb.transform(X_test_f)
-                    meta = emb.get_metadata()
+                        from realtime.manifolds.isomap_diagnostics import DisconnectedGraphError
+
+                        if isinstance(exc, DisconnectedGraphError) or "disconnected" in str(exc).lower():
+                            print(
+                                f"  exclude {feature_mode} k={n_components} "
+                                f"nn={n_neighbors}: {exc}"
+                            )
+                            rows.append({
+                                **_base_row(
+                                    config, data, feature_type, decode_window, update_dt,
+                                    embedding_type=embedding_type,
+                                    feature_set=feature_set,
+                                                    ),
+                                "manifold_type": manifold_type_for_feature_mode(embedding_type),
+                                "representation_family": representation_family_for_mode(embedding_type),
+                                "manifold_n_components": n_components,
+                                "n_neighbors": n_neighbors,
+                                "exclusion_reason": str(exc),
+                                "graph_connected": False,
+                                "realtime_compatible": False,
+                                "target_name": None,
+                                "n_train_samples": int(train_mask.sum()),
+                                "n_test_samples": int(test_mask.sum()),
+                                "feature_dimension": feat_dim,
+                                "feature_extract_ms": feat_extract_ms,
+                            })
+                            continue
+                        raise
+
+                    # Dynamic latents: causal filter train, then continue into test
+                    # without reset (warm-start). Never use future test frames for train.
+                    if is_dynamic_embedding(embedding_type) and hasattr(
+                        unsupervised_embed, "transform"
+                    ):
+                        causal_flag = embedding_type != "gpfa"
+                        X_train_shared = unsupervised_embed.transform(
+                            X_train_f, causal=causal_flag, reset=True,
+                        )
+                        X_test_shared = unsupervised_embed.transform(
+                            X_test_f, causal=causal_flag, reset=False,
+                        )
+                    else:
+                        X_train_shared = unsupervised_embed.transform(X_train_f)
+                        X_test_shared = unsupervised_embed.transform(X_test_f)
+                    meta = unsupervised_embed.get_metadata()
                     transform_name = manifold_transform_dirname(
-                        f"{feature_mode}_{target}", decode_window, n_components, n_neighbors,
+                        f"{feature_set}__{feature_mode}",
+                        decode_window, n_components, n_neighbors,
                     )
                     transform_path = manifold_dir / transform_name
-                    emb.save(transform_path)
-                    feature_row_extras = {
+                    unsupervised_embed.save(transform_path)
+                    for group in meta.get("groups", []) or []:
+                        explained_rows.append({
+                            "spike_source": config.spike_source,
+                            "decode_window_s": float(decode_window),
+                            "feature_set": feature_set,
+                            "feature_type": feature_type,
+                            "embedding_type": embedding_type,
+                            "group_name": group.get("group_name"),
+                            "n_units": group.get("n_units"),
+                            "n_components": group.get("n_components"),
+                            "explained_variance_sum": group.get("explained_variance_sum"),
+                            "explained_variance_by_component": json.dumps(
+                                group.get("explained_variance_by_component")
+                            ),
+                        })
+                    geo = meta.get("geometry_metrics") or {}
+                    diag = meta.get("graph_diagnostics") or {}
+                    fam = representation_family_for_mode(embedding_type)
+                    causal_status = meta.get("causal_status")
+                    if causal_status is None:
+                        if embedding_type == "gpfa":
+                            causal_status = "acausal_smoothed"
+                        elif is_dynamic_embedding(embedding_type):
+                            causal_status = "causal_filtered"
+                        else:
+                            causal_status = "static"
+                    shared_extras = {
                         "manifold_type": meta.get("manifold_type")
                         or manifold_type_for_feature_mode(embedding_type),
+                        "representation_family": fam,
+                        "causal_status": causal_status,
                         "manifold_grouping": meta.get("manifold_grouping"),
                         "manifold_n_components": n_components,
-                        "n_neighbors": n_neighbors,
+                        "n_neighbors": n_neighbors if n_neighbors is not None else meta.get("n_neighbors"),
+                        "pre_pca_enabled": meta.get("pre_pca_enabled"),
+                        "pre_pca_dim": meta.get("pre_pca_dim"),
                         "actual_n_features": meta.get("actual_n_features"),
+                        "latent_dimension": meta.get("actual_n_features"),
+                        "explained_variance_ratio": (
+                            json.dumps(meta.get("explained_variance_ratio"))
+                            if meta.get("explained_variance_ratio") is not None else None
+                        ),
                         "manifold_transform_path": str(transform_path),
                         "embedding_transform_path": str(transform_path),
-                        "realtime_compatible": True,
+                        "realtime_compatible": bool(
+                            meta.get(
+                                "realtime_compatible",
+                                is_realtime_compatible_feature_mode(embedding_type)
+                                if embedding_type != "identity"
+                                else True,
+                            )
+                        ),
+                        "supports_realtime": bool(
+                            meta.get(
+                                "supports_realtime",
+                                is_realtime_compatible_feature_mode(embedding_type)
+                                if embedding_type != "identity"
+                                else True,
+                            )
+                        ),
+                        "graph_connected": diag.get("graph_connected"),
+                        "largest_component_fraction": diag.get("largest_component_fraction"),
+                        "trustworthiness": geo.get("trustworthiness"),
+                        "residual_variance": geo.get("residual_variance"),
+                        "geodesic_distance_correlation": geo.get("geodesic_distance_correlation"),
                     }
-                    e_transform = emb
-                else:
-                    X_train, X_test = X_train_shared, X_test_shared
-                    feature_row_extras = shared_extras
-                    e_transform = unsupervised_embed
+                    # Dynamic latent-state metrics + association table + figures (once per E).
+                    if is_dynamic_embedding(embedding_type):
+                        try:
+                            from realtime.dynamic_latents.behavioral_association import (
+                                associate_latent_with_behavior,
+                            )
+                            from realtime.dynamic_latents.metrics import (
+                                compute_dynamic_latent_metrics,
+                            )
+                            from realtime.dynamic_latents.visualization import (
+                                generate_dynamic_latent_figures,
+                            )
 
-                # Restrict Bayesian-place-tuning embedding to Bayesian / place-like targets.
-                if embedding_type == "bayesian_place_tuning" and target not in (
-                    "position", "distance_to_wall", "spatial_context", "wall_distance_bin",
-                ):
-                    continue
+                            Z_all_dyn = np.vstack([X_train_shared, X_test_shared])
+                            X_hat = None
+                            A_mat = None
+                            inner = getattr(unsupervised_embed, "model_", None)
+                            if inner is not None and hasattr(inner, "reconstruct"):
+                                X_hat = inner.reconstruct(Z_all_dyn)
+                            if inner is not None and getattr(inner, "A_", None) is not None:
+                                A_mat = inner.A_
+                            dyn_metrics = compute_dynamic_latent_metrics(
+                                X=np.vstack([X_train_f, X_test_f]),
+                                Z_causal=Z_all_dyn if str(causal_status).startswith("causal") else None,
+                                Z_smoothed=Z_all_dyn if "acausal" in str(causal_status) else None,
+                                X_hat=X_hat,
+                                A=A_mat,
+                                train_loglik=meta.get("train_loglik"),
+                                causal_status=causal_status,
+                            )
+                            shared_extras.update(dyn_metrics)
+                            beh_for_assoc = aligned.reset_index(drop=True).iloc[: len(Z_all_dyn)]
+                            beh_assoc = associate_latent_with_behavior(
+                                Z_all_dyn,
+                                beh_for_assoc,
+                                representation=embedding_type,
+                                causal_status=str(causal_status),
+                            )
+                            assoc_dir = (
+                                Path(config.input_dir) / "decoder_comparison" / "dynamic" / embedding_type
+                            )
+                            # Prefer comparison output tree when present.
+                            assoc_dir = Path(config.output_dir) / "dynamic" / embedding_type
+                            assoc_dir.mkdir(parents=True, exist_ok=True)
+                            assoc_path = assoc_dir / (
+                                f"behavioral_association_k{n_components}_"
+                                f"w{int(round(decode_window * 1000)):04d}ms.csv"
+                            )
+                            beh_assoc.to_csv(assoc_path, index=False)
+                            shared_extras["behavioral_association_path"] = str(assoc_path)
 
-                model_names = (
-                    continuous_model_names(config.max_models, target)
-                    if target in CONTINUOUS_TARGETS
-                    else categorical_model_names(config.max_models, target)
-                )
-                for decoder_name in model_names:
-                    if embedding_type == "bayesian_place_tuning" and not is_bayesian_model(decoder_name):
+                            fig_dir = (
+                                Path(config.input_dir) / "figures" / "dynamic" / embedding_type
+                            )
+                            fig_paths = generate_dynamic_latent_figures(
+                                Z=Z_all_dyn,
+                                behavior=beh_for_assoc,
+                                output_dir=fig_dir,
+                                representation=embedding_type,
+                                causal_status=str(causal_status),
+                            )
+                            shared_extras["dynamic_figure_paths"] = json.dumps(fig_paths)
+                        except Exception as dyn_exc:
+                            print(f"  warn dynamic extras for {embedding_type}: {dyn_exc}")
+                    if config.compute_latent_stability and embedding_type != "identity":
+                        if is_dynamic_embedding(embedding_type):
+                            Z_all = np.vstack([X_train_shared, X_test_shared])
+                        else:
+                            Z_all = unsupervised_embed.transform(
+                                f_transform.transform(X_feat)
+                            )
+                        stab = compute_latent_stability(
+                            X_feat,
+                            Z_all,
+                            Z_ref=None,
+                            pca_explained_ratio=meta.get("explained_variance_ratio"),
+                            seed=config.seed,
+                        )
+                        stability_rows.append({
+                            "spike_source": config.spike_source,
+                            "feature_set": feature_set,
+                            "embedding_type": embedding_type,
+                            "representation_family": fam,
+                            "decode_window_s": float(decode_window),
+                            "manifold_n_components": n_components,
+                            "n_neighbors": n_neighbors,
+                            **stab,
+                        })
+                        shared_extras.update({
+                            k: stab[k] for k in (
+                                "pairwise_distance_preservation",
+                                "neighborhood_trustworthiness",
+                                "latent_velocity_mean",
+                                "latent_smoothness",
+                                "procrustes_alignment_error",
+                                "latent_dimensionality_proxy",
+                            )
+                            if k in stab
+                        })
+                # Evaluate all targets/decoders for this (feature_set, F, E, W)
+                target_list = list(CONTINUOUS_TARGETS) + list(CATEGORICAL_TARGETS)
+                for target in target_list:
+                    if embedding_needs_targets(embedding_type):
+                        emb = make_feature_transformer(
+                            embedding_type,
+                            decode_window=decode_window,
+                            n_components=n_components or 3,
+                            units_df=data["units_df"],
+                            unit_ids=data["unit_ids"],
+                            random_state=config.seed,
+                        )
+                        if emb is None:
+                            continue
+                        y_emb = _get_y_for_embedding(beh_train, target)
+                        try:
+                            emb.fit(X_train_f, y_emb)
+                        except Exception as exc:
+                            print(f"  skip supervised E={embedding_type} target={target}: {exc}")
+                            continue
+                        X_train = emb.transform(X_train_f)
+                        X_test = emb.transform(X_test_f)
+                        meta = emb.get_metadata()
+                        transform_name = manifold_transform_dirname(
+                            f"{feature_set}__{feature_mode}_{target}",
+                            decode_window, n_components, n_neighbors,
+                        )
+                        transform_path = manifold_dir / transform_name
+                        emb.save(transform_path)
+                        feature_row_extras = {
+                            "manifold_type": meta.get("manifold_type")
+                            or manifold_type_for_feature_mode(embedding_type),
+                            "representation_family": representation_family_for_mode(embedding_type),
+                            "causal_status": meta.get("causal_status", "static"),
+                            "manifold_grouping": meta.get("manifold_grouping"),
+                            "manifold_n_components": n_components,
+                            "n_neighbors": n_neighbors,
+                            "actual_n_features": meta.get("actual_n_features"),
+                            "latent_dimension": meta.get("actual_n_features"),
+                            "manifold_transform_path": str(transform_path),
+                            "embedding_transform_path": str(transform_path),
+                            "realtime_compatible": True,
+                        }
+                        e_transform = emb
+                    else:
+                        X_train, X_test = X_train_shared, X_test_shared
+                        feature_row_extras = shared_extras
+                        e_transform = unsupervised_embed
+
+                    # Restrict Bayesian-place-tuning embedding to Bayesian / place-like targets.
+                    if embedding_type == "bayesian_place_tuning" and target not in (
+                        "position", "distance_to_wall", "spatial_context", "wall_distance_bin",
+                    ):
                         continue
-                    fit = _fit_and_evaluate(
-                        X_train, X_test, beh_train, beh_test,
-                        target, decoder_name, config.seed, config.n_jobs, arena_bounds,
+
+                    model_names = (
+                        continuous_model_names(config.max_models, target)
+                        if target in CONTINUOUS_TARGETS
+                        else categorical_model_names(config.max_models, target)
                     )
-                    row = _base_row(
-                        config, data, feature_type, decode_window, update_dt,
-                        embedding_type=embedding_type,
+                    for decoder_name in model_names:
+                        if embedding_type == "bayesian_place_tuning" and not is_bayesian_model(decoder_name):
+                            continue
+                        fit = _fit_and_evaluate(
+                            X_train, X_test, beh_train, beh_test,
+                            target, decoder_name, config.seed, config.n_jobs, arena_bounds,
+                        )
+                        row = _base_row(
+                            config, data, feature_type, decode_window, update_dt,
+                            embedding_type=embedding_type,
+                            feature_set=feature_set,
+                                    )
+                        row.update(feature_row_extras)
+                        row.update({
+                            "target_name": target,
+                            "target_family": TARGET_FAMILY[target],
+                            "decoder_name": decoder_name,
+                            "decoder_nonlinear": is_nonlinear_decoder(decoder_name),
+                            "n_train_samples": int(train_mask.sum()),
+                            "n_test_samples": int(test_mask.sum()),
+                            "primary_metric": PRIMARY_METRIC[target][0],
+                            "run_id": config.run_id,
+                            "feature_dimension": feat_dim,
+                            "feature_extract_ms": feat_extract_ms,
+                        })
+                        row.update(fit.metrics)
+                        row, trows = enrich_fit_row(
+                            row,
+                            fit=fit,
+                            feature_type=feature_type,
+                            embedding_type=embedding_type,
+                            feature_transform=f_transform,
+                            embedding_transform=e_transform,
+                            X_counts_test=X_test_raw,
+                            X_test_embedded=X_test,
+                            decode_window_s=decode_window,
+                            update_dt_s=update_dt,
+                            max_compute_ms=config.max_compute_ms,
+                            max_effective_history_s=config.max_effective_history_s,
+                            window_stats=w_stats,
+                            trigger_rules=trigger_rules,
+                            decode_times_test=decode_times_test,
+                            behavior_test=beh_test,
+                            arena_bounds=arena_bounds,
+                        )
+                        rows.append(row)
+                        trigger_rows_all.extend(trows)
+                        _maybe_update_best(best_fits, best_meta, target, row, fit, beh_test)
+                        _maybe_update_best_by_window(
+                            best_by_window, best_by_window_meta, target, row, fit,
+                        )
+                timer.add(
+                    "comparison_embedding",
+                    time.perf_counter() - t_emb,
+                    detail=(
+                        f"W={decode_window:.3f}|set={feature_set}|"
+                        f"E={embedding_type}"
+                    ),
+                    notes="Fit embedding + evaluate all targets/decoders",
+                    decode_window_s=decode_window,
+                    feature_set=feature_set,
+                    embedding_type=embedding_type,
                     )
-                    row.update(feature_row_extras)
-                    row.update({
-                        "target_name": target,
-                        "target_family": TARGET_FAMILY[target],
-                        "decoder_name": decoder_name,
-                        "decoder_nonlinear": is_nonlinear_decoder(decoder_name),
-                        "n_train_samples": int(train_mask.sum()),
-                        "n_test_samples": int(test_mask.sum()),
-                        "primary_metric": PRIMARY_METRIC[target][0],
-                        "run_id": config.run_id,
-                    })
-                    row.update(fit.metrics)
-                    row, trows = enrich_fit_row(
-                        row,
-                        fit=fit,
-                        feature_type=feature_type,
-                        embedding_type=embedding_type,
-                        feature_transform=f_transform,
-                        embedding_transform=e_transform,
-                        X_counts_test=X_counts_test,
-                        X_test_embedded=X_test,
-                        decode_window_s=decode_window,
-                        update_dt_s=update_dt,
-                        max_compute_ms=config.max_compute_ms,
-                        max_effective_history_s=config.max_effective_history_s,
-                        window_stats=w_stats,
-                        trigger_rules=trigger_rules,
-                        decode_times_test=decode_times_test,
-                        behavior_test=beh_test,
-                        arena_bounds=arena_bounds,
-                    )
-                    rows.append(row)
-                    trigger_rows_all.extend(trows)
-                    _maybe_update_best(best_fits, best_meta, target, row, fit, beh_test)
-                    _maybe_update_best_by_window(
-                        best_by_window, best_by_window_meta, target, row, fit,
-                    )
+
+            timer.add(
+                "comparison_feature_set",
+                time.perf_counter() - t_fs_total,
+                detail=f"W={decode_window:.3f}|set={feature_set}",
+                notes="Feature extract + all embeddings/decoders for this set",
+                decode_window_s=decode_window,
+                feature_set=feature_set,
+            )
 
         if config.include_controls and wi == 1:
             from realtime.negative_controls import evaluate_categorical_controls
 
             # Controls use raw train-fit counts features (identity embedding).
+            X_counts_ctrl = build_causal_spike_matrix(
+                spikes_clean, data["unit_ids"], decode_times, decode_window,
+            )
             ctrl_f = make_spike_feature_transformer(
                 "counts", decode_window=decode_window,
                 units_df=data["units_df"], unit_ids=data["unit_ids"],
             )
-            ctrl_f.fit(X_counts[train_mask])
-            Xtr = ctrl_f.transform(X_counts[train_mask])
-            Xte = ctrl_f.transform(X_counts[test_mask])
+            ctrl_f.fit(X_counts_ctrl[train_mask])
+            Xtr = ctrl_f.transform(X_counts_ctrl[train_mask])
+            Xte = ctrl_f.transform(X_counts_ctrl[test_mask])
             for target in CATEGORICAL_TARGETS:
                 y_tr = _get_y(beh_train, target)
                 y_te = _get_y(beh_test, target)
@@ -681,12 +945,20 @@ def run_decoder_comparison(config: ComparisonRunConfig) -> pd.DataFrame:
                         **crow,
                         "spike_source": config.spike_source,
                         "target_name": target,
+                        "feature_set": "counts",
                         "feature_type": "counts",
                         "embedding_type": "identity",
-                        "decode_window_s": decode_window,
+                        "decode_window_s": float(decode_window),
                         "control_family": "negative_control",
                     })
 
+        timer.add(
+            "comparison_window",
+            time.perf_counter() - t_window,
+            detail=f"W={decode_window:.3f}",
+            notes="All feature sets × embeddings × decoders for one W",
+            decode_window_s=decode_window,
+        )
         tested_windows.append(decode_window)
         if (
             config.adaptive_windows
@@ -714,9 +986,23 @@ def run_decoder_comparison(config: ComparisonRunConfig) -> pd.DataFrame:
     with open(output_dir / "decoder_comparison_metrics.json", "w") as f:
         json.dump(_json_safe(rows), f, indent=2)
 
+    # Persist comparison-axis wall times (also merged into experiment latency_profiling).
+    timer.save(output_dir / "pipeline_timing")
+
     explained_df = pd.DataFrame(explained_rows)
     if not explained_df.empty:
         explained_df.to_csv(output_dir / "manifold_explained_variance.csv", index=False)
+
+    if stability_rows:
+        pd.DataFrame(stability_rows).to_csv(
+            output_dir / "latent_stability_metrics.csv", index=False,
+        )
+
+    summary_fs = summarize_feature_set_performance(metrics_df)
+    if not summary_fs.empty:
+        summary_fs.to_csv(
+            output_dir / "feature_set_performance_summary.csv", index=False,
+        )
 
     if trigger_rows_all:
         pd.DataFrame(trigger_rows_all).to_csv(
@@ -782,6 +1068,14 @@ def run_decoder_comparison(config: ComparisonRunConfig) -> pd.DataFrame:
     select_best_lab_deployable_decoders(
         scored_df, control_df=control_df, output_dir=output_dir,
     )
+    # Feature-set figures (best-effort; never required for metrics).
+    try:
+        from visualization.feature_set_plots import write_feature_set_figures
+
+        if "feature_set" in metrics_df.columns and metrics_df["feature_set"].nunique() > 0:
+            write_feature_set_figures(output_dir)
+    except Exception as exc:
+        print(f"  feature-set figures skipped: {exc}")
     return metrics_df
 
 
@@ -793,12 +1087,15 @@ def _base_row(
     update_dt: float | None = None,
     *,
     embedding_type: str = "identity",
+    feature_set: str = "counts",
 ) -> dict[str, Any]:
     return {
         "spike_source": config.spike_source,
         "source": config.spike_source,
+        "feature_set": feature_set,
         "feature_type": feature_type,
         "embedding_type": embedding_type,
+        "manifold": embedding_type,
         "feature_mode": compose_feature_mode(feature_type, embedding_type),
         "decode_window_s": decode_window,
         "update_dt_s": float(update_dt if update_dt is not None else config.update_dt),
