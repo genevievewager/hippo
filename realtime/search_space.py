@@ -30,6 +30,9 @@ ALL_EMBEDDING_TYPES = (
     # Legacy / advanced (kept for backward compatibility with --feature-modes)
     "global_isomap",
     "global_isomap_distilled",
+    # Dynamic latent-state embeddings
+    "global_lds",
+    "gpfa",
 )
 
 QUICK_EMBEDDING_TYPES = ("identity", "global_pca", "region_pca")
@@ -58,7 +61,24 @@ LEGACY_MODE_TO_FE: dict[str, tuple[str, str]] = {
     "rate_model_pca": ("counts", "rate_model_pca"),
     "global_isomap": ("counts", "global_isomap"),
     "global_isomap_distilled": ("counts", "global_isomap_distilled"),
+    "global_lds": ("counts", "global_lds"),
+    "gpfa": ("counts", "gpfa"),
 }
+
+# CLI ``--manifolds`` aliases: ``counts`` means identity embedding (no manifold),
+# not the neural feature set named ``counts``.
+MANIFOLD_CLI_ALIASES: dict[str, str] = {
+    "counts": "identity",
+    "none": "identity",
+    "identity": "identity",
+    "no_manifold": "identity",
+}
+
+
+def resolve_manifold_alias(name: str) -> str:
+    """Resolve a manifold / embedding CLI token to an embedding_type."""
+    key = str(name).strip()
+    return MANIFOLD_CLI_ALIASES.get(key, key)
 
 
 def resolve_embedding_types(
@@ -154,11 +174,12 @@ def _expand_embedding_jobs(
                 out.append((feature_type, embedding_type, int(k), int(nn)))
         return out
 
-    # PCA / PLS and other component-based embeddings
+    # PCA / PLS / LDS / GPFA and other component-based embeddings
     if (
         embedding_type.endswith("_pca")
         or embedding_type == "global_pca"
         or embedding_type == "pls"
+        or embedding_type in ("global_lds", "gpfa")
         or is_manifold_feature_mode(embedding_type)
     ):
         return [
@@ -195,7 +216,17 @@ def is_manifold_embedding(embedding_type: str) -> bool:
         "layer_pca",
         "cell_type_pca",
         "rate_model_pca",
+        "global_lds",
+        "gpfa",
     }
+
+
+def is_dynamic_embedding(embedding_type: str) -> bool:
+    return embedding_type in {"global_lds", "gpfa"}
+
+
+def representation_family(embedding_type: str) -> str:
+    return "dynamic" if is_dynamic_embedding(embedding_type) else "static"
 
 
 def fe_job_dict(

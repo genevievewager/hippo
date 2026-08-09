@@ -12,6 +12,7 @@ Gracefully annotates empty-state panels when a mode/transform is unavailable.
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from pathlib import Path
 
 import matplotlib.pyplot as plt
@@ -373,11 +374,21 @@ def _scatter_latent(
     return {"kind": "continuous", "mappable": sc, "label": label}
 
 
+def _behavior_column(beh: pd.DataFrame, *names: str) -> str | None:
+    """First matching behavior column among canonical and unit-suffixed aliases."""
+    for name in names:
+        if name in beh.columns:
+            return name
+    return None
+
+
 def _scatter_position_2d(ax, Z: np.ndarray, beh: pd.DataFrame, *, annotate: bool = True) -> dict | None:
-    if "x" not in beh.columns or "y" not in beh.columns:
-        color = beh["x"] if "x" in beh.columns else np.arange(len(beh))
+    x_col = _behavior_column(beh, "x", "x_cm")
+    y_col = _behavior_column(beh, "y", "y_cm")
+    if x_col is None or y_col is None:
+        color = beh[x_col] if x_col is not None else np.arange(len(beh))
         return _scatter_latent(ax, Z, color, label="position", show_colorbar=annotate)
-    rgba = _rgb_from_xy(beh["x"].to_numpy(), beh["y"].to_numpy())
+    rgba = _rgb_from_xy(beh[x_col].to_numpy(), beh[y_col].to_numpy())
     ax.scatter(Z[:, 0], Z[:, 1], c=rgba, s=4, alpha=0.7)
     ax.set_xlabel("z₁")
     ax.set_ylabel("z₂")
@@ -394,8 +405,18 @@ def _color_for_feature(beh: pd.DataFrame, feature: str):
     """Return color data for a recovered feature (Series or special marker)."""
     if feature == "position":
         return "position_xy"
-    if feature in beh.columns:
-        return beh[feature]
+    aliases = {
+        "speed": ("speed", "speed_cm_s"),
+        "acceleration": ("acceleration", "acceleration_cm_s2"),
+        "head_direction": ("head_direction", "head_direction_rad"),
+        "distance_to_wall": ("distance_to_wall", "distance_to_wall_cm"),
+        "spatial_context": ("spatial_context",),
+        "movement_state": ("movement_state",),
+        "wall_distance_bin": ("wall_distance_bin",),
+    }
+    for name in aliases.get(feature, (feature,)):
+        if name in beh.columns:
+            return beh[name]
     # Fallbacks
     if feature == "head_direction" and "head_direction_sin" in beh.columns:
         return np.arctan2(beh["head_direction_sin"], beh["head_direction_cos"])
@@ -519,6 +540,170 @@ def _add_shared_color_guide(fig, axes: list, color_info: dict | None, *, feature
 # Fig 6 — Latent geometry (one page per recovered feature)
 # ---------------------------------------------------------------------------
 
+@dataclass
+class LatentGeometryPanel:
+    """One embedding-mode panel for a latent-geometry page."""
+
+    mode: str
+    Z: np.ndarray
+    behavior: pd.DataFrame
+    decode_window_s: float | None = None
+    n_components: int | None = None
+    n_neighbors: int | None = None
+
+
+def to_display_latent_2d(Z: np.ndarray, mode: str) -> np.ndarray:
+    """Display-only 2-D view matching ``_load_heldout_embedding``.
+
+    Ordered manifold embeddings keep leading two axes. Raw counts/rates use an
+    in-memory SVD projection (never persisted as a model).
+    """
+    Z = np.asarray(Z, dtype=float)
+    if Z.ndim == 1:
+        Z = Z.reshape(-1, 1)
+    if Z.shape[0] == 0:
+        return Z
+    if Z.shape[1] < 2:
+        return np.column_stack([Z[:, 0], np.zeros(len(Z))])
+    if Z.shape[1] > 2:
+        mode_l = str(mode).lower()
+        if mode_l in {"counts", "rates", "identity"} or mode_l.startswith("counts"):
+            Zc = Z - np.mean(Z, axis=0, keepdims=True)
+            _, _, vt = np.linalg.svd(Zc, full_matrices=False)
+            return Zc @ vt[:2].T
+        return Z[:, :2]
+    return Z
+
+
+def _panel_title_from_meta(
+    mode: str,
+    *,
+    decode_window_s: float | None = None,
+    n_components: int | None = None,
+    n_neighbors: int | None = None,
+) -> str:
+    parts = [mode]
+    meta: list[str] = []
+    if decode_window_s is not None and np.isfinite(decode_window_s):
+        meta.append(f"W={float(decode_window_s):.2f}s")
+    if n_components is not None and np.isfinite(n_components):
+        meta.append(f"k={int(n_components)}")
+    if n_neighbors is not None and np.isfinite(n_neighbors):
+        meta.append(f"nn={int(n_neighbors)}")
+    if meta:
+        parts.append(" ".join(meta))
+    return "\n".join(parts)
+
+
+def plot_latent_geometry_page_from_embeddings(
+    panels: list[LatentGeometryPanel],
+    feature: str,
+    feature_title: str,
+    out_path: Path,
+) -> Path | None:
+    """Write one publication-format latent-geometry page from prepared embeddings.
+
+    Matches ``fig_latent_geometry_<feature>.png`` layout used in the PDF suite:
+    multi-panel grid, shared color guide, panel labels A…, position as x→hue /
+    y→brightness.
+    """
+    if not panels:
+        return None
+    out_path = Path(out_path)
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+
+    # Match packing format expected by _global_color_limits
+    plot_packs: list[tuple[str, None, tuple | None]] = []
+    for panel in panels:
+        Z = to_display_latent_2d(panel.Z, panel.mode)
+        beh = panel.behavior
+        if Z.ndim != 2 or Z.shape[1] < 2 or Z.shape[0] == 0:
+            plot_packs.append((panel.mode, None, None))
+            continue
+        if Z.shape[0] > MAX_EMBED_POINTS:
+            rng = np.random.default_rng(0)
+            idx = rng.choice(Z.shape[0], size=MAX_EMBED_POINTS, replace=False)
+            Z = Z[idx]
+            beh = beh.iloc[idx].reset_index(drop=True)
+        plot_packs.append((panel.mode, None, (Z, beh, "ui")))
+
+    if not any(p[-1] is not None for p in plot_packs):
+        return None
+
+    n = len(plot_packs)
+    cols = min(3, n)
+    rows_n = int(np.ceil(n / cols))
+    height_ratios: list[float] = []
+    for ri in range(rows_n):
+        height_ratios.append(1.0)
+        if ri < rows_n - 1:
+            height_ratios.append(0.28)
+    fig = plt.figure(figsize=(3.5 * cols + 1.4, 3.4 * rows_n + 0.9))
+    gs = GridSpec(
+        len(height_ratios), cols, figure=fig,
+        height_ratios=height_ratios, hspace=0.05, wspace=0.28,
+    )
+
+    vmin, vmax = _global_color_limits(plot_packs, feature)
+    axes: list = []
+    color_info: dict | None = None
+    cmap = "hsv" if feature == "head_direction" else (
+        "magma" if feature in ("speed", "acceleration") else "viridis"
+    )
+
+    for i, (panel, (_mode, _row, pack)) in enumerate(zip(panels, plot_packs)):
+        r, c = divmod(i, cols)
+        ax = fig.add_subplot(gs[r * 2, c])
+        axes.append(ax)
+        title = _panel_title_from_meta(
+            panel.mode,
+            decode_window_s=panel.decode_window_s,
+            n_components=panel.n_components,
+            n_neighbors=panel.n_neighbors,
+        )
+        if pack is None:
+            _empty_panel(ax, f"{panel.mode}\nunavailable")
+        else:
+            Z, beh, _tag = pack
+            color = _color_for_feature(beh, feature)
+            if isinstance(color, str) and color == "position_xy":
+                info = _scatter_position_2d(ax, Z, beh, annotate=False)
+            elif color is None:
+                _empty_panel(ax, f"no {feature}\nin behavior")
+                info = None
+            else:
+                info = _scatter_latent(
+                    ax, Z, color, cmap=cmap, label=feature,
+                    show_colorbar=False, show_legend=False,
+                    vmin=vmin, vmax=vmax,
+                )
+            if color_info is None and info is not None:
+                color_info = info
+            ax.set_title(title, fontsize=8, pad=6)
+        panel_label(ax, chr(ord("A") + i))
+
+    for j in range(n, rows_n * cols):
+        r, c = divmod(j, cols)
+        ax = fig.add_subplot(gs[r * 2, c])
+        ax.axis("off")
+
+    _add_shared_color_guide(fig, axes, color_info, feature_title=feature_title)
+    fig.suptitle(
+        f'Latent geometry colored by "{feature_title}"',
+        fontsize=11,
+        y=0.98,
+    )
+    bottom = 0.10 if (color_info or {}).get("kind") in {"categorical", "position_xy"} else 0.06
+    right = 0.86 if (color_info or {}).get("kind") == "continuous" else 0.96
+    return save_pub_figure(
+        fig, out_path, dpi=FIGURE_DPI,
+        rect=(0.08, bottom, right, 0.90),
+        hspace=0.20,
+        wspace=0.30,
+        pad_inches=0.35,
+    )
+
+
 def plot_fig_latent_geometry_for_feature(
     experiment_dir: Path,
     feature: str,
@@ -543,90 +728,38 @@ def plot_fig_latent_geometry_for_feature(
 
     # Decode target for choosing best W: position page uses target "position"
     target = "position" if feature == "position" else feature
-    packs: list[tuple[str, pd.Series | None, tuple | None]] = []
+    panels: list[LatentGeometryPanel] = []
     for mode in modes:
         row = _best_row_for_mode_target(metrics, feature_mode=mode, target=target)
         # If this mode never decoded this target, fall back to best W for position
         if row is None and target != "position":
             row = _best_row_for_mode_target(metrics, feature_mode=mode, target="position")
         if row is None:
-            packs.append((mode, None, None))
+            panels.append(LatentGeometryPanel(mode=mode, Z=np.zeros((0, 2)), behavior=pd.DataFrame()))
             continue
         tdir = _resolve_transform_dir(experiment_dir, row)
         pack = _load_heldout_embedding(experiment_dir, tdir) if tdir is not None else None
-        packs.append((mode, row, pack))
-
-    n = len(packs)
-    cols = min(3, n)
-    rows_n = int(np.ceil(n / cols))
-    # Modest spacer between panel rows: clear of labels, but keep A–C / D–F close.
-    height_ratios: list[float] = []
-    for ri in range(rows_n):
-        height_ratios.append(1.0)
-        if ri < rows_n - 1:
-            height_ratios.append(0.28)
-    fig = plt.figure(figsize=(3.5 * cols + 1.4, 3.4 * rows_n + 0.9))
-    gs = GridSpec(
-        len(height_ratios), cols, figure=fig,
-        height_ratios=height_ratios, hspace=0.05, wspace=0.28,
-    )
-
-    vmin, vmax = _global_color_limits(packs, feature)
-    axes: list = []
-    color_info: dict | None = None
-    cmap = "hsv" if feature == "head_direction" else (
-        "magma" if feature in ("speed", "acceleration") else "viridis"
-    )
-
-    for i, (mode, row, pack) in enumerate(packs):
-        r, c = divmod(i, cols)
-        gs_row = r * 2  # skip spacer rows
-        ax = fig.add_subplot(gs[gs_row, c])
-        axes.append(ax)
-        title = _panel_title(mode, row)
         if pack is None:
-            _empty_panel(ax, f"{mode}\nunavailable")
-        else:
-            Z, beh, tag = pack
-            del tag
-            color = _color_for_feature(beh, feature)
-            if isinstance(color, str) and color == "position_xy":
-                info = _scatter_position_2d(ax, Z, beh, annotate=False)
-            elif color is None:
-                _empty_panel(ax, f"no {feature}\nin behavior")
-                info = None
-            else:
-                info = _scatter_latent(
-                    ax, Z, color, cmap=cmap, label=feature,
-                    show_colorbar=False, show_legend=False,
-                    vmin=vmin, vmax=vmax,
-                )
-            if color_info is None and info is not None:
-                color_info = info
-            ax.set_title(title, fontsize=8, pad=6)
-        panel_label(ax, chr(ord("A") + i))
+            panels.append(LatentGeometryPanel(mode=mode, Z=np.zeros((0, 2)), behavior=pd.DataFrame()))
+            continue
+        Z, beh, _tag = pack
+        k = row.get("manifold_n_components")
+        nn = row.get("n_neighbors")
+        w = row.get("decode_window_s")
+        panels.append(
+            LatentGeometryPanel(
+                mode=mode,
+                Z=Z,
+                behavior=beh,
+                decode_window_s=float(w) if w is not None and pd.notna(w) else None,
+                n_components=int(k) if k is not None and pd.notna(k) else None,
+                n_neighbors=int(nn) if nn is not None and pd.notna(nn) else None,
+            ),
+        )
 
-    for j in range(n, rows_n * cols):
-        r, c = divmod(j, cols)
-        ax = fig.add_subplot(gs[r * 2, c])
-        ax.axis("off")
-
-    _add_shared_color_guide(fig, axes, color_info, feature_title=feature_title)
-
-    fig.suptitle(
-        f'Latent geometry colored by "{feature_title}"',
-        fontsize=11,
-        y=0.98,
-    )
     stem = f"fig_latent_geometry_{feature}"
-    bottom = 0.10 if (color_info or {}).get("kind") in {"categorical", "position_xy"} else 0.06
-    right = 0.86 if (color_info or {}).get("kind") == "continuous" else 0.96
-    return save_pub_figure(
-        fig, out_dir / f"{stem}.png", dpi=FIGURE_DPI,
-        rect=(0.08, bottom, right, 0.90),
-        hspace=0.20,
-        wspace=0.30,
-        pad_inches=0.35,
+    return plot_latent_geometry_page_from_embeddings(
+        panels, feature, feature_title, out_dir / f"{stem}.png",
     )
 
 

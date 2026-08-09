@@ -75,7 +75,8 @@ def plot_latency_outputs(
 ) -> Path | None:
     """Write latency PNGs under figures/latency/ for PDF compilation.
 
-    Default: publication multi-panel ``fig_latency`` and ``fig_latency_realtime``.
+    Default: publication multi-panel ``fig_latency`` and ``fig_latency_realtime``,
+    plus ``fig_pipeline_stage_timing`` (full-run wall-clock table).
     Legacy single-panel helpers remain as private functions.
     """
     experiment_dir = Path(experiment_dir)
@@ -90,7 +91,94 @@ def plot_latency_outputs(
         wrote = True
     if plot_fig_latency_realtime(experiment_dir, figures_dir) is not None:
         wrote = True
+    if plot_fig_pipeline_stage_timing(experiment_dir, figures_dir) is not None:
+        wrote = True
     return (figures_dir / "latency") if wrote else None
+
+
+def plot_fig_pipeline_stage_timing(
+    experiment_dir: Path,
+    figures_dir: Path | None = None,
+) -> Path | None:
+    """Table figure: wall-clock time per pipeline stage / experimental axis."""
+    from realtime.pipeline_timing import load_pipeline_timing_summary
+
+    experiment_dir = Path(experiment_dir)
+    figures_dir = Path(figures_dir) if figures_dir else experiment_dir / "figures"
+    out_dir = figures_dir / "latency"
+    out_dir.mkdir(parents=True, exist_ok=True)
+
+    summary = load_pipeline_timing_summary(experiment_dir)
+    detail_path = experiment_dir / "latency_profiling" / "pipeline_stage_timing.csv"
+    detail = pd.read_csv(detail_path) if detail_path.exists() else pd.DataFrame()
+
+    if summary.empty and detail.empty:
+        return None
+
+    rows: list[dict] = []
+    if not summary.empty:
+        for _, r in summary.iterrows():
+            rows.append({
+                "Stage": str(r["stage"]),
+                "Wall (min)": f"{float(r['wall_min']):.2f}",
+                "Wall (s)": f"{float(r['wall_s']):.1f}",
+                "Substeps": int(r.get("n_substeps", 1)),
+                "Notes": str(r.get("notes", ""))[:80],
+            })
+
+    if not detail.empty and "stage" in detail.columns:
+        for stage, label in (
+            ("comparison_window", "Per decode window (sum)"),
+            ("comparison_feature_set", "Per feature set (sum)"),
+            ("comparison_embedding", "Per manifold/embedding (sum)"),
+            ("feature_extraction", "Neural feature extraction (sum)"),
+        ):
+            sub = detail[detail["stage"] == stage]
+            if sub.empty or any(r["Stage"] == stage for r in rows):
+                continue
+            rows.append({
+                "Stage": label,
+                "Wall (min)": f"{float(sub['wall_s'].sum()) / 60.0:.2f}",
+                "Wall (s)": f"{float(sub['wall_s'].sum()):.1f}",
+                "Substeps": int(len(sub)),
+                "Notes": "Axis total across the full comparison grid",
+            })
+
+    if not rows:
+        return None
+
+    n = len(rows)
+    fig_h = max(3.5, 0.42 * n + 1.8)
+    fig, ax = plt.subplots(figsize=(10.5, fig_h))
+    ax.axis("off")
+    ax.set_title(
+        "Full-run pipeline stage timing\n"
+        "(wall clock — not per-update causal latency)",
+        fontsize=12,
+        pad=12,
+    )
+    col_labels = list(rows[0].keys())
+    cell = [[r[c] for c in col_labels] for r in rows]
+    table = ax.table(
+        cellText=cell,
+        colLabels=col_labels,
+        loc="center",
+        cellLoc="left",
+    )
+    table.auto_set_font_size(False)
+    table.set_fontsize(8)
+    table.scale(1.0, 1.35)
+    for (r, c), cell_obj in table.get_celld().items():
+        if r == 0:
+            cell_obj.set_facecolor("#2f3e46")
+            cell_obj.set_text_props(color="white", weight="bold")
+        elif r % 2 == 0:
+            cell_obj.set_facecolor("#edf2f4")
+    fig.tight_layout()
+    out_path = out_dir / "fig_pipeline_stage_timing.png"
+    fig.savefig(out_path, dpi=FIGURE_DPI, bbox_inches="tight")
+    plt.close(fig)
+    return out_path
 
 
 def _plot_everything(df: pd.DataFrame, out: Path, budget_ms: float) -> None:

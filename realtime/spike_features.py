@@ -1,9 +1,12 @@
 """Causal spike-count feature construction shared by decoder scripts.
 
-At each decoder update time t, features are population spike counts from the
-past causal window [t - decode_window, t). The decoder never uses future spikes.
+At each decoder update time t, baseline features are population spike counts
+from the past causal window [t - decode_window, t). Richer neural feature sets
+live in ``realtime.neural_features`` and sit upstream of manifolds.
 
-Feature representation search (F) lives in ``realtime.feature_representations``.
+Feature representation search (F: rates/sqrt/zscore) lives in
+``realtime.feature_representations``. Embedding / manifold search (E) lives in
+``realtime.manifold_features``.
 """
 
 from __future__ import annotations

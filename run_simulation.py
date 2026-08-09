@@ -1,10 +1,20 @@
 #!/usr/bin/env python3
-"""Run the hippocampal Neuropixels simulation (RatInABox neural + behavior)."""
+"""Run the hippocampal Neuropixels simulation (RatInABox neural + behavior).
+
+Programmatic API (CLI and Streamlit share this)::
+
+    from run_simulation import config_from_args, generate_dataset, parse_args
+
+    args = parse_args([...])
+    config = config_from_args(args)
+    summary = generate_dataset(config)
+"""
 
 from __future__ import annotations
 
 import argparse
 from pathlib import Path
+from typing import Any, Callable
 
 from hippo.anatomy.trajectory_config import (
     DEFAULT_TRAJECTORY_CONFIG,
@@ -14,8 +24,11 @@ from hippo.anatomy.trajectory_config import (
 from hippo_sim.config import SimConfig
 from hippo_sim.pipeline import apply_trajectory_to_config, run_pipeline
 
+ProgressCallback = Callable[[str, int, int], None]
 
-def main() -> None:
+
+def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
+    """Parse CLI arguments for dataset generation."""
     available = ", ".join(r["name"] for r in list_trajectory_configs()) or "(none)"
     parser = argparse.ArgumentParser(
         description="Hippocampal Neuropixels simulation (RatInABox rates + behavior)",
@@ -85,25 +98,16 @@ def main() -> None:
         action="store_true",
         help="Ignore trajectory configs and use schematic hippocampal geometry",
     )
-    args = parser.parse_args()
+    return parser.parse_args(argv)
 
-    if args.list_trajectories:
-        rows = list_trajectory_configs(include_templates=True)
-        if not rows:
-            print("No trajectory configs found under configs/trajectories/")
-            return
-        for row in rows:
-            mark = " (default)" if row["is_default"] else ""
-            tmpl = " [template]" if row["is_template"] else ""
-            print(f"{row['name']}{mark}{tmpl}\t{row['path']}")
-        return
 
+def config_from_args(args: argparse.Namespace) -> SimConfig:
+    """Build a :class:`~hippo_sim.config.SimConfig` from parsed CLI arguments."""
     config = SimConfig(
-        output_dir=args.output,
-        seed=args.seed,
-        session_duration_s=args.duration,
+        output_dir=Path(args.output),
+        seed=int(args.seed),
+        session_duration_s=float(args.duration),
     )
-
     if not args.no_trajectory:
         traj_cfg = args.trajectory_config
         if traj_cfg is None and DEFAULT_TRAJECTORY_CONFIG.exists():
@@ -121,8 +125,36 @@ def main() -> None:
                 fallback_schematic=args.fallback_schematic_anatomy,
                 include_non_hippocampal_regions=args.include_non_hippocampal_regions,
             )
+    return config
 
-    run_pipeline(config)
+
+def generate_dataset(
+    config: SimConfig,
+    *,
+    progress_callback: ProgressCallback | None = None,
+) -> dict[str, Any]:
+    """Generate a simulated dataset using the shared scientific pipeline.
+
+    This is the single entry point used by both the CLI and Streamlit UI.
+    """
+    return run_pipeline(config, progress_callback=progress_callback)
+
+
+def main(argv: list[str] | None = None) -> None:
+    args = parse_args(argv)
+    if args.list_trajectories:
+        rows = list_trajectory_configs(include_templates=True)
+        if not rows:
+            print("No trajectory configs found under configs/trajectories/")
+            return
+        for row in rows:
+            mark = " (default)" if row["is_default"] else ""
+            tmpl = " [template]" if row["is_template"] else ""
+            print(f"{row['name']}{mark}{tmpl}\t{row['path']}")
+        return
+
+    config = config_from_args(args)
+    generate_dataset(config)
 
 
 if __name__ == "__main__":

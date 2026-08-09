@@ -31,6 +31,7 @@ class RealTimeDecoder:
         primary_model: Any | None = None,
         primary_target: str | None = None,
         feature_transformer: Any | None = None,
+        neural_feature_extractor: Any | None = None,
     ):
         self.models = models
         self.unit_ids = np.asarray(unit_ids, dtype=int)
@@ -39,8 +40,18 @@ class RealTimeDecoder:
         self.feature_type = feature_type
         self.primary_model = primary_model
         self.primary_target = primary_target
-        # Optional fitted manifold / identity transform (frozen at replay time).
+        # Optional fitted manifold / identity / dynamic-latent transform (frozen at replay).
         self.feature_transformer = feature_transformer
+        # Optional neural feature extractor (upstream of manifold).
+        self.neural_feature_extractor = neural_feature_extractor
+        self._prev_counts: np.ndarray | None = None
+        # Dynamic latent models expose step()/reset_state(); track for latency split.
+        self._is_dynamic = bool(
+            feature_transformer is not None
+            and hasattr(feature_transformer, "step")
+            and hasattr(feature_transformer, "reset_state")
+            and getattr(feature_transformer, "supports_realtime", True)
+        )
 
     def _count_window(self, spikes_df: pd.DataFrame, t: float) -> np.ndarray:
         """Causal half-open counts from [t - W, t)."""
@@ -59,10 +70,34 @@ class RealTimeDecoder:
             "n_active_units_in_window": int(np.sum(c > 0)),
         }
 
+    def _apply_embedding(self, base: np.ndarray) -> np.ndarray:
+        """Apply frozen embedding / dynamic latent step to a feature row [1, n]."""
+        if self.feature_transformer is None:
+            return base
+        if self._is_dynamic:
+            z = self.feature_transformer.step(np.asarray(base, dtype=float).ravel())
+            return np.asarray(z, dtype=float).reshape(1, -1)
+        return np.asarray(self.feature_transformer.transform(base), dtype=float)
+
     def _features(self, spikes_df: pd.DataFrame, t: float) -> tuple[np.ndarray, np.ndarray]:
+        if self.neural_feature_extractor is not None:
+            result = self.neural_feature_extractor.extract_at(
+                spikes_df, t, prev_counts=self._prev_counts,
+            )
+            base = np.asarray(result.feature_vector, dtype=float)
+            # Track count slice when present for window stats.
+            if result.feature_names and result.feature_names[0].startswith("count_u"):
+                n_units = len(self.unit_ids)
+                counts = base[:, :n_units] if base.shape[1] >= n_units else base
+            else:
+                counts = self._count_window(spikes_df, t)
+            self._prev_counts = counts.copy()
+            feats = self._apply_embedding(base)
+            return feats, counts
+
         counts = self._count_window(spikes_df, t)
         if self.feature_transformer is not None:
-            feats = np.asarray(self.feature_transformer.transform(counts), dtype=float)
+            feats = self._apply_embedding(counts)
         elif self.feature_type == "rates":
             feats = counts / self.decode_window
         else:
@@ -77,7 +112,7 @@ class RealTimeDecoder:
         counts = self._count_window(spikes_df, t)
         stages["spike_binning"] = (time.perf_counter() - t0) * 1000.0
 
-        # Split identity/rate feature prep vs frozen manifold transform when present.
+        # Split identity/rate feature prep vs frozen manifold / dynamic latent transform.
         t1 = time.perf_counter()
         if self.feature_type == "rates":
             base = counts / self.decode_window
@@ -87,12 +122,15 @@ class RealTimeDecoder:
 
         t2 = time.perf_counter()
         if self.feature_transformer is not None:
-            # Transformer may be identity or manifold; time as manifold stage.
-            feats = np.asarray(self.feature_transformer.transform(counts), dtype=float)
-            stages["manifold_transform"] = (time.perf_counter() - t2) * 1000.0
+            feats = self._apply_embedding(counts)
+            elapsed = (time.perf_counter() - t2) * 1000.0
+            stages["manifold_transform"] = elapsed
+            if self._is_dynamic:
+                stages["latent_state_update"] = elapsed
         else:
             feats = base
             stages["manifold_transform"] = 0.0
+            stages["latent_state_update"] = 0.0
         return feats, counts, stages
 
     def decode_at_time(self, spikes_df: pd.DataFrame, t: float) -> dict:
@@ -271,6 +309,11 @@ class RealTimeDecoder:
         if times.size and np.any(times[:-1] > times[1:]):
             spikes_df = spikes_df.sort_values(time_col, kind="mergesort")
 
+        # Dynamic latent filters must start from the initial belief at replay start.
+        if self._is_dynamic:
+            self.feature_transformer.reset_state()
+        self._prev_counts = None
+
         # Dense per-frame profiling around RF predicts is expensive; subsample.
         max_profile_updates = 400
         if profile_latency and len(aligned_behavior) > max_profile_updates:
@@ -319,6 +362,12 @@ class RealTimeDecoder:
                 "true_speed": float(beh["speed"]),
                 "speed_error": float(decoded["decoded_speed"] - beh["speed"]),
             }
+            # Persist dynamic latent state when available (from last feature call).
+            if self._is_dynamic:
+                z = getattr(self.feature_transformer, "model_", None)
+                if z is not None and getattr(z, "_mu", None) is not None:
+                    for di, val in enumerate(np.asarray(z._mu).ravel()):
+                        row[f"z{di + 1}"] = float(val)
             if "decoded_wall_distance_bin" in decoded:
                 row["decoded_wall_distance_bin"] = decoded["decoded_wall_distance_bin"]
                 row["wall_distance_bin_confidence"] = decoded.get(

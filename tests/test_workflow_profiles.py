@@ -120,3 +120,31 @@ def test_full_profile_dense_temporal():
     assert "raw" in prof.representations
     assert 2 in prof.latent_history_frames
     assert "shuffled_sequence" in prof.temporal_models
+
+
+def test_feature_robustness_profile_covers_axes():
+    from realtime.decoder_comparison import DEFAULT_DECODE_WINDOWS
+    from realtime.neural_features import ALL_FEATURE_SETS
+    from realtime.workflow_profiles import FEATURE_ROBUSTNESS_EMBEDDINGS
+
+    prof = get_profile("feature_robustness")
+    assert prof.feature_sets == ALL_FEATURE_SETS
+    assert prof.embedding_types == FEATURE_ROBUSTNESS_EMBEDDINGS
+    assert not hasattr(prof, "degradation_levels")
+    assert prof.decode_windows == DEFAULT_DECODE_WINDOWS
+    assert prof.run_feature_ablation is True
+    assert "identity" in prof.embedding_types
+    assert "global_isomap_distilled" in prof.embedding_types
+
+
+def test_pipeline_timer_summary(tmp_path: Path):
+    from realtime.pipeline_timing import PipelineTimer
+
+    timer = PipelineTimer()
+    with timer.stage("decoder_comparison", notes="grid"):
+        timer.add("comparison_window", 1.5, detail="W=0.25")
+        timer.add("comparison_feature_set", 2.0, detail="counts")
+    paths = timer.save(tmp_path / "latency_profiling")
+    assert paths["summary"].exists()
+    summary = __import__("pandas").read_csv(paths["summary"])
+    assert "decoder_comparison" in summary["stage"].tolist()
