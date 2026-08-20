@@ -95,6 +95,7 @@ Recommended comparisons:
 raw + Ridge / Random Forest
 PCA + Ridge / Random Forest
 Isomap + Ridge / Random Forest / k-NN
+diffusion_nystrom + Ridge / Random Forest
 ```
 
 This separates **nonlinear representation** benefit from **nonlinear output mapping** benefit.
@@ -105,7 +106,10 @@ This separates **nonlinear representation** benefit from **nonlinear output mapp
 |--------|-----|-------------------------------|
 | `isomap` / `global_isomap` | `offline_analysis_only` | **No** |
 | `isomap_distilled` / `global_isomap_distilled` | parametric approx. of Isomap | **Yes** if latency ≤ 50 ms **and** held-out distortion OK |
+| `diffusion_nystrom` | landmark diffusion maps + Nyström | **Yes** if `P99(T_operation) < 25 ms` |
 | `pca` / `counts` | realtime-capable | Yes |
+
+Distilled-Isomap’s 50 ms check is the decoder **update** budget (`update_dt`, typically 50 ms / 20 Hz). Diffusion Nyström’s 25 ms `realtime_qualified` flag is **operation** compute (`P99(T_operation)`), distinct from window length `W`. See [realtime_deployment.md](realtime_deployment.md).
 
 Best-decoder selection prefers realtime-compatible feature modes for closed-loop recommendations even when offline Isomap wins on accuracy.
 
@@ -171,3 +175,5 @@ python -m pytest tests/test_isomap_manifold.py tests/test_isomap_decoders.py \
 | Realtime wants Isomap | Use PCA/counts/distilled for closed loop; classic Isomap informs dimensionality / geometry only |
 
 Do **not** conclude Isomap is superior because a 2-D plot looks more curved. Use held-out decoding and geometry metrics.
+
+See also: [`diffusion_nystrom.md`](diffusion_nystrom.md) for the deployable nonlinear alternative (landmark diffusion maps + Nyström).

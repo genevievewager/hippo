@@ -17,20 +17,29 @@ import pandas as pd
 
 from realtime.spike_binner import count_spikes_in_window
 
-# Default closed-loop update budget (20 Hz).
+# Default closed-loop update budget (20 Hz session cadence).
 DEFAULT_UPDATE_BUDGET_MS = 50.0
+# Hard operation deadline for realtime qualification (40 Hz / 25 ms loop).
+# Decode-window length is independent of this compute budget.
+DEFAULT_OPERATION_DEADLINE_MS = 25.0
 
 STAGE_ORDER = (
     "spike_binning",
+    "feature_construction",
     "feature_transform",
+    "feature_scaling",
     "manifold_transform",
+    "diffusion_nystrom_transform",
     "decode_position",
     "decode_speed",
     "decode_spatial_context",
     "decode_movement_state",
     "decode_primary",
+    "decoder_inference",
     "closed_loop_policy",
+    "trigger_decision",
     "total_update",
+    "total_operation",
 )
 
 
@@ -47,17 +56,75 @@ def _ms(t0: float, t1: float | None = None) -> float:
     return float((end - t0) * 1000.0)
 
 
+def qualify_latency_values(
+    values_ms: np.ndarray | list[float],
+    *,
+    deadline_ms: float = DEFAULT_OPERATION_DEADLINE_MS,
+) -> dict[str, Any]:
+    """Summarize a latency vector against a hard operation deadline.
+
+    Realtime qualification uses P99(T_operation) < ``deadline_ms``.
+    ``headroom_ms`` is ``deadline_ms - P99`` when positive, else 0.
+    """
+    vals = np.asarray(list(values_ms), dtype=float)
+    vals = vals[np.isfinite(vals)]
+    empty = {
+        "n": int(vals.size),
+        "mean_ms": None,
+        "median_ms": None,
+        "p95_ms": None,
+        "p99_ms": None,
+        "max_ms": None,
+        "min_ms": None,
+        "deadline_ms": float(deadline_ms),
+        "deadline_miss_count": 0,
+        "deadline_miss_pct": 0.0,
+        "realtime_qualified": False,
+        "headroom_ms": None,
+    }
+    if vals.size == 0:
+        return empty
+    p99 = float(np.percentile(vals, 99))
+    misses = int(np.sum(vals >= float(deadline_ms)))
+    qualified = bool(p99 < float(deadline_ms))
+    headroom = float(deadline_ms) - p99
+    return {
+        "n": int(vals.size),
+        "mean_ms": float(np.mean(vals)),
+        "median_ms": float(np.median(vals)),
+        "p95_ms": float(np.percentile(vals, 95)),
+        "p99_ms": p99,
+        "max_ms": float(np.max(vals)),
+        "min_ms": float(np.min(vals)),
+        "deadline_ms": float(deadline_ms),
+        "deadline_miss_count": misses,
+        "deadline_miss_pct": float(100.0 * misses / vals.size),
+        "realtime_qualified": qualified,
+        "headroom_ms": float(max(0.0, headroom)) if qualified else float(headroom),
+    }
+
+
 def summarize_latency_samples(
     samples: list[LatencySample],
     *,
     update_budget_ms: float = DEFAULT_UPDATE_BUDGET_MS,
+    operation_deadline_ms: float = DEFAULT_OPERATION_DEADLINE_MS,
 ) -> dict[str, Any]:
-    """Aggregate per-stage latency statistics."""
+    """Aggregate per-stage latency statistics.
+
+    ``update_budget_ms`` is the session cadence (e.g. 50 ms at 20 Hz).
+    ``operation_deadline_ms`` is the compute deadline used for
+    ``realtime_qualified`` (default 25 ms). Decode-window length is not
+    this latency.
+    """
     if not samples:
         return {
             "n_updates": 0,
             "update_budget_ms": update_budget_ms,
+            "operation_deadline_ms": float(operation_deadline_ms),
+            "deadline_ms": float(operation_deadline_ms),
             "stages": {},
+            "realtime_qualified": False,
         }
     stage_names = sorted({k for s in samples for k in s.stages_ms})
     stages: dict[str, Any] = {}
@@ -77,14 +144,35 @@ def summarize_latency_samples(
             "min_ms": float(np.min(vals)),
             "within_budget_frac": float(np.mean(vals <= update_budget_ms)),
         }
-    total = stages.get("total_update", {})
+    total_key = "total_operation" if "total_operation" in stages else "total_update"
+    total = stages.get(total_key, stages.get("total_update", {}))
+    total_vals = np.asarray(
+        [
+            s.stages_ms.get("total_operation", s.stages_ms.get("total_update", np.nan))
+            for s in samples
+        ],
+        dtype=float,
+    )
+    qual = qualify_latency_values(total_vals, deadline_ms=operation_deadline_ms)
     return {
         "n_updates": len(samples),
         "update_budget_ms": float(update_budget_ms),
+        "operation_deadline_ms": float(operation_deadline_ms),
+        "deadline_ms": float(operation_deadline_ms),
         "mean_total_ms": total.get("mean_ms"),
         "median_total_ms": total.get("median_ms"),
         "p95_total_ms": total.get("p95_ms"),
+        "p99_total_ms": qual.get("p99_ms"),
+        "max_total_ms": qual.get("max_ms"),
         "within_budget_frac": total.get("within_budget_frac"),
+        "deadline_miss_count": qual["deadline_miss_count"],
+        "deadline_miss_pct": qual["deadline_miss_pct"],
+        "realtime_qualified": qual["realtime_qualified"],
+        "headroom_ms": qual["headroom_ms"],
+        "note": (
+            "decode_window is the spike integration length; "
+            "operation latency is compute time per update"
+        ),
         "stages": stages,
     }
 
@@ -102,6 +190,7 @@ def save_latency_artifacts(
     output_dir: Path,
     *,
     update_budget_ms: float = DEFAULT_UPDATE_BUDGET_MS,
+    operation_deadline_ms: float = DEFAULT_OPERATION_DEADLINE_MS,
     extra_meta: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Write per-update CSV + summary JSON under ``output_dir``."""
@@ -109,7 +198,11 @@ def save_latency_artifacts(
     output_dir.mkdir(parents=True, exist_ok=True)
     df = samples_to_dataframe(samples)
     df.to_csv(output_dir / "latency_per_update.csv", index=False)
-    summary = summarize_latency_samples(samples, update_budget_ms=update_budget_ms)
+    summary = summarize_latency_samples(
+        samples,
+        update_budget_ms=update_budget_ms,
+        operation_deadline_ms=operation_deadline_ms,
+    )
     if extra_meta:
         summary.update(extra_meta)
     # Long-form stage table for plotting

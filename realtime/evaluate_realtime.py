@@ -296,13 +296,34 @@ def run_realtime_pipeline(
         feature_type=feature_type,
     )
     metrics["models_reused_from_comparison"] = pretrained_decoders is not None
+    if "ood_flag" in decoded_df.columns:
+        metrics["ood"] = {
+            "n_ood": int(decoded_df["ood_flag"].astype(bool).sum()),
+            "ood_fraction": float(decoded_df["ood_flag"].astype(bool).mean()),
+            "nearest_landmark_distance_p95": (
+                float(decoded_df["nearest_landmark_distance"].quantile(0.95))
+                if "nearest_landmark_distance" in decoded_df.columns else None
+            ),
+            "effective_n_landmarks_median": (
+                float(decoded_df["effective_n_landmarks"].median())
+                if "effective_n_landmarks" in decoded_df.columns else None
+            ),
+        }
     metrics["latency"] = {
         "mean_total_ms": latency_summary.get("mean_total_ms"),
         "median_total_ms": latency_summary.get("median_total_ms"),
         "p95_total_ms": latency_summary.get("p95_total_ms"),
+        "p99_total_ms": latency_summary.get("p99_total_ms"),
+        "max_total_ms": latency_summary.get("max_total_ms"),
         "within_budget_frac": latency_summary.get("within_budget_frac"),
         "update_budget_ms": latency_summary.get("update_budget_ms"),
+        "operation_deadline_ms": latency_summary.get("operation_deadline_ms"),
+        "deadline_miss_count": latency_summary.get("deadline_miss_count"),
+        "deadline_miss_pct": latency_summary.get("deadline_miss_pct"),
+        "realtime_qualified": latency_summary.get("realtime_qualified"),
+        "headroom_ms": latency_summary.get("headroom_ms"),
         "n_updates": latency_summary.get("n_updates"),
+        "note": latency_summary.get("note"),
     }
 
     decoded_df.to_csv(output_dir / "decoded_realtime.csv", index=False)

@@ -50,9 +50,9 @@ FEATURE_ROBUSTNESS_EMBEDDINGS: tuple[str, ...] = (
     "identity",
     "global_pca",
     "region_pca",
-    "layer_pca",
     "global_isomap",
     "global_isomap_distilled",
+    "diffusion_nystrom",
 )
 
 
@@ -75,6 +75,8 @@ class WorkflowProfile:
     prediction_lags: tuple[float, ...]
     isomap_n_neighbors: tuple[int, ...] = (DEFAULT_ISOMAP_N_NEIGHBORS,)
     enable_isomap_distillation: bool = False
+    n_landmarks: tuple[int, ...] = (512,)
+    landmark_method: str = "minibatch_kmeans"
     # Neural feature-set axis (upstream of manifolds). Default preserves counts-only.
     feature_sets: tuple[str, ...] = ("counts",)
     # When set, expand F×E grid with feature_types=("counts",) passthrough.

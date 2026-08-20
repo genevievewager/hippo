@@ -32,6 +32,7 @@ MANIFOLD_FEATURE_MODES = (
     "bayesian_place_tuning",
     "global_isomap",
     "global_isomap_distilled",
+    "diffusion_nystrom",
     # Dynamic latent-state embeddings (parallel to static manifolds).
     "global_lds",
     "gpfa",
@@ -49,6 +50,7 @@ EMBEDDING_TYPES = (
     "bayesian_place_tuning",
     "global_isomap",
     "global_isomap_distilled",
+    "diffusion_nystrom",
     "global_lds",
     "gpfa",
 )
@@ -70,6 +72,7 @@ STATIC_REPRESENTATION_TYPES = (
     "bayesian_place_tuning",
     "global_isomap",
     "global_isomap_distilled",
+    "diffusion_nystrom",
 )
 DYNAMIC_REPRESENTATION_TYPES = ("global_lds", "gpfa")
 
@@ -80,9 +83,9 @@ MANIFOLDS_FEATURE_MODES = (
     "counts",
     "global_pca",
     "region_pca",
-    "layer_pca",
     "global_isomap",
     "global_isomap_distilled",
+    "diffusion_nystrom",
 )
 FULL_FEATURE_MODES = ALL_FEATURE_MODES
 
@@ -94,6 +97,7 @@ GROUPING_COLUMN = {
     "global_pca": None,
     "global_isomap": None,
     "global_isomap_distilled": None,
+    "diffusion_nystrom": None,
     "pls": None,
     "bayesian_place_tuning": None,
     "identity": None,
@@ -106,6 +110,8 @@ GROUPING_COLUMN = {
 }
 
 DEFAULT_ISOMAP_N_NEIGHBORS = 10
+DEFAULT_N_LANDMARKS = 512
+DEFAULT_LANDMARK_METHOD = "minibatch_kmeans"
 
 
 def is_manifold_feature_mode(feature_mode: str) -> bool:
@@ -146,6 +152,8 @@ def manifold_type_for_feature_mode(feature_mode: str) -> str:
         "_isomap_distilled"
     ):
         return "isomap_distilled"
+    if feature_mode == "diffusion_nystrom" or feature_mode.endswith("_diffusion_nystrom"):
+        return "diffusion_nystrom"
     if feature_mode.endswith("_isomap") or feature_mode == "global_isomap":
         return "isomap"
     return feature_mode
@@ -228,8 +236,8 @@ class PLSEmbedding(BaseEstimator, TransformerMixin):
         y = np.asarray(y, dtype=float)
         if y.ndim == 1:
             y = y.reshape(-1, 1)
-        n_comp = min(self.n_components, X.shape[0] - 1, X.shape[1], y.shape[1] * X.shape[1])
-        n_comp = max(1, int(n_comp))
+        # sklearn PLSRegression bound is min(n_samples, n_features)
+        n_comp = max(1, min(int(self.n_components), X.shape[0], X.shape[1]))
         self.pls_ = PLSRegression(n_components=n_comp)
         self.pls_.fit(X, y)
         self.actual_n_components_ = n_comp
@@ -744,6 +752,11 @@ def make_feature_transformer(
     unit_ids: list[int] | np.ndarray | None = None,
     random_state: int = 42,
     n_neighbors: int = DEFAULT_ISOMAP_N_NEIGHBORS,
+    n_landmarks: int = DEFAULT_N_LANDMARKS,
+    landmark_method: str = DEFAULT_LANDMARK_METHOD,
+    diffusion_local_scale_k: int = 10,
+    diffusion_alpha: float = 1.0,
+    diffusion_time: int | float = 1,
     isomap_pre_pca_enabled: bool = True,
     isomap_pre_pca_n_components: int = 50,
     isomap_require_connected_graph: bool = True,
@@ -813,6 +826,20 @@ def make_feature_transformer(
             random_state=random_state,
         )
 
+    if feature_mode == "diffusion_nystrom":
+        from realtime.manifolds.diffusion_nystrom_features import DiffusionNystromManifold
+
+        return DiffusionNystromManifold(
+            n_components=n_components,
+            n_landmarks=n_landmarks,
+            landmark_method=landmark_method,
+            local_scale_k=diffusion_local_scale_k,
+            alpha=diffusion_alpha,
+            diffusion_time=diffusion_time,
+            transform=isomap_transform,
+            random_state=random_state,
+        )
+
     grouping = grouping_for_feature_mode(feature_mode)
     if grouping is None:
         raise ValueError(f"Unknown feature_mode: {feature_mode}")
@@ -856,6 +883,10 @@ def load_feature_transformer(input_dir: Path) -> Any:
         from realtime.manifolds.isomap_distilled_features import IsomapDistilledManifold
 
         return IsomapDistilledManifold.load(input_dir)
+    if name in ("DiffusionNystromManifold", "DiffusionNystrom"):
+        from realtime.manifolds.diffusion_nystrom_features import DiffusionNystromManifold
+
+        return DiffusionNystromManifold.load(input_dir)
     if name in ("DynamicLatentEmbedding", "LinearDynamicalSystem", "GPFAModel"):
         from realtime.dynamic_latents.adapters import DynamicLatentEmbedding
 
@@ -873,6 +904,12 @@ def manifold_transform_dirname(
     w_ms = int(round(float(decode_window) * 1000))
     if n_components is None:
         return f"{feature_mode}_w{w_ms:04d}ms"
+    if n_neighbors is not None and (
+        feature_mode == "diffusion_nystrom"
+        or feature_mode.endswith("_diffusion_nystrom")
+        or "__diffusion_nystrom" in feature_mode
+    ):
+        return f"{feature_mode}_k{int(n_components)}_nl{int(n_neighbors)}_w{w_ms:04d}ms"
     if n_neighbors is not None and (
         feature_mode in ("global_isomap", "global_isomap_distilled")
         or feature_mode.endswith("_isomap")

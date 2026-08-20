@@ -12,7 +12,7 @@ Dynamic latent-state models carry temporal state `z_(t−1)` when forming `z_t`.
 x_t → z_t
 ```
 
-Examples: `counts`, `global_pca`, `region_pca`, `layer_pca`, `global_isomap`, `global_isomap_distilled`.
+Examples: `counts`, `global_pca`, `region_pca`, `global_isomap`, `global_isomap_distilled`, `diffusion_nystrom`.
 
 ### Dynamic latent state
 
@@ -75,7 +75,7 @@ python run_decoder_comparison.py \
     --input outputs/ratinabox_001 \
     --output outputs/ratinabox_001/decoder_comparison \
     --feature-sets counts \
-    --manifolds counts global_pca region_pca global_isomap global_isomap_distilled \
+    --manifolds counts global_pca region_pca global_isomap global_isomap_distilled diffusion_nystrom \
     --dynamic-latents global_lds gpfa \
     --dynamic-latent-dims 3 5 10 \
     --decode-windows 0.025 0.050 0.100 0.250 \
@@ -121,9 +121,9 @@ python run_realtime_decoding.py \
 streamlit run ui/app.py
 ```
 
-- **Decoder Benchmark**: choose Representation Type (Static / Dynamic); badges show `REALTIME` vs `OFFLINE`.
-- **Static vs Dynamic**: side-by-side comparison of metrics and dynamic figures.
-- **Realtime Replay**: select a realtime-compatible representation; GPFA cannot be launched.
+- **Latent Representations**: four class tabs (static/dynamic × linear/nonlinear). GPFA is under Dynamic linear (offline). Dynamic nonlinear is a placeholder.
+- **Decoder Benchmark**: Continuous vs Discrete target tabs; representation pickers grouped by the same four classes.
+- **Realtime Replay**: one behavior × three realtime-capable quadrants (`global_pca`, `diffusion_nystrom`, `global_lds`) with stability and behavior/latency figures. GPFA cannot be launched as a realtime model.
 
 ## Outputs
 

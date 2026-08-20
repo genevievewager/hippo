@@ -158,6 +158,29 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         ),
     )
 
+    p.add_argument(
+        "--n-landmarks", type=int, nargs="+", default=None,
+        help="Landmark-count grid for diffusion_nystrom (default: 512)",
+    )
+    p.add_argument(
+        "--landmark-method",
+        choices=["random", "kmeans", "minibatch_kmeans"],
+        default="minibatch_kmeans",
+        help="Landmark selection for diffusion_nystrom",
+    )
+    p.add_argument(
+        "--diffusion-components", type=int, default=None,
+        help="Alias for a single diffusion latent dim (overrides components list if set alone)",
+    )
+    p.add_argument("--diffusion-local-scale-k", type=int, default=10)
+    p.add_argument("--diffusion-alpha", type=float, default=1.0)
+    p.add_argument("--diffusion-time", type=float, default=1.0)
+    p.add_argument(
+        "--benchmark-diffusion-landmarks",
+        action="store_true",
+        help="Write landmark-count vs accuracy/latency CSV after comparison",
+    )
+
     # Realtime gates
     p.add_argument("--max-compute-ms", type=float, default=25.0)
     p.add_argument("--max-effective-history-s", type=float, default=0.500)
@@ -190,6 +213,8 @@ def manifold_components_from_args(args: argparse.Namespace) -> tuple[int, ...]:
         return tuple(int(x) for x in args.manifold_components_list)
     if args.manifold_n_components is not None:
         return (int(args.manifold_n_components),)
+    if getattr(args, "diffusion_components", None) is not None:
+        return (int(args.diffusion_components),)
     if (
         args.feature_types is not None
         or args.embedding_types is not None
@@ -270,6 +295,11 @@ def config_from_args(
         use_fe_grid=use_fe,
         **config_extras_from_args(args),
         manifold_n_components=manifold_components_from_args(args),
+        n_landmarks=tuple(args.n_landmarks) if getattr(args, "n_landmarks", None) else (512,),
+        landmark_method=getattr(args, "landmark_method", "minibatch_kmeans") or "minibatch_kmeans",
+        diffusion_local_scale_k=int(getattr(args, "diffusion_local_scale_k", 10) or 10),
+        diffusion_alpha=float(getattr(args, "diffusion_alpha", 1.0) or 1.0),
+        diffusion_time=float(getattr(args, "diffusion_time", 1.0) or 1.0),
         max_models=args.max_models,
         n_jobs=args.n_jobs,
         seed=args.seed,
@@ -416,6 +446,24 @@ def execute_comparison_from_args(args: argparse.Namespace) -> Path:
         run_decoder_comparison(cfg)
 
     print(f"Wrote decoder comparison → {output}")
+    if getattr(args, "benchmark_diffusion_landmarks", False):
+        from realtime.diffusion_landmark_benchmark import (
+            run_diffusion_landmark_benchmark_from_experiment,
+        )
+        inp = Path(args.input) if args.input else Path(args.inputs[0])
+        bench_dir = output / "diffusion_landmark_benchmark"
+        print(f"Running diffusion landmark-count benchmark → {bench_dir}")
+        run_diffusion_landmark_benchmark_from_experiment(
+            inp,
+            output_dir=bench_dir,
+            landmark_counts=tuple(args.n_landmarks) if args.n_landmarks else None,
+            n_components=int(manifold_components_from_args(args)[0]),
+            landmark_method=args.landmark_method,
+            local_scale_k=args.diffusion_local_scale_k,
+            alpha=args.diffusion_alpha,
+            diffusion_time=args.diffusion_time,
+            random_state=args.seed,
+        )
     return output
 
 

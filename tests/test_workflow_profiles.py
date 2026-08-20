@@ -82,9 +82,10 @@ def test_manifolds_profile_covers_rt_embeddings():
     prof = get_profile("manifolds")
     assert prof.feature_modes == MANIFOLDS_FEATURE_MODES
     assert "region_pca" in prof.feature_modes
-    assert "layer_pca" in prof.feature_modes
+    assert "layer_pca" not in prof.feature_modes
     assert "global_isomap" in prof.feature_modes
     assert "global_isomap_distilled" in prof.feature_modes
+    assert "diffusion_nystrom" in prof.feature_modes
     assert "cell_type_pca" not in prof.feature_modes
     assert prof.decode_windows == COARSE_DECODE_WINDOWS
     assert prof.manifold_n_components == MANIFOLDS_N_COMPONENTS
@@ -135,6 +136,7 @@ def test_feature_robustness_profile_covers_axes():
     assert prof.run_feature_ablation is True
     assert "identity" in prof.embedding_types
     assert "global_isomap_distilled" in prof.embedding_types
+    assert "diffusion_nystrom" in prof.embedding_types
 
 
 def test_pipeline_timer_summary(tmp_path: Path):

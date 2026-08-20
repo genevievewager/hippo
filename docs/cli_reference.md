@@ -6,7 +6,7 @@ Public happy path remains in the root [README](../README.md). This page document
 
 | Profile | `W` grid | Feature modes (summary) | `max-models` | Isomap distillation | Notes |
 |---------|----------|-------------------------|--------------|---------------------|-------|
-| `manifolds` (**default**) | `[0.050, 0.250, 0.500, 1.000]` | counts + global/region/layer PCA + classic/distilled Isomap | quick | on | Day-to-day RT embedding search |
+| `manifolds` (**default**) | `[0.050, 0.250, 0.500, 1.000]` | counts + global/region PCA + classic/distilled Isomap + `diffusion_nystrom` | quick | on | Day-to-day RT embedding search |
 | `quick` | coarse grid above | counts, global_pca, region_pca | quick | off | Smoke test |
 | `standard` | `[0.050, 0.100, 0.250, 0.500, 1.000]` | counts, global_pca, region_pca | quick | off | Faster counts+PCA, denser W |
 | `full` | `[0.025, …, 1.000]` | counts + PCA family (profile modes; override for more) | full | off | Dense research; temporal still opt-in |
@@ -68,6 +68,13 @@ python run_decoder.py \
 | `--manifold-components-list` | Latent-dim grid |
 | `--isomap-neighbors` | Neighbor grid for `global_isomap` |
 | `--isomap-latent-dim` | Latent dim for Isomap / distilled |
+| `--n-landmarks` | Landmark-count grid for `diffusion_nystrom` (default 512) |
+| `--landmark-method` | `random` / `kmeans` / `minibatch_kmeans` |
+| `--diffusion-components` | Diffusion latent dim if the shared k-grid is omitted |
+| `--diffusion-local-scale-k` | Self-tuning kernel neighbor k (default 10) |
+| `--diffusion-alpha` | Density-normalization α (default 1.0) |
+| `--diffusion-time` | Diffusion time τ (default 1) |
+| `--benchmark-diffusion-landmarks` | Write landmark-count vs accuracy/latency CSV |
 | `--skip-comparison` | Reuse existing `decoder_comparison/` |
 | `--skip-visualization` | Skip in-decode figures (preferred) |
 | `--compile-pdf` | Optional in-decode PDF |
@@ -125,4 +132,8 @@ Static + dynamic grids: see [dynamic_latents.md](dynamic_latents.md).
 
 Isomap-specific grids: see [manifolds.md](manifolds.md).
 
+Diffusion + Nyström grids: see [diffusion_nystrom.md](diffusion_nystrom.md).
+
 Trajectory flags: see [anatomy_and_trajectory.md](anatomy_and_trajectory.md).
+
+Live bundle packing, Replay, and Open Ephys are **not** CLI flags. Use Streamlit **Live Deployment** (`realtime/live_decoder.py`). See [realtime_deployment.md](realtime_deployment.md#live-runtime).

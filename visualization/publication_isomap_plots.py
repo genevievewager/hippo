@@ -54,6 +54,7 @@ EMBEDDING_MODE_ORDER = (
     "rate_model_pca",
     "global_isomap",
     "global_isomap_distilled",
+    "diffusion_nystrom",
 )
 
 # One page per recovered / color feature (sorted-spike deployable view).
@@ -1255,6 +1256,15 @@ def generate_publication_isomap_figures(
                 written.append(path)
     except Exception as exc:
         print(f"  warning: decoder geometry skipped ({exc})")
+
+    try:
+        from visualization.publication_winner_plots import generate_publication_winner_figures
+
+        for path in generate_publication_winner_figures(experiment_dir, figures_dir):
+            if path not in written:
+                written.append(path)
+    except Exception as exc:
+        print(f"  warning: winner embedding figures skipped ({exc})")
 
     if cleanup_legacy:
         from visualization.publication_decoding_plots import _cleanup_legacy_pngs

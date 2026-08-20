@@ -155,7 +155,7 @@ def _feature_column_order(features: list[str]) -> list[str]:
     preferred = [
         "counts", "rates",
         "global_pca", "region_pca", "layer_pca", "cell_type_pca", "rate_model_pca",
-        "global_isomap_distilled", "global_isomap",
+        "global_isomap_distilled", "global_isomap", "diffusion_nystrom",
     ]
     return [f for f in preferred if f in features] + [
         f for f in sorted(features) if f not in preferred

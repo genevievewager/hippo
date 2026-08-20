@@ -66,8 +66,14 @@ def _from_dict(d: dict) -> AnalysisArtifact:
     )
 
 
-def render_artifact_card(artifact: AnalysisArtifact, *, key_prefix: str = "") -> None:
-    """Compact card: title, short meta, image (no detail expanders)."""
+def render_artifact_card(
+    artifact: AnalysisArtifact,
+    *,
+    key_prefix: str = "",
+    show_pdf_caption: bool = False,
+    figure_number: int | None = None,
+) -> None:
+    """Compact card: title, short meta, image (optional PDF-style caption)."""
     st.markdown(f"**{artifact.title}**")
     meta_bits = []
     if artifact.target:
@@ -89,9 +95,29 @@ def render_artifact_card(artifact: AnalysisArtifact, *, key_prefix: str = "") ->
 
     if artifact.is_image:
         try:
-            st.image(str(artifact.path), use_container_width=True)
+            st.image(str(artifact.path), width="stretch")
         except TypeError:
             st.image(str(artifact.path), use_column_width=True)
+        if show_pdf_caption:
+            try:
+                from visualization.figure_captions import caption_for
+                from ui.artifacts.models import PDF_UI_STEM_ORDER
+
+                figs_root = None
+                if artifact.experiment_dir is not None:
+                    figs_root = Path(artifact.experiment_dir) / "figures"
+                if figure_number is not None:
+                    n = int(figure_number)
+                else:
+                    try:
+                        n = PDF_UI_STEM_ORDER.index(artifact.stem) + 1
+                    except ValueError:
+                        n = 1
+                st.caption(
+                    caption_for(artifact.path, figure_number=n, figures_dir=figs_root)
+                )
+            except Exception:
+                pass
     elif artifact.is_html:
         try:
             html = artifact.path.read_text(encoding="utf-8", errors="replace")
@@ -128,6 +154,7 @@ def render_artifact_gallery(
     page_size: int = DEFAULT_GALLERY_PAGE_SIZE,
     key: str = "gallery",
     show_filters: bool = False,
+    show_pdf_captions: bool = False,
 ) -> list[AnalysisArtifact]:
     """Dense scientific gallery — defaults to showing a full-run figure set."""
     if title:
@@ -159,16 +186,34 @@ def render_artifact_gallery(
         st.caption(f"Showing {start + 1}–{start + len(page_arts)} of {total}")
     else:
         page_arts = visible
+        start = 0
         if total > 4:
             st.caption(f"{total} figure(s)")
+
+    from ui.artifacts.models import PDF_UI_STEM_ORDER
+
+    pdf_rank = {s: i for i, s in enumerate(PDF_UI_STEM_ORDER)}
 
     cols_n = max(1, min(columns, 3))
     for i in range(0, len(page_arts), cols_n):
         row = page_arts[i: i + cols_n]
         cols = st.columns(len(row))
-        for col, art in zip(cols, row):
+        for j, (col, art) in enumerate(zip(cols, row)):
             with col:
-                render_artifact_card(art, key_prefix=f"{key}_{i}_{art.stem}")
+                fallback = start + i + j + 1
+                fig_n = None
+                if show_pdf_captions:
+                    fig_n = (
+                        pdf_rank[art.stem] + 1
+                        if art.stem in pdf_rank
+                        else fallback
+                    )
+                render_artifact_card(
+                    art,
+                    key_prefix=f"{key}_{i}_{art.stem}",
+                    show_pdf_caption=show_pdf_captions,
+                    figure_number=fig_n,
+                )
     return visible
 
 
@@ -230,6 +275,7 @@ def render_tabbed_gallery(
     key: str = "tabs",
     columns: int = 2,
     page_size: int = DEFAULT_GALLERY_PAGE_SIZE,
+    show_pdf_captions: bool = False,
 ) -> None:
     """Tabs mapped to category lists, e.g. Behavior → [Behavior, Probe]."""
     labels = list(tab_categories.keys())
@@ -249,6 +295,7 @@ def render_tabbed_gallery(
                     page_size=page_size,
                     key=f"{key}_{label}",
                     empty_message=f"No {label.lower()} figures found.",
+                    show_pdf_captions=show_pdf_captions,
                 )
 
 

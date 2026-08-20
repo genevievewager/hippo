@@ -78,8 +78,15 @@ def estimate_stage_latency_ms(
 
     feat_ms = _time(lambda: feature_transform.transform(X))
     Xf = feature_transform.transform(X)
-    emb_ms = _time(lambda: embedding_transform.transform(Xf))
-    Xe = embedding_transform.transform(Xf)
+    if hasattr(embedding_transform, "transform_one"):
+        def _emb():
+            for row in Xf:
+                embedding_transform.transform_one(row)
+        emb_ms = _time(_emb)
+        Xe = embedding_transform.transform(Xf)
+    else:
+        emb_ms = _time(lambda: embedding_transform.transform(Xf))
+        Xe = embedding_transform.transform(Xf)
     pred_ms = _time(lambda: pipeline.predict(Xe))
     return {
         "feature_compute_ms": feat_ms,
@@ -107,8 +114,12 @@ def enrich_fit_row(
     decode_times_test: np.ndarray,
     behavior_test: pd.DataFrame,
     arena_bounds: tuple[float, float, float, float] | None,
-) -> tuple[dict[str, Any], list[dict[str, Any]]]:
-    """Add F/E metadata, latency gate, calibration; return trigger rows."""
+) -> tuple[dict[str, Any], list[dict[str, Any]], np.ndarray | None]:
+    """Add F/E metadata, latency gate, calibration; return trigger rows and proba.
+
+    The third return is class-probability rows for categorical heads (or None).
+    Callers persist it on the prediction parquet so Brier/ECE does not discard it.
+    """
     from realtime.decoder_comparison import CATEGORICAL_TARGETS
 
     row = dict(row)
@@ -144,6 +155,7 @@ def enrich_fit_row(
     target = str(row.get("target_name"))
     decoder_name = str(row.get("decoder_name"))
     conf = None
+    proba: np.ndarray | None = None
     X_emb = np.asarray(X_test_embedded, dtype=float)
     if target in CATEGORICAL_TARGETS:
         try:
@@ -232,4 +244,4 @@ def enrich_fit_row(
             except Exception:
                 continue
 
-    return row, trigger_rows
+    return row, trigger_rows, proba

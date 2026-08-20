@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+from typing import Any
 
 import matplotlib.pyplot as plt
 from matplotlib.axes import Axes
@@ -16,6 +17,21 @@ LEGEND_TITLE_FONTSIZE = 11
 AXIS_LABEL_FONTSIZE = 12
 TICK_LABEL_FONTSIZE = 9
 PANEL_LABEL_FONTSIZE = 13
+
+# Stable decoding visual grammar (true vs predicted vs second config).
+TRUE_COLOR = "#1B4F72"
+PRED_COLOR = "#E07A3D"
+PRED_B_COLOR = "#2E86AB"
+CORRECT_COLOR = "#2E7D32"
+INCORRECT_COLOR = "#C0392B"
+TIME_CMAP = "viridis"
+ERROR_CMAP = "YlOrRd"
+DIFF_CMAP = "RdBu_r"
+TRUE_MARKER = "o"
+PRED_MARKER = "x"
+LINEWIDTH = 1.4
+MARKERSIZE = 12
+RASTER_DPI = 120
 
 
 def strip_box_frames(fig: Figure) -> None:
@@ -245,3 +261,38 @@ def expand_xlim_for_labels(ax: Axes, values, *, pad_frac: float = 0.35) -> None:
     hi = max(vals)
     span = max(hi - lo, 1e-6)
     ax.set_xlim(lo, hi + pad_frac * span)
+
+
+def new_decoding_figure(
+    nrows: int,
+    ncols: int,
+    *,
+    figsize: tuple[float, float],
+    sharex: bool | str = False,
+    sharey: bool | str = False,
+) -> tuple[Figure, Any]:
+    """Constrained-layout figure for decoding diagnostics (no tight_layout)."""
+    enable_open_axes()
+    fig, axes = plt.subplots(
+        nrows, ncols, figsize=figsize, layout="constrained",
+        sharex=sharex, sharey=sharey, squeeze=False,
+    )
+    return fig, axes
+
+
+def save_decoding_figure(fig: Figure, path: Path, *, dpi: int | None = None) -> Path:
+    """Save a constrained-layout decoding figure without ``bbox_inches='tight'``.
+
+    ``tight`` crops and fights outside legends / shared colorbars. Layout is
+    already handled by ``layout='constrained'`` on ``new_decoding_figure``.
+    """
+    from visualization.constants import FIGURE_DPI
+
+    path = Path(path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    style_figure_axes(fig)
+    strip_box_frames(fig)
+    fig.savefig(path, dpi=int(dpi if dpi is not None else FIGURE_DPI), facecolor="white")
+    plt.close(fig)
+    return path
+

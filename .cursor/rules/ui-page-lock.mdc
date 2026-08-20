@@ -1,0 +1,28 @@
+---
+description: Do not change UI pages, layout, or organization unless the user names that page or explicitly permits organization edits.
+alwaysApply: true
+---
+
+# UI page lock
+
+Do not change UI features, layout, navigation, or page organization unless the user **names the page** or **explicitly permits** organization edits after you ask.
+
+## Allowed without asking
+
+- Edit only `ui/views/<page>.py` for a page the user named (e.g. “Feature Explorer” → `ui/views/feature_explorer.py`).
+- Bugfixes strictly inside that file.
+
+## Ask first (do not do these on your own)
+
+- Other pages, even as a “needed” follow-on.
+- Shared UI: `ui/app.py`, `ui/views/__init__.py`, `ui/artifacts/`, `ui/components/`, nav, tabs, galleries, captions, job chrome used by multiple pages.
+- Adding/removing pages, tabs, sections, or moving controls vs figures.
+- “While I’m here” restyles or consistency edits on unnamed pages.
+
+## If a named-page fix seems to need shared code
+
+Stop. Ask. Wait for explicit permission. Do not expand scope because it would look better or match another page.
+
+## If the prompt is underdefined
+
+Ask which page and whether organization may change. Do not guess.

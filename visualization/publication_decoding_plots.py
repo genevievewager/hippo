@@ -134,6 +134,67 @@ def load_window_scores(experiment_dir: Path) -> pd.DataFrame:
     return pd.DataFrame()
 
 
+def load_union_comparison_metrics(experiment_dir: Path) -> pd.DataFrame:
+    """Dataset-level decoder metrics (all runs), never deployment window scores."""
+    from realtime.comparison_metrics_union import load_or_collect_union
+
+    return load_or_collect_union(Path(experiment_dir))
+
+
+def _best_combo_winners(scores: pd.DataFrame) -> dict[str, dict]:
+    """Best held-out combo per target from window scores (PRIMARY_METRIC)."""
+    out: dict[str, dict] = {}
+    if scores is None or scores.empty or "target" not in scores.columns:
+        return out
+    for target, g in scores.groupby(scores["target"].astype(str), sort=False):
+        metric_key, direction = PRIMARY_METRIC.get(str(target), (None, "higher"))
+        pool = g
+        if metric_key and "metric_name" in g.columns:
+            matched = g[g["metric_name"].astype(str) == str(metric_key)]
+            if not matched.empty:
+                pool = matched
+        vals = pd.to_numeric(pool["metric_value"], errors="coerce")
+        if vals.notna().sum() == 0:
+            continue
+        idx = vals.idxmin() if direction == "lower" else vals.idxmax()
+        row = pool.loc[idx]
+        try:
+            ww = float(row["causal_window_s"])
+        except (TypeError, ValueError, KeyError):
+            continue
+        out[str(target)] = {
+            "selected_decoder": str(row.get("decoder", "")),
+            "selected_feature_mode": str(row.get("feature_mode", "")),
+            "selected_causal_window_s": ww,
+        }
+    return out
+
+
+def _table_figure_decoding_context(
+    experiment_dir: Path,
+) -> tuple[pd.DataFrame, pd.DataFrame, dict[str, dict], list[str]] | None:
+    """Window scores + best-combo gold from the dataset metrics union."""
+    metrics = load_union_comparison_metrics(experiment_dir)
+    if "spike_source" in metrics.columns and not metrics.empty:
+        sorted_m = metrics[metrics["spike_source"].astype(str) == "sorted"]
+        if not sorted_m.empty:
+            metrics = sorted_m
+    scores = _window_scores_from_metrics(metrics)
+    if scores.empty:
+        return None
+    winners = _best_combo_winners(scores)
+    targets = _ordered_targets(scores["target"].astype(str).unique().tolist())
+    targets = [t for t in targets if t in set(scores["target"].astype(str))]
+    if not targets:
+        return None
+    rt_scores = scores
+    if "realtime_compatible" in scores.columns:
+        rt_only = scores[scores["realtime_compatible"] == True].copy()  # noqa: E712
+        if not rt_only.empty:
+            rt_scores = rt_only
+    return scores, rt_scores, winners, targets
+
+
 def _scores_missing_manifold_modes(scores: pd.DataFrame, metrics: pd.DataFrame) -> bool:
     """True when window scores collapsed every mode to counts/rates but metrics have more."""
     if scores.empty or metrics.empty or "feature_mode" not in scores.columns:
@@ -382,7 +443,7 @@ _PREFERRED_TARGETS = (
 )
 _PREFERRED_FEATURES = (
     "counts", "global_pca", "region_pca", "layer_pca",
-    "global_isomap", "global_isomap_distilled",
+    "global_isomap", "global_isomap_distilled", "diffusion_nystrom",
 )
 
 
@@ -622,14 +683,14 @@ def plot_fig_feature_x_window(
     """Fig 5a: per-target feature × causal-window heatmaps (4×2 grid).
 
     Each cell shows the metric and best decoder at that (feature, W); hatching
-    marks offline-only features; gold outline marks the registry selection.
+    marks offline-only features; gold outline marks the best combo on disk.
     """
     experiment_dir = Path(experiment_dir)
     figures_dir = Path(figures_dir) if figures_dir else experiment_dir / "figures"
     out_dir = figures_dir / FIGURE_SUBDIR_DECODER
     out_dir.mkdir(parents=True, exist_ok=True)
 
-    ctx = _manifold_window_decoding_context(experiment_dir)
+    ctx = _table_figure_decoding_context(experiment_dir)
     if ctx is None:
         return None
     scores, _, winners, targets = ctx
@@ -641,7 +702,8 @@ def plot_fig_feature_x_window(
         draw_panel=_draw_feature_x_window_panel,
         title="Feature × window  (sorted spikes)",
         subtitle=(
-            "Cell = best decoder @ that W; hatch = offline-only; gold = selected (feature, W)"
+            "Cell = best decoder @ that W; hatch = offline-only; "
+            "gold = best combo on disk for this dataset (feature × W)"
         ),
         out_path=out_dir / "fig_feature_x_window.png",
         cmap="YlGn",
@@ -657,14 +719,14 @@ def plot_fig_decoder_x_window(
     """Fig 5b: per-target decoder × causal-window heatmaps (4×2 grid).
 
     Each cell shows the best realtime-compatible feature at that (decoder, W);
-    gold outline marks the registry selection.
+    gold outline marks the best combo on disk.
     """
     experiment_dir = Path(experiment_dir)
     figures_dir = Path(figures_dir) if figures_dir else experiment_dir / "figures"
     out_dir = figures_dir / FIGURE_SUBDIR_DECODER
     out_dir.mkdir(parents=True, exist_ok=True)
 
-    ctx = _manifold_window_decoding_context(experiment_dir)
+    ctx = _table_figure_decoding_context(experiment_dir)
     if ctx is None:
         return None
     _, rt_scores, winners, targets = ctx
@@ -676,7 +738,8 @@ def plot_fig_decoder_x_window(
         draw_panel=_draw_decoder_x_window_panel,
         title="Decoder × window  (sorted spikes, realtime-compatible)",
         subtitle=(
-            "Cell = best realtime feature @ that W; gold = selected (decoder, W)"
+            "Cell = best realtime feature @ that W; "
+            "gold = best combo on disk for this dataset (decoder × W)"
         ),
         out_path=out_dir / "fig_decoder_x_window.png",
         cmap="Blues",
@@ -798,7 +861,7 @@ def _plot_decoder_family_feature_x_window(
     cmap: str = "YlGn",
 ) -> Path | None:
     """One page: stacked decoder sections, each with feature×W panels per target."""
-    ctx = _manifold_window_decoding_context(experiment_dir)
+    ctx = _table_figure_decoding_context(experiment_dir)
     if ctx is None:
         return None
     scores, _, winners, _all_targets = ctx
@@ -859,7 +922,7 @@ def _plot_decoder_family_feature_x_window(
     fig.text(
         0.5, 0.01,
         "Each panel: feature × W at fixed decoder; hatch = offline-only; "
-        "gold = deployable (feature, W) when this decoder is selected",
+        "gold = best combo on disk (decoder × feature × W)",
         ha="center", va="bottom", fontsize=9, color="0.35",
     )
     out_path = out_dir / out_name

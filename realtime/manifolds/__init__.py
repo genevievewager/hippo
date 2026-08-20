@@ -11,12 +11,14 @@ from realtime.manifolds.registry import (
     is_realtime_compatible_manifold,
     make_manifold_encoder,
 )
+from realtime.manifolds.diffusion_nystrom import DiffusionNystrom
 
 __all__ = [
     "ManifoldEncoder",
     "PCAManifoldEncoder",
     "RawManifoldEncoder",
     "IsomapManifoldEncoder",
+    "DiffusionNystrom",
     "available_manifolds",
     "is_realtime_compatible_manifold",
     "make_manifold_encoder",

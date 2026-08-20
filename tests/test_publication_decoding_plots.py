@@ -433,3 +433,113 @@ def test_optional_ratinabox_005_smoke():
     written = generate_publication_decoding_figures(exp, figures, cleanup_legacy=True)
     assert written
     assert (figures / "decoder_comparison" / "fig_decoding_performance.png").exists()
+
+
+def _metrics_row(*, decoder: str, error: float, feat: str = "global_pca", w: float = 0.25) -> dict:
+    return {
+        "spike_source": "sorted",
+        "target_name": "position",
+        "decoder_name": decoder,
+        "feature_set": "counts",
+        "feature_mode": feat,
+        "feature_type": feat,
+        "embedding_type": feat,
+        "decode_window_s": w,
+        "manifold_n_components": 3,
+        "primary_metric": "mean_position_error_cm",
+        "mean_position_error_cm": error,
+        "realtime_compatible": True,
+    }
+
+
+def test_table_gold_uses_best_combo_not_registry(tmp_path: Path):
+    from visualization.publication_decoding_plots import (
+        _best_combo_winners,
+        _table_figure_decoding_context,
+        _window_scores_from_metrics,
+        load_union_comparison_metrics,
+        load_window_scores,
+    )
+
+    exp = tmp_path / "exp"
+    dec = exp / "decoder_comparison" / "sorted"
+    deploy = exp / "deployment_decoder_selection"
+    dec.mkdir(parents=True)
+    deploy.mkdir(parents=True)
+    metrics = pd.DataFrame([
+        _metrics_row(decoder="ridge", error=12.0),
+        _metrics_row(decoder="random_forest_regressor", error=6.0),
+    ])
+    metrics.to_csv(dec / "decoder_comparison_metrics.csv", index=False)
+    pd.DataFrame([{
+        "spike_source": "sorted",
+        "target": "position",
+        "decoder": "ridge",
+        "feature_mode": "counts",
+        "causal_window_s": 0.10,
+        "metric_name": "mean_position_error_cm",
+        "metric_value": 1.0,
+        "higher_is_better": False,
+        "realtime_compatible": True,
+    }]).to_csv(deploy / "all_sorted_window_scores.csv", index=False)
+    (exp / "models").mkdir(parents=True)
+    (exp / "models" / "best_realtime_decoders.json").write_text(
+        '{"targets": {"position": {"selected_decoder": "ridge",'
+        ' "selected_feature_mode": "counts", "selected_causal_window_s": 0.10}}}\n'
+    )
+
+    union = load_union_comparison_metrics(exp)
+    assert "random_forest_regressor" in set(union["decoder_name"].astype(str))
+    deploy_scores = load_window_scores(exp)
+    assert list(deploy_scores["decoder"].astype(str)) == ["ridge"]
+
+    ctx = _table_figure_decoding_context(exp)
+    assert ctx is not None
+    scores, _, winners, _targets = ctx
+    assert "ridge" in set(scores["decoder"].astype(str))
+    assert winners["position"]["selected_decoder"] == "random_forest_regressor"
+    assert winners["position"]["selected_feature_mode"] == "global_pca"
+    assert float(winners["position"]["selected_causal_window_s"]) == pytest.approx(0.25)
+
+    rebuilt = _window_scores_from_metrics(union)
+    combo = _best_combo_winners(rebuilt)
+    assert combo["position"]["selected_decoder"] == "random_forest_regressor"
+
+
+def test_table_gold_without_registry(tmp_path: Path):
+    from visualization.publication_decoding_plots import _table_figure_decoding_context
+
+    exp = tmp_path / "exp"
+    dec = exp / "decoder_comparison" / "sorted"
+    dec.mkdir(parents=True)
+    pd.DataFrame([_metrics_row(decoder="ridge", error=4.0)]).to_csv(
+        dec / "decoder_comparison_metrics.csv", index=False,
+    )
+    ctx = _table_figure_decoding_context(exp)
+    assert ctx is not None
+    _scores, _, winners, _targets = ctx
+    assert winners["position"]["selected_decoder"] == "ridge"
+
+
+def test_rf_only_metrics_keep_ridge_gold_from_union(tmp_path: Path):
+    from realtime.comparison_metrics_union import persist_merged_comparison_metrics
+    from visualization.publication_decoding_plots import _table_figure_decoding_context
+
+    exp = tmp_path / "exp"
+    out = exp / "decoder_comparison" / "sorted"
+    out.mkdir(parents=True)
+    pd.DataFrame([_metrics_row(decoder="ridge", error=5.0)]).to_csv(
+        out / "decoder_comparison_metrics.csv", index=False,
+    )
+    persist_merged_comparison_metrics(
+        pd.DataFrame([_metrics_row(decoder="random_forest_regressor", error=9.0)]),
+        output_dir=out,
+        experiment_dir=exp,
+        spike_source="sorted",
+    )
+    ctx = _table_figure_decoding_context(exp)
+    assert ctx is not None
+    scores, _, winners, _ = ctx
+    assert set(scores["decoder"].astype(str)) == {"ridge", "random_forest_regressor"}
+    assert winners["position"]["selected_decoder"] == "ridge"
+

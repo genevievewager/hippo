@@ -29,6 +29,8 @@ KEY_FEATURE_ANALYSIS_REQUESTED = "hippo_feature_analysis_requested"
 KEY_MANIFOLD_COMPUTE_REQUESTED = "hippo_manifold_compute_requested"
 KEY_SIM_RUN_REQUESTED = "hippo_sim_run_requested"
 KEY_REPLAY_RUN_REQUESTED = "hippo_replay_run_requested"
+KEY_QUADRANT_REPLAY_REQUESTED = "hippo_quadrant_replay_requested"
+KEY_QUADRANT_RIDGE_REQUESTED = "hippo_quadrant_ridge_requested"
 KEY_VIZ_GENERATE_REQUESTED = "hippo_viz_generate_requested"
 KEY_REPLAY_INDEX = "hippo_replay_index"
 KEY_SELECTED_RESULT_RUN = "hippo_selected_result_run"
@@ -56,6 +58,8 @@ def init_session_state(outputs_root: Path | None = None) -> None:
         KEY_MANIFOLD_COMPUTE_REQUESTED: False,
         KEY_SIM_RUN_REQUESTED: False,
         KEY_REPLAY_RUN_REQUESTED: False,
+        KEY_QUADRANT_REPLAY_REQUESTED: False,
+        KEY_QUADRANT_RIDGE_REQUESTED: False,
         KEY_VIZ_GENERATE_REQUESTED: False,
         KEY_REPLAY_INDEX: 0,
         KEY_SELECTED_RESULT_RUN: None,
@@ -83,6 +87,35 @@ def get_active_dataset() -> Path | None:
 def set_active_dataset(path: Path | str | None) -> None:
     """Set the application-wide active dataset (all pages read this)."""
     st.session_state[KEY_ACTIVE_DATASET] = str(path) if path else None
+
+
+def resolve_spike_source(
+    dataset: Path | None,
+    *,
+    sources: list[str] | None = None,
+) -> str:
+    """Return a valid spike source for ``dataset``, clamping session state if needed."""
+    from ui.services.datasets import available_spike_sources
+
+    valid = list(sources) if sources is not None else (
+        available_spike_sources(dataset) if dataset is not None else []
+    )
+    if not valid:
+        valid = ["sorted"]
+    stored = st.session_state.get(KEY_SPIKE_SOURCE, valid[0])
+    if stored not in valid:
+        stored = valid[0]
+        st.session_state[KEY_SPIKE_SOURCE] = stored
+    return str(stored)
+
+
+def get_spike_source(dataset: Path | None = None) -> str:
+    """Read the global spike source, clamped to sources available on ``dataset``."""
+    return resolve_spike_source(dataset)
+
+
+def set_spike_source(value: str) -> None:
+    st.session_state[KEY_SPIKE_SOURCE] = str(value)
 
 
 # Aliases used by older pages

@@ -93,6 +93,11 @@ def run_latency_benchmark(
             n_neighbors=isomap_n_neighbors,
             fit_X="iso",
         ),
+        "diffusion_nystrom": dict(
+            n_components=10,
+            n_neighbors=None,
+            fit_X="full",
+        ),
     }
 
     transformers: dict[str, Any] = {}
@@ -107,6 +112,7 @@ def run_latency_benchmark(
                 unit_ids=data["unit_ids"],
                 random_state=seed,
                 n_neighbors=int(cfg["n_neighbors"] or DEFAULT_ISOMAP_N_NEIGHBORS),
+                n_landmarks=512,
             )
             if tr is None:
                 fit_meta[mode] = {"status": "skipped", "reason": "missing metadata"}

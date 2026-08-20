@@ -5,6 +5,7 @@ from __future__ import annotations
 from typing import Any
 
 from realtime.manifolds.base import ManifoldEncoder
+from realtime.manifolds.diffusion_nystrom import DiffusionNystrom
 from realtime.manifolds.isomap import IsomapManifoldEncoder
 from realtime.manifolds.pca import PCAManifoldEncoder
 from realtime.manifolds.raw import RawManifoldEncoder
@@ -13,6 +14,7 @@ _REGISTRY = {
     "raw": RawManifoldEncoder,
     "pca": PCAManifoldEncoder,
     "isomap": IsomapManifoldEncoder,
+    "diffusion_nystrom": DiffusionNystrom,
 }
 
 # Offline-only methods that must not auto-deploy into realtime replay.

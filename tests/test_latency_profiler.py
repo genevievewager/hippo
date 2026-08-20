@@ -34,6 +34,8 @@ def test_summarize_and_save_latency(tmp_path):
     assert summary["n_updates"] == 2
     assert summary["stages"]["total_update"]["mean_ms"] == 2.1
     assert summary["within_budget_frac"] == 1.0
+    assert "realtime_qualified" in summary
+    assert summary["p99_total_ms"] is not None
 
     out = save_latency_artifacts(samples, tmp_path / "lat", update_budget_ms=50.0)
     assert (tmp_path / "lat" / "latency_per_update.csv").exists()

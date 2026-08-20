@@ -54,6 +54,37 @@ class _CausalSmoothRegressor(BaseEstimator, RegressorMixin):
             out[i] = state
         return out.ravel() if squeeze else out
 
+
+def _pls_n_components_cap(X: np.ndarray, y: np.ndarray, requested: int) -> int:
+    """Match sklearn PLSRegression rank bound: ``min(n_samples, n_features)``."""
+    X = np.asarray(X)
+    y = np.asarray(y)
+    if y.ndim == 1:
+        y = y.reshape(-1, 1)
+    n, p = int(X.shape[0]), int(X.shape[1])
+    # sklearn PLSRegression uses deflation_mode='regression' → min(n, p)
+    upper = max(min(n, p), 1)
+    return max(1, min(int(requested), upper))
+
+
+class _AdaptivePLSRegression(BaseEstimator, RegressorMixin):
+    """PLSRegression that clamps ``n_components`` to a data-compatible upper bound."""
+
+    def __init__(self, n_components: int = 10):
+        self.n_components = int(n_components)
+
+    def fit(self, X, y):
+        X = np.asarray(X, dtype=float)
+        y = np.asarray(y, dtype=float)
+        n_comp = _pls_n_components_cap(X, y, self.n_components)
+        self.model_ = PLSRegression(n_components=n_comp)
+        self.model_.fit(X, y)
+        self.n_components_ = n_comp
+        return self
+
+    def predict(self, X):
+        return self.model_.predict(X)
+
 from realtime.bayesian_decoder import (
     BayesianDistanceToWallDecoder,
     BayesianPlaceDecoder,
@@ -153,6 +184,30 @@ def categorical_model_names(mode: str, target: str | None = None) -> tuple[str, 
     return tuple(names)
 
 
+def resolve_model_names_for_target(
+    target: str,
+    *,
+    max_models: str = "quick",
+    selected: tuple[str, ...] | list[str] | None = None,
+) -> tuple[str, ...]:
+    """Decoder names for one target, optionally filtered to an explicit selection.
+
+    When ``selected`` is provided, the full zoo is used as the allow-list so
+    users can pick any valid named decoder regardless of the quick/full preset.
+    Order follows ``selected``; names invalid for ``target`` are dropped.
+    """
+    family = TARGET_FAMILY.get(target)
+    pool_mode = "full" if selected else max_models
+    if family == "categorical":
+        pool = categorical_model_names(pool_mode, target)
+    else:
+        pool = continuous_model_names(pool_mode, target)
+    if not selected:
+        return pool
+    allowed = set(pool)
+    return tuple(name for name in selected if name in allowed)
+
+
 def _continuous_model_allowed(name: str, target: str) -> bool:
     if name in ("bayesian_place_decoder", "bayesian_place_decoder_smoothed"):
         return target in BAYESIAN_POSITION_TARGETS or target in BAYESIAN_DISTANCE_TARGETS
@@ -241,7 +296,7 @@ def _base_continuous_estimator(name: str, seed: int, n_jobs: int):
             ("ridge", Ridge(alpha=1.0)),
         ])
     if name == "pls_regression":
-        return PLSRegression(n_components=10)
+        return _AdaptivePLSRegression(n_components=10)
     if name == "random_forest_regressor":
         return RandomForestRegressor(
             n_estimators=100, max_depth=12, random_state=seed, n_jobs=n_jobs,

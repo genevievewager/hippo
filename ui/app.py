@@ -23,14 +23,15 @@ if str(_REPO_ROOT) not in sys.path:
 import streamlit as st
 
 from ui import state
-from ui.pages import (
+from ui.views import (
     decoder_benchmark,
     experiment_setup,
     feature_explorer,
+    home,
+    live_deployment,
     manifold_explorer,
     neural_simulation,
     realtime_replay,
-    static_vs_dynamic,
 )
 from ui.services.datasets import default_outputs_root
 
@@ -53,9 +54,11 @@ st.sidebar.markdown(
 )
 
 from ui.components.controls import render_active_dataset_sidebar
+from ui.components.run_status import render_sidebar_jobs
 
 render_active_dataset_sidebar(OUTPUTS_ROOT)
 st.sidebar.markdown(f"`outputs/` → `{OUTPUTS_ROOT}`")
+render_sidebar_jobs()
 
 
 def _page(fn):
@@ -67,18 +70,21 @@ def _page(fn):
 
 
 pages = {
+    "Home": [
+        st.Page(_page(home), title="Home", icon=":material/home:", default=True),
+    ],
     "Experiment": [
-        st.Page(_page(experiment_setup), title="Experiment Setup", icon=":material/science:", default=True),
+        st.Page(_page(experiment_setup), title="Experiment Setup", icon=":material/science:"),
         st.Page(_page(neural_simulation), title="Neural Simulation", icon=":material/graphic_eq:"),
     ],
     "Representations": [
-        st.Page(_page(feature_explorer), title="Feature Explorer", icon=":material/hub:"),
-        st.Page(_page(manifold_explorer), title="Manifold Explorer", icon=":material/grain:"),
-        st.Page(_page(static_vs_dynamic), title="Static vs Dynamic", icon=":material/compare:"),
+        st.Page(_page(feature_explorer), title="Feature Construction", icon=":material/hub:"),
+        st.Page(_page(manifold_explorer), title="Latent Representations", icon=":material/grain:"),
     ],
     "Decoding": [
         st.Page(_page(decoder_benchmark), title="Decoder Benchmark", icon=":material/play_arrow:"),
         st.Page(_page(realtime_replay), title="Realtime Replay", icon=":material/timeline:"),
+        st.Page(_page(live_deployment), title="Live Deployment", icon=":material/sensors:"),
     ],
 }
 

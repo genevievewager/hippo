@@ -22,7 +22,7 @@ or `streamlit run ui/app.py` (same backends; no science reimplementation in the 
 | `realtime/bayesian_decoder.py` | Bayesian place decoder |
 | `realtime/manifold_features.py` | Static manifold feature modes (+ dynamic embedding factory hooks) |
 | `realtime/dynamic_latents/` | Dynamic latent models (LDS, GPFA), registry, metrics, figures |
-| `realtime/manifolds/` | Temporal raw / PCA / Isomap encoders (+ distillation) |
+| `realtime/manifolds/` | Temporal raw / PCA / Isomap / Diffusion+Nyström encoders (+ distillation) |
 | `realtime/temporal/` | History sequences, controls, W×L comparison |
 | `realtime/workflow.py` | Full decode orchestration |
 | `realtime/workflow_profiles.py` | `quick` / `standard` / `full` / `manifolds` / `feature_robustness` |
@@ -31,9 +31,14 @@ or `streamlit run ui/app.py` (same backends; no science reimplementation in the 
 | `realtime/deployment_selection.py` | Sorted-only deployable registry + window-score table |
 | `realtime/best_decoder_selection.py` | Selection policies |
 | `realtime/evaluate_realtime.py` | Closed-loop replay |
+| `realtime/transform_cache.py` | Locate / reuse fitted F and E transforms |
+| `realtime/deployment_bundle.py` | Pack / load frozen live `F → E → D` bundles |
+| `realtime/live_decoder.py` | Causal live / Replay inference (`LiveDecoder.step`) |
+| `realtime/live/` | Spike streams, causal buffer, unit mapping, session logs |
 | `visualization/experiment_viz.py` | Unified figure generation |
 | `visualization/pdf.py` | PDF compilation |
-| `ui/` | Streamlit pages calling the same backends |
+| `ui/views/` | Streamlit pages calling the same backends |
+| `ui/jobs.py` | Background jobs so leaving a page does not abort long runs |
 
 ## Advanced / non-public utilities
 
@@ -70,6 +75,10 @@ Component-focused tests include (non-exhaustive):
 
 - `tests/test_workflow_profiles.py`
 - `tests/test_isomap_manifold.py`, `tests/test_isomap_decoders.py`, `tests/test_isomap_distillation.py`, `tests/test_isomap_temporal.py`
+- `tests/test_diffusion_nystrom.py`
+- `tests/test_live_deployment.py`
+- `tests/test_quadrant_plots.py`
+- `tests/test_transform_cache_windows.py`
 - `tests/test_dynamic_latents.py`
 - `tests/test_trajectory_import.py`
 
@@ -100,8 +109,9 @@ Adapted from:
 | [anatomy_and_trajectory.md](anatomy_and_trajectory.md) | Trajectories, NTE, capture allowlist |
 | [decoding_methods.md](decoding_methods.md) | Decoder zoo, targets, temporal W×L |
 | [manifolds.md](manifolds.md) | Isomap details, distillation, diagnostics |
+| [diffusion_nystrom.md](diffusion_nystrom.md) | Landmark diffusion maps + Nyström realtime embedding |
 | [dynamic_latents.md](dynamic_latents.md) | LDS / GPFA commands and outputs |
-| [realtime_deployment.md](realtime_deployment.md) | Gating, registry, latency |
+| [realtime_deployment.md](realtime_deployment.md) | Gating, registry, latency, live bundles |
 | [visualizations.md](visualizations.md) | Figure catalog |
 | [output_schema.md](output_schema.md) | Artifact tree |
 | [cli_reference.md](cli_reference.md) | Flags and profiles |

@@ -189,6 +189,16 @@ CAPTIONS: dict[str, str] = {
         "features (optional 2-page summary mode). Prefer the per-feature "
         "fig_latent_geometry_<feature> pages, which show every embedding mode."
     ),
+    "fig_winner_counts": (
+        "Raw spike-count embedding (display SVD of causal counts) colored by "
+        "the named behavioral variable, at the best-accuracy counts decoder "
+        "window among completed comparison rows."
+    ),
+    "fig_winner_manifold": (
+        "Best-accuracy manifold embedding among completed comparison rows for "
+        "the named behavioral variable (frozen train-fit transform; leading "
+        "two latent axes)."
+    ),
     # ---- Decoding / manifolds / realtime ----
     "fig_decoding_performance": (
         "Causal decoding performance on sorted spikes. "
@@ -202,14 +212,15 @@ CAPTIONS: dict[str, str] = {
         "One panel per target in a 4×2 grid; feature modes are rows and "
         "causal windows W are columns. Each cell shows the metric and best "
         "decoder at that (feature, W); hatching marks offline-only features, "
-        "and gold outlines the selected (feature, W)."
+        "and gold outlines the best combo on disk for this dataset "
+        "(decoder × feature × W across all comparison runs)."
     ),
     "fig_decoder_x_window": (
         "Causal decoding tables on sorted spikes: decoder × window "
         "(realtime-compatible features only). One panel per target in a 4×2 "
         "grid; decoders are rows and causal windows W are columns. Each cell "
         "shows the metric and best realtime-compatible feature at that "
-        "(decoder, W); gold outlines the selected (decoder, W)."
+        "(decoder, W); gold outlines the best combo on disk for this dataset."
     ),
     "fig_decoder_comparison_grid": (
         "Schematic of the bounded decoder comparison grid on sorted spikes. "
@@ -235,14 +246,14 @@ CAPTIONS: dict[str, str] = {
     "fig_continuous_decoders_feature_x_window": (
         "Continuous-target decoder suite on sorted spikes. One section per "
         "continuous decoder; each panel is feature × causal window W for one "
-        "target. Hatch = offline-only features; gold = deployable selection "
-        "when that decoder is chosen."
+        "target. Hatch = offline-only features; gold = best combo on disk "
+        "when that decoder wins for the target."
     ),
     "fig_categorical_decoders_feature_x_window": (
         "Categorical-target decoder suite on sorted spikes. One section per "
         "categorical decoder; each panel is feature × causal window W for one "
-        "target. Hatch = offline-only features; gold = deployable selection "
-        "when that decoder is chosen."
+        "target. Hatch = offline-only features; gold = best combo on disk "
+        "when that decoder wins for the target."
     ),
     "fig_manifold_decoding": (
         "Retired combined page — feature × window and decoder × window now "
@@ -331,6 +342,26 @@ CAPTIONS: dict[str, str] = {
         "(C) Per-stage latency box plots across profiled updates. "
         "(D) Median stage contributions stacked horizontally (sequential pipeline, "
         "not parallel). Dashed line marks the update budget."
+    ),
+    "fig_quadrant_ridge_trajectory": (
+        "Quadrant comparison on ridge (linear decoder only). "
+        "(A–F) True and ridge-decoded trajectories colored by time for counts, "
+        "global PCA, region PCA, diffusion+Nyström, and LDS. "
+        "(G) True vs predicted radius from arena center. "
+        "(H) Calibration slopes (x, y, radial). "
+        "(I) Mean position error. "
+        "(J) Mean radial bias. "
+        "Decoder: ridge (linear). Slopes below 1 indicate shrinkage toward the "
+        "occupancy-weighted training mean."
+    ),
+    "fig_quadrant_ridge_shrinkage": (
+        "Quadrant comparison on ridge — regularization and compression. "
+        "(A) Ridge objective and shrinkage intuition. "
+        "(B–D) Alpha sweeps: error, radial slope, and radial bias vs ridge α. "
+        "(E–F) Latent dimension sweeps: error and radial slope vs k. "
+        "(G) Coefficient L2 norm vs α. "
+        "(H) True spatial occupancy. "
+        "(I) Optional inverse-occupancy weighted ridge vs unweighted (diagnostic)."
     ),
     "fig_temporal_wl": (
         "Temporal manifold decoding. "
@@ -722,6 +753,22 @@ _PATTERN_CAPTIONS: list[tuple[re.Pattern[str], str]] = [
             "behavioral variable on held-out data. Axes are the leading two "
             "latent coordinates (z₁, z₂). For position pages, arena coordinates "
             "are encoded as hue (x) and brightness (y)."
+        ),
+    ),
+    (
+        re.compile(r"^fig_winner_counts_(.+)$"),
+        (
+            "Raw spike-count embedding colored by {0}. Causal population counts "
+            "at the best-accuracy counts decoder window; 2-D display via SVD. "
+            "Generated for Manifold Explorer (no live spike reload)."
+        ),
+    ),
+    (
+        re.compile(r"^fig_winner_manifold_(.+)$"),
+        (
+            "Best-accuracy manifold embedding for {0} among completed comparison "
+            "rows (frozen train-fit transform; leading two latent axes). "
+            "Generated for Manifold Explorer."
         ),
     ),
     (

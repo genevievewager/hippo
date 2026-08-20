@@ -19,6 +19,8 @@ outputs/<run>/
 ├── models/
 │   └── best_realtime_decoders.json
 ├── deployment_decoder_selection/
+├── deployment_bundles/
+├── live_sessions/
 ├── realtime_decoding/
 ├── latency_profiling/
 ├── decoding/
@@ -55,17 +57,47 @@ outputs/<run>/
 ```text
 decoder_comparison/
   sorted/                 # deployment-relevant
+    models/manifold_transforms/
+    models/feature_transforms/
+    models/neural_feature_extractors/
   ground_truth/           # oracle / non-deployable (optional)
   dynamic/<method>/       # LDS/GPFA association tables when run
-  models/                 # transforms + .joblib under source subdirs
 ```
 
 Key files (per source):
 
-- `decoder_comparison_metrics.csv`
-- `best_decoder_by_target.csv` / related selection tables
-- `models/manifold_transforms/...`
+- `decoder_comparison_metrics.csv` — one row per F×E×D×W×target, including `config_id`
+- `decoder_comparison_metrics.json`
+- `predictions/<config_id>.parquet` — held-out test traces (see below)
+- `decoded_examples/best_{target}_predictions.csv` — overall winner only (legacy)
+- `best_decoder_by_target.csv` / related selection tables (`best_config_id` on the winner)
+- `models/manifold_transforms/...`  # fitted `E` (UI Latent Representations + comparison reuse)
+- `models/feature_transforms/...`   # fitted `F` extractors when used
+- `models/neural_feature_extractors/...`
 - `models/*.joblib`
+
+### `config_id`
+
+Deterministic, filesystem-safe identity (not a UUID) from:
+
+`spike_source`, `target_name`, `decoder_name`, `feature_set`, `feature_mode`, `embedding_type`, `decode_window_s`, `manifold_n_components`, `n_neighbors`, `n_landmarks`
+
+The same configuration in the same experiment always resolves to the same id. Failed/skipped fits still receive an id but **no** parquet.
+
+### Held-out prediction parquet
+
+Path: `decoder_comparison/<spike_source>/predictions/<config_id>.parquet` (snappy).
+
+Always includes `config_id`, `time`, `split=held_out_test`, and causal window columns. Target-specific columns:
+
+| Target | Columns |
+|--------|---------|
+| `position` | `true_x`, `true_y`, `pred_x`, `pred_y`, `error_cm` (Euclidean) |
+| `speed`, `acceleration`, `distance_to_wall` | `true`, `pred`, `residual` where **residual = pred − true** |
+| `head_direction` | `true_deg`, `pred_deg`, `circular_error_deg` (shortest arc), plus sin/cos |
+| categoricals | `true`, `pred`, optional `proba_<class>`; class order in parquet metadata `class_labels` |
+
+These are **offline held-out test** traces, not realtime replay. Legacy runs without this directory still have aggregate metrics; Decoder Benchmark diagnostics will ask you to re-run.
 
 ## Deployment registry
 
@@ -78,12 +110,30 @@ Key files (per source):
 
 The registry references saved transforms and decoder `.joblib` artifacts under `decoder_comparison/sorted/`.
 
+## Live bundles and sessions
+
+Packed from the Streamlit **Live Deployment** page (not by `run_decoder.py`):
+
+```text
+deployment_bundles/<target>__<decoder>__w####ms/
+  config.json, metadata.json, unit_order.json, feature_config.json
+  decoder.joblib
+  embedding/              # optional fitted E
+live_sessions/session_YYYYMMDD_HHMMSS/
+  deployment_config.json, predictions.csv, runtime_metrics.csv
+  unit_mapping.json, events.log
+```
+
+See [realtime_deployment.md](realtime_deployment.md#live-runtime).
+
 ## Realtime / latency
 
 ```text
 realtime_decoding/
-  sorted/{target}_{policy}/   # deployable replay
+  sorted/{target}_{policy}/   # deployable registry replay
   dynamic/                    # LDS (and other RT dynamic) replays when run
+  quadrants/                  # UI Realtime Replay (three realtime-capable E)
+  quadrant_comparison.json    # sidecar for quadrant figures
 latency_profiling/
   latency_summary.csv/.json + stage tables
 decoding/                     # optional temporal W×L comparison
@@ -95,12 +145,13 @@ decoding/                     # optional temporal W×L comparison
 figures/
   trajectory/                 # probe_trajectory_*, channel_region_map, unit_count_*
   behavior/                   # fig_behavior_dynamics
-  features/                   # fig_neural_drivers
+  features/                   # fig_neural_drivers; UI fig_feature_panel_*
+  manifolds/                  # UI fig_winner_counts_*, fig_winner_manifold_*
   neural/                     # population / tuning / feedforward panels
   sorting/
   report/
   decoder_comparison/         # fig_decoding_performance, fig_manifold_*, fig_isomap_*, …
-  realtime_decoding/          # fig_closed_loop
+  realtime_decoding/          # fig_closed_loop; UI fig_quadrant_*
   deployment_decoder_selection/  # fig_deployment
   latency/                    # fig_latency
   dynamic/<method>/           # latent trajectory / association figures
