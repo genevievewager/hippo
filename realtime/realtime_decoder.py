@@ -77,7 +77,11 @@ class RealTimeDecoder:
         if self._is_dynamic:
             z = self.feature_transformer.step(np.asarray(base, dtype=float).ravel())
             return np.asarray(z, dtype=float).reshape(1, -1)
-        return np.asarray(self.feature_transformer.transform(base), dtype=float)
+        tr = self.feature_transformer
+        if hasattr(tr, "transform_one") and np.asarray(base).ndim == 2 and base.shape[0] == 1:
+            z = tr.transform_one(np.asarray(base).ravel())
+            return np.asarray(z, dtype=float).reshape(1, -1)
+        return np.asarray(tr.transform(base), dtype=float)
 
     def _features(self, spikes_df: pd.DataFrame, t: float) -> tuple[np.ndarray, np.ndarray]:
         if self.neural_feature_extractor is not None:
@@ -111,6 +115,7 @@ class RealTimeDecoder:
         t0 = time.perf_counter()
         counts = self._count_window(spikes_df, t)
         stages["spike_binning"] = (time.perf_counter() - t0) * 1000.0
+        stages["feature_construction"] = stages["spike_binning"]
 
         # Split identity/rate feature prep vs frozen manifold / dynamic latent transform.
         t1 = time.perf_counter()
@@ -120,17 +125,24 @@ class RealTimeDecoder:
             base = counts
         stages["feature_transform"] = (time.perf_counter() - t1) * 1000.0
 
-        t2 = time.perf_counter()
+        t2 = time.perf_counter_ns()
         if self.feature_transformer is not None:
-            feats = self._apply_embedding(counts)
-            elapsed = (time.perf_counter() - t2) * 1000.0
+            feats = self._apply_embedding(base)
+            elapsed = (time.perf_counter_ns() - t2) / 1e6
             stages["manifold_transform"] = elapsed
+            lat = getattr(self.feature_transformer, "last_stage_latencies_ms_", None)
+            if isinstance(lat, dict):
+                stages["feature_scaling"] = float(lat.get("feature_scaling_ms", 0.0))
+                stages["diffusion_nystrom_transform"] = float(
+                    lat.get("diffusion_nystrom_transform_ms", elapsed)
+                )
             if self._is_dynamic:
                 stages["latent_state_update"] = elapsed
         else:
             feats = base
             stages["manifold_transform"] = 0.0
             stages["latent_state_update"] = 0.0
+            stages["feature_scaling"] = 0.0
         return feats, counts, stages
 
     def decode_at_time(self, spikes_df: pd.DataFrame, t: float) -> dict:
@@ -142,6 +154,14 @@ class RealTimeDecoder:
         feats, counts = self._features(spikes_df, t)
         result = self._decode_from_features(feats, t)
         result.update(self._window_stats(counts))
+        ood = getattr(self.feature_transformer, "last_ood_", None)
+        if isinstance(ood, dict):
+            result["ood_flag"] = bool(ood.get("ood_flag", False))
+            result["nearest_landmark_distance"] = ood.get("nearest_landmark_distance")
+            result["sigma_x"] = ood.get("sigma_x")
+            result["max_kernel_weight"] = ood.get("max_kernel_weight")
+            result["kernel_entropy"] = ood.get("kernel_entropy")
+            result["effective_n_landmarks"] = ood.get("effective_n_landmarks")
         return result
 
     def decode_at_time_profiled(
@@ -188,6 +208,14 @@ class RealTimeDecoder:
             "decoded_speed": decoded_speed,
         }
         result.update(self._window_stats(counts))
+        ood = getattr(self.feature_transformer, "last_ood_", None)
+        if isinstance(ood, dict):
+            result["ood_flag"] = bool(ood.get("ood_flag", False))
+            result["nearest_landmark_distance"] = ood.get("nearest_landmark_distance")
+            result["sigma_x"] = ood.get("sigma_x")
+            result["max_kernel_weight"] = ood.get("max_kernel_weight")
+            result["kernel_entropy"] = ood.get("kernel_entropy")
+            result["effective_n_landmarks"] = ood.get("effective_n_landmarks")
 
         if self.primary_model is not None and self.primary_target is not None:
             t0 = time.perf_counter()
@@ -196,8 +224,17 @@ class RealTimeDecoder:
         else:
             stages["decode_primary"] = 0.0
 
+        stages["decoder_inference"] = float(
+            stages.get("decode_position", 0.0)
+            + stages.get("decode_speed", 0.0)
+            + stages.get("decode_spatial_context", 0.0)
+            + stages.get("decode_movement_state", 0.0)
+            + stages.get("decode_primary", 0.0)
+        )
         stages["closed_loop_policy"] = stages.get("closed_loop_policy", 0.0)
+        stages["trigger_decision"] = stages["closed_loop_policy"]
         stages["total_update"] = (time.perf_counter() - t_total0) * 1000.0
+        stages["total_operation"] = stages["total_update"]
         return result, LatencySample(time_s=t, stages_ms=stages)
 
     def _decode_from_features(self, feats: np.ndarray, t: float) -> dict:
@@ -387,6 +424,13 @@ class RealTimeDecoder:
                 row["decoded_acceleration"] = decoded["decoded_acceleration"]
             if "acceleration" in beh:
                 row["true_acceleration"] = float(beh["acceleration"])
+            if "ood_flag" in decoded:
+                row["ood_flag"] = decoded["ood_flag"]
+                row["nearest_landmark_distance"] = decoded.get("nearest_landmark_distance")
+                row["sigma_x"] = decoded.get("sigma_x")
+                row["max_kernel_weight"] = decoded.get("max_kernel_weight")
+                row["kernel_entropy"] = decoded.get("kernel_entropy")
+                row["effective_n_landmarks"] = decoded.get("effective_n_landmarks")
             rows.append(row)
 
         decoded_df = pd.DataFrame(rows)

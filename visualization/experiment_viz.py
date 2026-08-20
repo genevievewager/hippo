@@ -206,6 +206,16 @@ def generate_experiment_figures(
             generate_publication_decoding_figures(experiment_dir, figures_dir)
         except Exception as exc:
             print(f"  warning: publication decoding figures skipped ({exc})")
+        try:
+            from visualization.publication_decoding_diagnostics import (
+                generate_default_success_failure_figures,
+            )
+
+            extra = generate_default_success_failure_figures(experiment_dir, figures_dir)
+            for path in extra:
+                print(f"  wrote {path.relative_to(figures_dir)}")
+        except Exception as exc:
+            print(f"  warning: decoding diagnostic figures skipped ({exc})")
 
     if compile_pdf:
         print(f"Compiling PDF under {figures_dir}...")

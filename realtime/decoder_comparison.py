@@ -16,7 +16,7 @@ from __future__ import annotations
 import json
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
 import joblib
 import numpy as np
@@ -46,12 +46,14 @@ from realtime.decoder_models import (
     is_nonlinear_decoder,
     make_categorical_pipeline,
     make_continuous_pipeline,
+    resolve_model_names_for_target,
 )
 from realtime.decoding_targets import (
     align_extended_behavior_to_decoder_times,
     angles_from_sin_cos,
     circular_error_deg,
 )
+from realtime.comparison_metrics_union import persist_merged_comparison_metrics
 from realtime.comparison_enrichment import (
     enrich_fit_row,
     per_sample_window_frame,
@@ -60,6 +62,8 @@ from realtime.comparison_enrichment import (
 from realtime.feature_representations import make_spike_feature_transformer
 from realtime.manifold_features import (
     DEFAULT_ISOMAP_N_NEIGHBORS,
+    DEFAULT_LANDMARK_METHOD,
+    DEFAULT_N_LANDMARKS,
     OFFLINE_ONLY_FEATURE_MODES,
     QUICK_FEATURE_MODES,
     is_realtime_compatible_feature_mode,
@@ -79,15 +83,23 @@ from realtime.neural_features.comparison import (
 )
 from realtime.neural_features.stability import compute_latent_stability
 from realtime.pipeline_timing import PipelineTimer
+from realtime.prediction_artifacts import stamp_config_id, write_prediction_trace
 from realtime.search_space import (
     compose_feature_mode,
     embedding_needs_targets,
     expand_fe_jobs,
+    is_diffusion_nystrom,
     is_dynamic_embedding,
 )
 from realtime.spike_features import build_causal_spike_matrix
 from realtime.train_decoder import causal_train_test_split, infer_arena_bounds
 from realtime.trigger_comparison import default_trigger_rules
+from realtime.transform_cache import (
+    find_feature_transform_in_roots,
+    find_manifold_transform_in_roots,
+    try_load_feature_transform,
+    try_load_manifold,
+)
 
 import time
 
@@ -107,6 +119,15 @@ CATEGORICAL_TARGETS = (
     "wall_distance_bin",
 )
 ALL_TARGETS = CONTINUOUS_TARGETS + CATEGORICAL_TARGETS
+
+
+def comparison_targets(config: "ComparisonRunConfig | None" = None) -> tuple[str, ...]:
+    """Targets for one comparison run (UI family tabs may subset this)."""
+    raw = tuple(getattr(config, "targets", None) or ()) if config is not None else ()
+    if not raw:
+        return ALL_TARGETS
+    allowed = set(ALL_TARGETS)
+    return tuple(t for t in raw if t in allowed)
 
 PRIMARY_METRIC = {
     "position": ("mean_position_error_cm", "lower"),
@@ -157,6 +178,11 @@ class ComparisonRunConfig:
     isomap_pre_pca_enabled: bool = True
     isomap_pre_pca_n_components: int = 50
     isomap_require_connected_graph: bool = True
+    n_landmarks: tuple[int, ...] = (DEFAULT_N_LANDMARKS,)
+    landmark_method: str = DEFAULT_LANDMARK_METHOD
+    diffusion_local_scale_k: int = 10
+    diffusion_alpha: float = 1.0
+    diffusion_time: int | float = 1.0
     max_models: str = "quick"
     n_jobs: int = -1
     seed: int = 42
@@ -180,6 +206,45 @@ class ComparisonRunConfig:
     trigger_hd_width_deg: float | None = 30.0
     # Multi-run id (optional annotation)
     run_id: str | None = None
+    # When True, load previously saved neural/F/E transforms under
+    # output_dir/models/… instead of refitting (decoder heads still train).
+    reuse_transforms: bool = True
+    # Extra comparison roots to search for reusable transforms (after output_dir).
+    reuse_search_roots: tuple[str, ...] = ()
+    # Optional explicit decoder zoo subset. When set, each target only runs
+    # selected names that are valid for that target (max_models is ignored
+    # for membership; the full zoo is used as the allow-list).
+    decoder_names: tuple[str, ...] | None = None
+    # Optional target subset (continuous vs categorical UI tabs). None → ALL_TARGETS.
+    targets: tuple[str, ...] | None = None
+
+
+def _persist_held_out_trace(
+    output_dir: Path,
+    row: dict[str, Any],
+    fit: FitResult,
+    beh_test: pd.DataFrame,
+    *,
+    decode_window: float,
+    update_dt: float,
+    proba: np.ndarray | None,
+) -> None:
+    """Write parquet for one successful grid cell. Metrics are already computed."""
+    try:
+        write_prediction_trace(
+            output_dir,
+            config_id=str(row["config_id"]),
+            target=str(row["target_name"]),
+            behavior_test=beh_test,
+            y_true=fit.y_true,
+            y_pred=fit.y_pred,
+            decode_window_s=float(decode_window),
+            update_dt_s=float(update_dt),
+            class_labels=fit.labels,
+            proba=proba,
+        )
+    except Exception as exc:  # noqa: BLE001
+        print(f"  warning: prediction trace not written for {row.get('config_id')}: {exc}")
 
 
 def _get_y(behavior: pd.DataFrame, target: str) -> np.ndarray:
@@ -250,6 +315,17 @@ def _fit_and_evaluate(
     pipeline = make_continuous_pipeline(
         decoder_name, target, seed=seed, n_jobs=n_jobs, arena_bounds=arena_bounds,
     )
+    # Legacy/stale imports may still ship raw PLSRegression(n_components=10).
+    # Clamp in-place before fit so a running Streamlit process cannot hard-fail.
+    try:
+        model = pipeline.named_steps.get("model") if hasattr(pipeline, "named_steps") else None
+        if model is not None and model.__class__.__name__ == "PLSRegression":
+            from realtime.decoder_models import _pls_n_components_cap
+
+            X_scaled = pipeline.named_steps["scaler"].fit_transform(X_train)
+            model.n_components = _pls_n_components_cap(X_scaled, y_train, int(model.n_components))
+    except Exception:
+        pass
     pipeline = _fit_estimator(pipeline, X_train, y_train, behavior_train, decoder_name)
     y_pred = np.asarray(pipeline.predict(X_test))
     if target == "distance_to_wall" and y_pred.ndim > 1:
@@ -355,8 +431,14 @@ def _get_y_for_embedding(behavior: pd.DataFrame, target: str) -> np.ndarray:
     return _get_y(behavior, target)
 
 
-def run_decoder_comparison(config: ComparisonRunConfig) -> pd.DataFrame:
-    """Run full F×E×D×W(+C) comparison for one spike source."""
+def run_decoder_comparison(
+    config: ComparisonRunConfig,
+    progress_callback: Callable[[str, int, int], None] | None = None,
+) -> pd.DataFrame:
+    """Run full F×E×D×W(+C) comparison for one spike source.
+
+    ``progress_callback(message, step, total)`` is optional and used by the UI.
+    """
     output_dir = Path(config.output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
     models_dir = output_dir / "models"
@@ -386,6 +468,7 @@ def run_decoder_comparison(config: ComparisonRunConfig) -> pd.DataFrame:
         feature_modes=config.feature_modes,
         manifold_n_components=tuple(config.manifold_n_components),
         isomap_n_neighbors=tuple(config.isomap_n_neighbors),
+        n_landmarks=tuple(config.n_landmarks),
         max_models=config.max_models,
         use_fe_grid=bool(
             config.use_fe_grid
@@ -433,12 +516,66 @@ def run_decoder_comparison(config: ComparisonRunConfig) -> pd.DataFrame:
     window_queue = list(dict.fromkeys(float(w) for w in config.decode_windows))
     tested_windows: list[float] = []
     refined_once = False
+    jobs_per_feature_set = {
+        fs: len(filter_fe_jobs_for_feature_set(fe_jobs, fs)) for fs in feature_sets
+    }
+    n_fe_w = max(sum(jobs_per_feature_set.values()) * max(len(window_queue), 1), 1)
+    # Prefer decoder-level progress in the UI: estimate D×T per F×E×W job.
+    _selected = tuple(getattr(config, "decoder_names", None) or ())
+    if _selected:
+        n_dec_est = max(len(_selected), 1)
+    else:
+        n_dec_est = 5 if str(config.max_models) == "quick" else 10
+    n_target_est = max(len(comparison_targets(config)), 1)
+    planned_job_steps = max(n_fe_w + n_fe_w * n_target_est * n_dec_est, 1)
+    progress_step = 0
+    progress_t0 = time.perf_counter()
+    progress_t_prev = progress_t0
+
+    def _progress(message: str, step: int | None = None, total: int | None = None, *, bump: bool = False) -> None:
+        """UI progress: optional bump, always annotate last-step and elapsed times."""
+        nonlocal progress_step, planned_job_steps, progress_t_prev
+        now = time.perf_counter()
+        last_s = max(now - progress_t_prev, 0.0)
+        if bump:
+            progress_step += 1
+            progress_t_prev = now
+        if step is not None:
+            progress_step = int(step)
+            progress_t_prev = now
+        if total is not None:
+            planned_job_steps = max(int(total), 1)
+        display_total = max(planned_job_steps, progress_step, 1)
+        elapsed_s = max(now - progress_t0, 0.0)
+        annotated = (
+            f"{message} · last {last_s:.1f}s · elapsed {elapsed_s:.0f}s"
+        )
+        if progress_callback is not None:
+            progress_callback(annotated, progress_step, display_total)
+
+    reuse_counts = {"manifold": 0, "feature": 0, "fitted": 0}
+    reuse_roots = [output_dir, *[Path(p) for p in config.reuse_search_roots if p]]
+    # Deduplicate while preserving order
+    _seen_roots: set[Path] = set()
+    _reuse_roots: list[Path] = []
+    for r in reuse_roots:
+        key = r.resolve() if r.exists() else r
+        if key in _seen_roots:
+            continue
+        _seen_roots.add(key)
+        _reuse_roots.append(r)
+    reuse_roots = _reuse_roots
+    _progress("Starting decoder comparison…")
     wi = 0
     while wi < len(window_queue):
         decode_window = float(window_queue[wi])
         wi += 1
         print(f"  window W={decode_window:.3f}s "
               f"({len(tested_windows) + 1}/{len(window_queue)} queued)...")
+        _progress(
+            f"Window W={decode_window:.3f}s "
+            f"({len(tested_windows) + 1}/{len(window_queue)})",
+        )
         t_window = time.perf_counter()
         decode_times = make_decode_times(
             data["session_duration"],
@@ -515,6 +652,10 @@ def run_decoder_comparison(config: ComparisonRunConfig) -> pd.DataFrame:
 
             t_fs_total = time.perf_counter()
             for feature_type, embedding_type, n_components, n_neighbors in jobs:
+                _progress(
+                    f"Fit E · W={decode_window:.3f}s · {feature_set} · {embedding_type}",
+                    bump=True,
+                )
                 t_emb = time.perf_counter()
                 feature_mode = compose_feature_mode(feature_type, embedding_type)
                 f_type_eff = effective_spike_feature_type(feature_set, feature_type)
@@ -529,77 +670,140 @@ def run_decoder_comparison(config: ComparisonRunConfig) -> pd.DataFrame:
                     print(f"  skip F={feature_type}: {exc}")
                     continue
 
-                # Leakage rule: fit F / E on train partition only.
+                # Leakage rule: fit F / E on train partition only (or reuse
+                # previously fit transforms for the same W/fs/E under output_dir).
                 X_train_raw = X_feat[train_mask]
                 X_test_raw = X_feat[test_mask]
-                f_transform.fit(X_train_raw)
-                X_train_f = f_transform.transform(X_train_raw)
-                X_test_f = f_transform.transform(X_test_raw)
-
                 f_name = (
                     f"{feature_set}__{f_type_eff}_w"
                     f"{int(round(decode_window * 1000)):04d}ms"
                 )
                 f_path = feature_dir / f_name
-                f_transform.save(f_path)
+                reused_f = False
+                if config.reuse_transforms:
+                    cached_f = find_feature_transform_in_roots(
+                        reuse_roots,
+                        feature_set=feature_set,
+                        feature_type_eff=f_type_eff,
+                        decode_window=decode_window,
+                    )
+                    if cached_f is not None:
+                        loaded_f = try_load_feature_transform(cached_f)
+                        if loaded_f is not None:
+                            f_transform = loaded_f
+                            reused_f = True
+                            reuse_counts["feature"] += 1
+                            f_path = cached_f
+                if not reused_f:
+                    f_transform.fit(X_train_raw)
+                    f_transform.save(f_path)
+                X_train_f = f_transform.transform(X_train_raw)
+                X_test_f = f_transform.transform(X_test_raw)
 
                 # Supervised embeddings are fit inside the target loop.
                 if embedding_needs_targets(embedding_type):
                     unsupervised_embed = None
                 else:
-                    unsupervised_embed = make_feature_transformer(
-                        embedding_type if embedding_type != "identity" else "identity",
-                        decode_window=decode_window,
-                        n_components=n_components or 3,
-                        units_df=data["units_df"],
-                        unit_ids=data["unit_ids"],
-                        random_state=config.seed,
-                        n_neighbors=n_neighbors or DEFAULT_ISOMAP_N_NEIGHBORS,
-                        isomap_pre_pca_enabled=config.isomap_pre_pca_enabled,
-                        isomap_pre_pca_n_components=config.isomap_pre_pca_n_components,
-                        isomap_require_connected_graph=config.isomap_require_connected_graph,
-                        n_jobs=config.n_jobs,
-                        isomap_transform=(
-                            "sqrt_counts" if feature_set == "counts" else "counts"
-                        ),
-                        update_dt=update_dt,
-                        feature_set=feature_set,
-                        spike_source=config.spike_source,
+                    transform_name = manifold_transform_dirname(
+                        f"{feature_set}__{feature_mode}",
+                        decode_window, n_components, n_neighbors,
                     )
+                    transform_path = manifold_dir / transform_name
+                    reused_e = False
+                    unsupervised_embed = None
+                    if config.reuse_transforms:
+                        cached_e = find_manifold_transform_in_roots(
+                            reuse_roots,
+                            feature_set=feature_set,
+                            embedding_type=embedding_type,
+                            decode_window=decode_window,
+                            n_components=n_components,
+                            n_neighbors=n_neighbors,
+                            feature_type=feature_type,
+                        )
+                        if cached_e is not None:
+                            loaded_e = try_load_manifold(cached_e)
+                            if loaded_e is not None:
+                                unsupervised_embed = loaded_e
+                                reused_e = True
+                                reuse_counts["manifold"] += 1
+                                transform_path = cached_e
+                                print(f"    reuse manifold {transform_path.name}")
+                    if unsupervised_embed is None:
+                        n_landmarks_job = (
+                            int(n_neighbors)
+                            if is_diffusion_nystrom(embedding_type) and n_neighbors is not None
+                            else int(config.n_landmarks[0])
+                        )
+                        unsupervised_embed = make_feature_transformer(
+                            embedding_type if embedding_type != "identity" else "identity",
+                            decode_window=decode_window,
+                            n_components=n_components or 3,
+                            units_df=data["units_df"],
+                            unit_ids=data["unit_ids"],
+                            random_state=config.seed,
+                            n_neighbors=n_neighbors or DEFAULT_ISOMAP_N_NEIGHBORS,
+                            n_landmarks=n_landmarks_job,
+                            landmark_method=config.landmark_method,
+                            diffusion_local_scale_k=config.diffusion_local_scale_k,
+                            diffusion_alpha=config.diffusion_alpha,
+                            diffusion_time=config.diffusion_time,
+                            isomap_pre_pca_enabled=config.isomap_pre_pca_enabled,
+                            isomap_pre_pca_n_components=config.isomap_pre_pca_n_components,
+                            isomap_require_connected_graph=config.isomap_require_connected_graph,
+                            n_jobs=config.n_jobs,
+                            isomap_transform=(
+                                "sqrt_counts" if feature_set == "counts" else "counts"
+                            ),
+                            update_dt=update_dt,
+                            feature_set=feature_set,
+                            spike_source=config.spike_source,
+                        )
                     if unsupervised_embed is None:
                         print(f"  skip E={embedding_type} (missing unit metadata)")
                         continue
-                    try:
-                        unsupervised_embed.fit(X_train_f)
-                    except Exception as exc:
-                        from realtime.manifolds.isomap_diagnostics import DisconnectedGraphError
+                    if not reused_e:
+                        try:
+                            unsupervised_embed.fit(X_train_f)
+                            reuse_counts["fitted"] += 1
+                        except Exception as exc:
+                            from realtime.manifolds.isomap_diagnostics import DisconnectedGraphError
 
-                        if isinstance(exc, DisconnectedGraphError) or "disconnected" in str(exc).lower():
-                            print(
-                                f"  exclude {feature_mode} k={n_components} "
-                                f"nn={n_neighbors}: {exc}"
+                            msg = str(exc).lower()
+                            skippable = (
+                                isinstance(exc, DisconnectedGraphError)
+                                or "disconnected" in msg
+                                or "n_components" in msg
+                                or "n_components" in type(exc).__name__.lower()
                             )
-                            rows.append({
-                                **_base_row(
-                                    config, data, feature_type, decode_window, update_dt,
-                                    embedding_type=embedding_type,
-                                    feature_set=feature_set,
-                                                    ),
-                                "manifold_type": manifold_type_for_feature_mode(embedding_type),
-                                "representation_family": representation_family_for_mode(embedding_type),
-                                "manifold_n_components": n_components,
-                                "n_neighbors": n_neighbors,
-                                "exclusion_reason": str(exc),
-                                "graph_connected": False,
-                                "realtime_compatible": False,
-                                "target_name": None,
-                                "n_train_samples": int(train_mask.sum()),
-                                "n_test_samples": int(test_mask.sum()),
-                                "feature_dimension": feat_dim,
-                                "feature_extract_ms": feat_extract_ms,
-                            })
-                            continue
-                        raise
+                            if skippable:
+                                print(
+                                    f"  exclude {feature_mode} k={n_components} "
+                                    f"nn={n_neighbors}: {exc}"
+                                )
+                                skip_row = {
+                                    **_base_row(
+                                        config, data, feature_type, decode_window, update_dt,
+                                        embedding_type=embedding_type,
+                                        feature_set=feature_set,
+                                                        ),
+                                    "manifold_type": manifold_type_for_feature_mode(embedding_type),
+                                    "representation_family": representation_family_for_mode(embedding_type),
+                                    "manifold_n_components": n_components,
+                                    "n_neighbors": n_neighbors,
+                                    "exclusion_reason": str(exc),
+                                    "graph_connected": False if "disconnected" in msg else None,
+                                    "realtime_compatible": False,
+                                    "target_name": None,
+                                    "n_train_samples": int(train_mask.sum()),
+                                    "n_test_samples": int(test_mask.sum()),
+                                    "feature_dimension": feat_dim,
+                                    "feature_extract_ms": feat_extract_ms,
+                                }
+                                stamp_config_id(skip_row)
+                                rows.append(skip_row)
+                                continue
+                            raise
 
                     # Dynamic latents: causal filter train, then continue into test
                     # without reset (warm-start). Never use future test frames for train.
@@ -617,12 +821,26 @@ def run_decoder_comparison(config: ComparisonRunConfig) -> pd.DataFrame:
                         X_train_shared = unsupervised_embed.transform(X_train_f)
                         X_test_shared = unsupervised_embed.transform(X_test_f)
                     meta = unsupervised_embed.get_metadata()
-                    transform_name = manifold_transform_dirname(
-                        f"{feature_set}__{feature_mode}",
-                        decode_window, n_components, n_neighbors,
-                    )
-                    transform_path = manifold_dir / transform_name
-                    unsupervised_embed.save(transform_path)
+                    if not reused_e:
+                        unsupervised_embed.save(transform_path)
+                        if is_diffusion_nystrom(embedding_type):
+                            try:
+                                from realtime.manifolds.diffusion_nystrom_diagnostics import (
+                                    write_diffusion_diagnostics,
+                                )
+                                inner = getattr(unsupervised_embed, "_encoder", unsupervised_embed)
+                                write_diffusion_diagnostics(
+                                    inner,
+                                    transform_path,
+                                    X_train=X_train_f,
+                                    X_test=X_test_f,
+                                    behavior_train=beh_train,
+                                    behavior_test=beh_test,
+                                    Z_train=X_train_shared,
+                                    Z_test=X_test_shared,
+                                )
+                            except Exception as exc:  # noqa: BLE001
+                                print(f"    diffusion diagnostics skipped: {exc}")
                     for group in meta.get("groups", []) or []:
                         explained_rows.append({
                             "spike_source": config.spike_source,
@@ -656,7 +874,22 @@ def run_decoder_comparison(config: ComparisonRunConfig) -> pd.DataFrame:
                         "causal_status": causal_status,
                         "manifold_grouping": meta.get("manifold_grouping"),
                         "manifold_n_components": n_components,
-                        "n_neighbors": n_neighbors if n_neighbors is not None else meta.get("n_neighbors"),
+                        "n_neighbors": n_neighbors if (
+                            n_neighbors is not None and not is_diffusion_nystrom(embedding_type)
+                        ) else meta.get("n_neighbors"),
+                        "n_landmarks": (
+                            meta.get("n_landmarks")
+                            if is_diffusion_nystrom(embedding_type)
+                            else None
+                        ),
+                        "landmark_method": meta.get("landmark_method"),
+                        "local_scale_k": meta.get("local_scale_k"),
+                        "diffusion_alpha": meta.get("alpha"),
+                        "diffusion_time": meta.get("diffusion_time"),
+                        "memory_bytes": meta.get("memory_bytes"),
+                        "nystrom_landmark_mse": (meta.get("nystrom_consistency") or {}).get(
+                            "landmark_mse"
+                        ) if isinstance(meta.get("nystrom_consistency"), dict) else None,
                         "pre_pca_enabled": meta.get("pre_pca_enabled"),
                         "pre_pca_dim": meta.get("pre_pca_dim"),
                         "actual_n_features": meta.get("actual_n_features"),
@@ -667,6 +900,8 @@ def run_decoder_comparison(config: ComparisonRunConfig) -> pd.DataFrame:
                         ),
                         "manifold_transform_path": str(transform_path),
                         "embedding_transform_path": str(transform_path),
+                        "reused_transform": bool(reused_e),
+                        "reused_feature_transform": bool(reused_f),
                         "realtime_compatible": bool(
                             meta.get(
                                 "realtime_compatible",
@@ -789,34 +1024,57 @@ def run_decoder_comparison(config: ComparisonRunConfig) -> pd.DataFrame:
                             if k in stab
                         })
                 # Evaluate all targets/decoders for this (feature_set, F, E, W)
-                target_list = list(CONTINUOUS_TARGETS) + list(CATEGORICAL_TARGETS)
+                target_list = list(comparison_targets(config))
                 for target in target_list:
                     if embedding_needs_targets(embedding_type):
-                        emb = make_feature_transformer(
-                            embedding_type,
-                            decode_window=decode_window,
-                            n_components=n_components or 3,
-                            units_df=data["units_df"],
-                            unit_ids=data["unit_ids"],
-                            random_state=config.seed,
-                        )
-                        if emb is None:
-                            continue
-                        y_emb = _get_y_for_embedding(beh_train, target)
-                        try:
-                            emb.fit(X_train_f, y_emb)
-                        except Exception as exc:
-                            print(f"  skip supervised E={embedding_type} target={target}: {exc}")
-                            continue
-                        X_train = emb.transform(X_train_f)
-                        X_test = emb.transform(X_test_f)
-                        meta = emb.get_metadata()
                         transform_name = manifold_transform_dirname(
                             f"{feature_set}__{feature_mode}_{target}",
                             decode_window, n_components, n_neighbors,
                         )
                         transform_path = manifold_dir / transform_name
-                        emb.save(transform_path)
+                        reused_sup = False
+                        emb = None
+                        if config.reuse_transforms:
+                            cached_sup = find_manifold_transform_in_roots(
+                                reuse_roots,
+                                feature_set=feature_set,
+                                embedding_type=embedding_type,
+                                decode_window=decode_window,
+                                n_components=n_components,
+                                n_neighbors=n_neighbors,
+                                feature_type=feature_type,
+                                target=target,
+                            )
+                            if cached_sup is not None:
+                                loaded_sup = try_load_manifold(cached_sup)
+                                if loaded_sup is not None:
+                                    emb = loaded_sup
+                                    reused_sup = True
+                                    reuse_counts["manifold"] += 1
+                                    transform_path = cached_sup
+                        if emb is None:
+                            emb = make_feature_transformer(
+                                embedding_type,
+                                decode_window=decode_window,
+                                n_components=n_components or 3,
+                                units_df=data["units_df"],
+                                unit_ids=data["unit_ids"],
+                                random_state=config.seed,
+                            )
+                        if emb is None:
+                            continue
+                        if not reused_sup:
+                            y_emb = _get_y_for_embedding(beh_train, target)
+                            try:
+                                emb.fit(X_train_f, y_emb)
+                                reuse_counts["fitted"] += 1
+                            except Exception as exc:
+                                print(f"  skip supervised E={embedding_type} target={target}: {exc}")
+                                continue
+                            emb.save(transform_path)
+                        X_train = emb.transform(X_train_f)
+                        X_test = emb.transform(X_test_f)
+                        meta = emb.get_metadata()
                         feature_row_extras = {
                             "manifold_type": meta.get("manifold_type")
                             or manifold_type_for_feature_mode(embedding_type),
@@ -830,6 +1088,8 @@ def run_decoder_comparison(config: ComparisonRunConfig) -> pd.DataFrame:
                             "manifold_transform_path": str(transform_path),
                             "embedding_transform_path": str(transform_path),
                             "realtime_compatible": True,
+                            "reused_transform": bool(reused_sup),
+                            "reused_feature_transform": bool(reused_f),
                         }
                         e_transform = emb
                     else:
@@ -843,18 +1103,51 @@ def run_decoder_comparison(config: ComparisonRunConfig) -> pd.DataFrame:
                     ):
                         continue
 
-                    model_names = (
-                        continuous_model_names(config.max_models, target)
-                        if target in CONTINUOUS_TARGETS
-                        else categorical_model_names(config.max_models, target)
+                    model_names = resolve_model_names_for_target(
+                        target,
+                        max_models=config.max_models,
+                        selected=getattr(config, "decoder_names", None),
                     )
+                    if not model_names:
+                        continue
                     for decoder_name in model_names:
                         if embedding_type == "bayesian_place_tuning" and not is_bayesian_model(decoder_name):
                             continue
-                        fit = _fit_and_evaluate(
-                            X_train, X_test, beh_train, beh_test,
-                            target, decoder_name, config.seed, config.n_jobs, arena_bounds,
+                        _progress(
+                            f"W={decode_window:.3f}s · {feature_set} · {embedding_type} · "
+                            f"{decoder_name} · {target}",
+                            bump=True,
                         )
+                        try:
+                            fit = _fit_and_evaluate(
+                                X_train, X_test, beh_train, beh_test,
+                                target, decoder_name, config.seed, config.n_jobs, arena_bounds,
+                            )
+                        except Exception as exc:  # noqa: BLE001 — skip incompatible decoder×latent
+                            print(
+                                f"  skip decoder {decoder_name} on "
+                                f"{feature_set}/{embedding_type}/W={decode_window}: {exc}"
+                            )
+                            skip_row = {
+                                **_base_row(
+                                    config, data, feature_type, decode_window, update_dt,
+                                    embedding_type=embedding_type,
+                                    feature_set=feature_set,
+                                ),
+                                **feature_row_extras,
+                                "target_name": target,
+                                "target_family": TARGET_FAMILY[target],
+                                "decoder_name": decoder_name,
+                                "exclusion_reason": str(exc),
+                                "n_train_samples": int(train_mask.sum()),
+                                "n_test_samples": int(test_mask.sum()),
+                                "feature_dimension": feat_dim,
+                                "feature_extract_ms": feat_extract_ms,
+                                "run_id": config.run_id,
+                            }
+                            stamp_config_id(skip_row)
+                            rows.append(skip_row)
+                            continue
                         row = _base_row(
                             config, data, feature_type, decode_window, update_dt,
                             embedding_type=embedding_type,
@@ -874,7 +1167,7 @@ def run_decoder_comparison(config: ComparisonRunConfig) -> pd.DataFrame:
                             "feature_extract_ms": feat_extract_ms,
                         })
                         row.update(fit.metrics)
-                        row, trows = enrich_fit_row(
+                        row, trows, proba = enrich_fit_row(
                             row,
                             fit=fit,
                             feature_type=feature_type,
@@ -892,6 +1185,13 @@ def run_decoder_comparison(config: ComparisonRunConfig) -> pd.DataFrame:
                             decode_times_test=decode_times_test,
                             behavior_test=beh_test,
                             arena_bounds=arena_bounds,
+                        )
+                        stamp_config_id(row)
+                        _persist_held_out_trace(
+                            output_dir, row, fit, beh_test,
+                            decode_window=decode_window,
+                            update_dt=update_dt,
+                            proba=proba,
                         )
                         rows.append(row)
                         trigger_rows_all.extend(trows)
@@ -982,9 +1282,15 @@ def run_decoder_comparison(config: ComparisonRunConfig) -> pd.DataFrame:
             refined_once = True
 
     metrics_df = pd.DataFrame(rows)
-    metrics_df.to_csv(output_dir / "decoder_comparison_metrics.csv", index=False)
+
+    metrics_df = persist_merged_comparison_metrics(
+        metrics_df,
+        output_dir=output_dir,
+        experiment_dir=Path(config.input_dir),
+        spike_source=str(config.spike_source),
+    )
     with open(output_dir / "decoder_comparison_metrics.json", "w") as f:
-        json.dump(_json_safe(rows), f, indent=2)
+        json.dump(_json_safe(metrics_df.to_dict(orient="records")), f, indent=2)
 
     # Persist comparison-axis wall times (also merged into experiment latency_profiling).
     timer.save(output_dir / "pipeline_timing")
@@ -1076,6 +1382,14 @@ def run_decoder_comparison(config: ComparisonRunConfig) -> pd.DataFrame:
             write_feature_set_figures(output_dir)
     except Exception as exc:
         print(f"  feature-set figures skipped: {exc}")
+    if config.reuse_transforms:
+        print(
+            "  transform reuse: "
+            f"manifolds={reuse_counts['manifold']} "
+            f"feature_F={reuse_counts['feature']} "
+            f"fitted={reuse_counts['fitted']}"
+        )
+    metrics_df.attrs["transform_reuse"] = dict(reuse_counts)
     return metrics_df
 
 
@@ -1540,6 +1854,7 @@ def _build_best_decoder_table(
             "best_metric_value": best_value,
             "spike_source": best_row["spike_source"],
             "source": best_row.get("source", best_row["spike_source"]),
+            "best_config_id": best_row.get("config_id"),
             "model_path": str(model_path) if target in best_fits else "",
             "best_window_model_path": str(best_window_path),
             "realtime_model_path": str(realtime_path),
@@ -1687,39 +2002,59 @@ def run_compare_sources(
     include_controls: bool = False,
     max_compute_ms: float = 25.0,
     max_effective_history_s: float = 0.500,
+    progress_callback: Callable[[str, int, int], None] | None = None,
     **config_extras: Any,
 ) -> pd.DataFrame:
     """Run decoder comparison for ground_truth and sorted spikes."""
     output_dir = Path(output_dir)
     best_tables = []
     metric_frames: list[pd.DataFrame] = []
+    sources = ("ground_truth", "sorted")
 
-    for source in ("ground_truth", "sorted"):
-        run_decoder_comparison(ComparisonRunConfig(
-            input_dir=input_dir,
-            output_dir=output_dir / source,
-            spike_source=source,
-            decode_windows=decode_windows,
-            update_dt=update_dt,
-            train_frac=train_frac,
-            feature_modes=feature_modes,
-            feature_types=feature_types,
-            embedding_types=embedding_types,
-            use_fe_grid=bool(feature_types is not None or embedding_types is not None),
-            manifold_n_components=manifold_n_components,
-            isomap_n_neighbors=isomap_n_neighbors,
-            max_models=max_models,
-            n_jobs=n_jobs,
-            seed=seed,
-            region_ablation=region_ablation,
-            layer_ablation=layer_ablation,
-            population_ablation=population_ablation,
-            adaptive_windows=adaptive_windows,
-            include_controls=include_controls,
-            max_compute_ms=max_compute_ms,
-            max_effective_history_s=max_effective_history_s,
-            **config_extras,
-        ))
+    for source_i, source in enumerate(sources):
+        def _source_progress(
+            message: str,
+            step: int,
+            total: int,
+            *,
+            _source: str = source,
+            _source_i: int = source_i,
+        ) -> None:
+            if progress_callback is None:
+                return
+            # Map per-source progress into a 2-phase overall bar.
+            overall_total = max(int(total), 1) * len(sources)
+            overall_step = _source_i * max(int(total), 1) + int(step)
+            progress_callback(f"{_source}: {message}", overall_step, overall_total)
+
+        run_decoder_comparison(
+            ComparisonRunConfig(
+                input_dir=input_dir,
+                output_dir=output_dir / source,
+                spike_source=source,
+                decode_windows=decode_windows,
+                update_dt=update_dt,
+                train_frac=train_frac,
+                feature_modes=feature_modes,
+                feature_types=feature_types,
+                embedding_types=embedding_types,
+                use_fe_grid=bool(feature_types is not None or embedding_types is not None),
+                manifold_n_components=manifold_n_components,
+                isomap_n_neighbors=isomap_n_neighbors,
+                max_models=max_models,
+                n_jobs=n_jobs,
+                seed=seed,
+                region_ablation=region_ablation,
+                layer_ablation=layer_ablation,
+                population_ablation=population_ablation,
+                adaptive_windows=adaptive_windows,
+                include_controls=include_controls,
+                max_compute_ms=max_compute_ms,
+                max_effective_history_s=max_effective_history_s,
+                **config_extras,
+            ),
+            progress_callback=_source_progress if progress_callback else None,
+        )
         best_path = output_dir / source / "best_decoder_by_target.csv"
         if best_path.exists():
             bt = pd.read_csv(best_path)
@@ -1731,7 +2066,13 @@ def run_compare_sources(
 
     if metric_frames:
         combined_metrics = pd.concat(metric_frames, ignore_index=True)
-        combined_metrics.to_csv(output_dir / "decoder_comparison_metrics.csv", index=False)
+        from realtime.comparison_metrics_union import persist_merged_comparison_metrics
+
+        persist_merged_comparison_metrics(
+            combined_metrics,
+            output_dir=output_dir,
+            experiment_dir=input_dir,
+        )
         from realtime.sorting_robustness import build_sorted_information_loss_summary
 
         loss = build_sorted_information_loss_summary(combined_metrics)

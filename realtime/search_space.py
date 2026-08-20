@@ -12,6 +12,7 @@ from realtime.feature_representations import (
 from realtime.manifold_features import (
     ALL_FEATURE_MODES,
     DEFAULT_ISOMAP_N_NEIGHBORS,
+    DEFAULT_N_LANDMARKS,
     IDENTITY_FEATURE_MODES,
     MANIFOLD_FEATURE_MODES,
     is_manifold_feature_mode,
@@ -30,6 +31,7 @@ ALL_EMBEDDING_TYPES = (
     # Legacy / advanced (kept for backward compatibility with --feature-modes)
     "global_isomap",
     "global_isomap_distilled",
+    "diffusion_nystrom",
     # Dynamic latent-state embeddings
     "global_lds",
     "gpfa",
@@ -61,6 +63,7 @@ LEGACY_MODE_TO_FE: dict[str, tuple[str, str]] = {
     "rate_model_pca": ("counts", "rate_model_pca"),
     "global_isomap": ("counts", "global_isomap"),
     "global_isomap_distilled": ("counts", "global_isomap_distilled"),
+    "diffusion_nystrom": ("counts", "diffusion_nystrom"),
     "global_lds": ("counts", "global_lds"),
     "gpfa": ("counts", "gpfa"),
 }
@@ -118,6 +121,13 @@ def legacy_mode_to_fe(feature_mode: str) -> tuple[str, str]:
     raise ValueError(f"Cannot map feature_mode {feature_mode!r} to (F, E)")
 
 
+def is_diffusion_nystrom(embedding_type: str) -> bool:
+    return (
+        embedding_type == "diffusion_nystrom"
+        or embedding_type.endswith("_diffusion_nystrom")
+    )
+
+
 def expand_fe_jobs(
     *,
     feature_types: tuple[str, ...] | None = None,
@@ -125,14 +135,14 @@ def expand_fe_jobs(
     feature_modes: tuple[str, ...] | None = None,
     manifold_n_components: tuple[int, ...] = (3,),
     isomap_n_neighbors: tuple[int, ...] = (DEFAULT_ISOMAP_N_NEIGHBORS,),
+    n_landmarks: tuple[int, ...] = (DEFAULT_N_LANDMARKS,),
     max_models: str = "quick",
     use_fe_grid: bool = False,
 ) -> list[tuple[str, str, int | None, int | None]]:
     """
     Return jobs as (feature_type, embedding_type, n_components, n_neighbors).
 
-    When ``use_fe_grid`` is True (or feature_types/embedding_types provided),
-    expand the Cartesian F × E product. Otherwise expand legacy feature_modes.
+    For ``diffusion_nystrom``, the 4th slot stores ``n_landmarks`` (not Isomap k).
     """
     jobs: list[tuple[str, str, int | None, int | None]] = []
 
@@ -141,16 +151,23 @@ def expand_fe_jobs(
         e_types = resolve_embedding_types(embedding_types, max_models=max_models)
         for f in f_types:
             for e in e_types:
-                jobs.extend(_expand_embedding_jobs(f, e, manifold_n_components, isomap_n_neighbors))
+                jobs.extend(
+                    _expand_embedding_jobs(
+                        f, e, manifold_n_components, isomap_n_neighbors, n_landmarks,
+                    )
+                )
         return jobs
 
-    # Legacy path: feature_modes only (default when neither F nor E specified).
     modes = feature_modes or (
         ("counts", "global_pca", "region_pca") if max_models != "full" else ALL_FEATURE_MODES
     )
     for mode in modes:
         f, e = legacy_mode_to_fe(mode)
-        jobs.extend(_expand_embedding_jobs(f, e, manifold_n_components, isomap_n_neighbors))
+        jobs.extend(
+            _expand_embedding_jobs(
+                f, e, manifold_n_components, isomap_n_neighbors, n_landmarks,
+            )
+        )
     return jobs
 
 
@@ -159,9 +176,17 @@ def _expand_embedding_jobs(
     embedding_type: str,
     manifold_n_components: tuple[int, ...],
     isomap_n_neighbors: tuple[int, ...],
+    n_landmarks: tuple[int, ...] = (DEFAULT_N_LANDMARKS,),
 ) -> list[tuple[str, str, int | None, int | None]]:
     if embedding_type == "identity" or embedding_type == "bayesian_place_tuning":
         return [(feature_type, embedding_type, None, None)]
+
+    if is_diffusion_nystrom(embedding_type):
+        out = []
+        for k in manifold_n_components:
+            for nl in n_landmarks:
+                out.append((feature_type, embedding_type, int(k), int(nl)))
+        return out
 
     if (
         embedding_type in ("global_isomap", "global_isomap_distilled")
@@ -218,6 +243,7 @@ def is_manifold_embedding(embedding_type: str) -> bool:
         "rate_model_pca",
         "global_lds",
         "gpfa",
+        "diffusion_nystrom",
     }
 
 

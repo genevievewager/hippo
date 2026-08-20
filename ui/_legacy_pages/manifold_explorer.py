@@ -134,6 +134,7 @@ def render(outputs_root: Path) -> None:
                 "layer_pca",
                 "global_isomap",
                 "global_isomap_distilled",
+                "diffusion_nystrom",
             ],
             key="man_run_mans",
             help="Six modes fill a 2×3 latent-geometry page (one page per behavioral color).",

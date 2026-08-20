@@ -20,12 +20,46 @@ UI_STATIC_MANIFOLD_OPTIONS: tuple[str, ...] = (
     "counts",
     "global_pca",
     "region_pca",
-    "layer_pca",
     "global_isomap",
     "global_isomap_distilled",
+    "diffusion_nystrom",
 )
 
 UI_DYNAMIC_LATENT_OPTIONS: tuple[str, ...] = tuple(ALL_DYNAMIC_LATENT_TYPES)
+
+# Scientific 2×2 on representation class E (linearity × temporal dynamics).
+REPRESENTATION_QUADRANTS: dict[str, tuple[str, ...]] = {
+    "static_linear": ("counts", "global_pca", "region_pca"),
+    "static_nonlinear": (
+        "global_isomap",
+        "global_isomap_distilled",
+        "diffusion_nystrom",
+    ),
+    "dynamic_linear": ("global_lds", "gpfa"),
+    "dynamic_nonlinear": (),
+}
+
+REPRESENTATION_QUADRANT_LABELS: dict[str, str] = {
+    "static_linear": "Static linear",
+    "static_nonlinear": "Static nonlinear",
+    "dynamic_linear": "Dynamic linear",
+    "dynamic_nonlinear": "Dynamic nonlinear",
+}
+
+# Realtime Replay quadrant representatives (realtime-capable only).
+REALTIME_QUADRANT_DEFAULTS: dict[str, str | None] = {
+    "static_linear": "global_pca",
+    "static_nonlinear": "diffusion_nystrom",
+    "dynamic_linear": "global_lds",
+    "dynamic_nonlinear": None,
+}
+
+QUADRANT_ORDER: tuple[str, ...] = (
+    "static_linear",
+    "static_nonlinear",
+    "dynamic_linear",
+    "dynamic_nonlinear",
+)
 
 
 def representation_capabilities(name: str) -> dict[str, Any]:

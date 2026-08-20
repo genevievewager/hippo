@@ -155,6 +155,7 @@ def build_reference_lines(experiment_dir: Path) -> list[str]:
         "  layer_pca               Separate PCA per cortical layer",
         f"  global_isomap           Classic Isomap (offline only; not auto-deployed)",
         "  global_isomap_distilled Isomap teacher → MLP student (realtime-eligible if fast enough)",
+        "  diffusion_nystrom       Diffusion maps + Nyström (realtime; landmarks fit offline)",
         "",
         f"Manifold dimensions k searched:     {{{k_vals}}}",
         f"Isomap neighbors nn searched:       {{{nn_vals}}}",
@@ -162,7 +163,7 @@ def build_reference_lines(experiment_dir: Path) -> list[str]:
         "",
         "Full manifold zoo in codebase (not all run in every experiment):",
         "  counts, rates, global_pca, region_pca, layer_pca, cell_type_pca, rate_model_pca,",
-        "  pls, bayesian_place_tuning, global_isomap, global_isomap_distilled",
+        "  pls, bayesian_place_tuning, global_isomap, global_isomap_distilled, diffusion_nystrom",
         "",
     ]
     sections.extend(_fe_job_lines())

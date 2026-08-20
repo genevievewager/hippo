@@ -17,6 +17,7 @@ With only `--experiment`, the script detects available outputs and plots all of 
 
 ```text
 decoder_comparison_metrics.csv
+predictions/<config_id>.parquet
 best_decoder_by_target.csv
 best_lab_deployable_decoders.csv
 closed_loop_trigger_comparison.csv
@@ -60,6 +61,10 @@ Default regeneration writes a small set of seaborn multi-panel `fig_*.png` files
 | Fig 11 | `fig_latency` | Causal-update latency budget |
 | Fig 12 (suppl.) | `fig_temporal_wl` | Temporal W×L heatmaps (when `decoding/` exists) |
 
+UI pages also write feature-panel, winner-embedding, and realtime-quadrant figures (see below). These are not part of the numbered paper set.
+
+Held-out **Decoding Diagnostics** (Decoder Benchmark) use Plotly in the UI and can export matplotlib PNGs via ``visualization/publication_decoding_diagnostics.py`` under ``figures/decoder_comparison/diagnostics/``. Those figures are offline test traces, not realtime replay. ``run_visualizations.py`` writes a default best-vs-counts “where decoding succeeds and fails” figure when parquet traces exist.
+
 Fig 6 is a **suite**: one dense page per behavioral variable
 (`position`, `speed`, `acceleration`, `head_direction`, `distance_to_wall`,
 `spatial_context`, `movement_state`, `wall_distance_bin`). Each page shows every
@@ -68,9 +73,9 @@ embedding mode present in the sorted comparison at the **best-performing window*
 
 Compiled `figures/output.pdf` follows: simulation → decoding → manifolds/Isomap → realtime → deployment → latency.
 
-## Regenerating manifold / Isomap panels
+## Regenerating manifold / Isomap / diffusion panels
 
-Default `--profile manifolds` already includes region/layer PCA and classic + distilled Isomap. If an older run was counts/PCA-only, Isomap panels show an explicit empty state until you re-decode, then re-plot:
+Default `--profile manifolds` already includes region/layer PCA, classic + distilled Isomap, and `diffusion_nystrom`. If an older run was counts/PCA-only, Isomap / diffusion panels show an explicit empty state until you re-decode, then re-plot:
 
 ```bash
 python run_decoder.py \
@@ -83,6 +88,17 @@ python run_visualizations.py \
   --all \
   --compile-pdf
 ```
+
+## UI / publication extras (not in the numbered paper set)
+
+These figures are written by Streamlit pages from saved comparison / transform caches. They are not required for `run_visualizations.py --all`.
+
+| Stem | Produced by | Content |
+|------|-------------|---------|
+| `fig_feature_panel_{variance,traces,correlation}` | Feature Construction | One panel per feature set (`figures/features/`) |
+| `fig_winner_counts_<target>`, `fig_winner_manifold_<target>` | Latent Representations | Counts vs winning manifold embeddings (`figures/manifolds/`) |
+| `fig_quadrant_stability`, `fig_quadrant_behavior` | Realtime Replay | Three realtime-capable `E` classes (`figures/realtime_decoding/`) |
+| `fig_continuous_decoders_feature_x_window`, `fig_categorical_decoders_feature_x_window` | Decoder Benchmark | Family-specific feature × window tables |
 
 ## Probe trajectory figures
 

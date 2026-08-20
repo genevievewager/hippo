@@ -11,8 +11,11 @@ from ui.artifacts.models import (
     ALL_CATEGORIES,
     IMAGE_SUFFIXES,
     MANIFOLD_STEM_PREFIXES,
+    PDF_UI_STEM_ORDER,
     PRIMARY_STEMS,
+    STEM_CATEGORY_OVERRIDES,
     SUBDIR_CATEGORY,
+    UI_HIDDEN_STEM_PREFIXES,
     VISUAL_SUFFIXES,
     AnalysisArtifact,
     CATEGORY_DECODING,
@@ -103,6 +106,10 @@ def category_for_path(path: Path, stem: str | None = None) -> str:
     """Map a figure path / stem onto a UI category."""
     stem = stem or path.stem
     parts = {p.lower() for p in path.parts}
+
+    override = STEM_CATEGORY_OVERRIDES.get(stem)
+    if override:
+        return override
 
     # Explicit subdir under figures/
     for part in path.parts:
@@ -217,6 +224,8 @@ def _should_skip_file(path: Path) -> bool:
     if any(name.startswith(p) for p in _IGNORE_FILE_PREFIXES):
         return True
     if path.suffix.lower() not in VISUAL_SUFFIXES:
+        return True
+    if any(path.stem.startswith(p) for p in UI_HIDDEN_STEM_PREFIXES):
         return True
     # Compiled multi-figure PDF is offered separately; still discoverable
     return False
@@ -375,13 +384,15 @@ def discover_artifacts(experiment_dir: Path) -> list[AnalysisArtifact]:
             by_path[key] = _artifact_from_path(path, experiment_dir=exp, source="filesystem")
 
     arts = list(by_path.values())
-    # Stable sort: category order, then primary stems, then title
+    # Stable sort: category order, then publication PDF order, then title
     cat_rank = {c: i for i, c in enumerate(ALL_CATEGORIES)}
+    pdf_rank = {s: i for i, s in enumerate(PDF_UI_STEM_ORDER)}
     primary_rank = {s: i for i, s in enumerate(PRIMARY_STEMS)}
 
     def sort_key(a: AnalysisArtifact):
         return (
             cat_rank.get(a.category, 99),
+            pdf_rank.get(a.stem, 999),
             primary_rank.get(a.stem, 999),
             a.title.lower(),
             str(a.path),

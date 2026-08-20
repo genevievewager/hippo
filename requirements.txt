@@ -3,6 +3,7 @@ scipy>=1.10
 matplotlib>=3.7
 ratinabox>=1.13
 pandas>=2.0
+pyarrow>=14.0
 pyyaml>=6.0
 tqdm>=4.65
 scikit-learn>=1.3

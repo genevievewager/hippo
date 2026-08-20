@@ -87,13 +87,14 @@ Encoder `E` is fit on **training** activity only, then frozen for test / realtim
 | `rate_model_pca` | PCA per rate model | `rate_model` (fallback `ratinabox_class`) | `k` per group |
 | `global_isomap` | Isomap on all units (√counts + scale + optional pre-PCA) | — | `d` (offline only) |
 | `global_isomap_distilled` | parametric approx. of Isomap | — | `d` (realtime if gates pass) |
+| `diffusion_nystrom` | landmark diffusion maps + Nyström | — | `d` (realtime; `P99 < 25 ms`) |
 | `global_lds` | dynamic LDS latent | — | `k` (realtime / causal) |
 | `gpfa` | GPFA-style latent | — | `k` (offline / acausal) |
 
 | Setting | Default |
 |---------|---------|
 | Quick feature modes | `counts`, `global_pca`, `region_pca` (legacy F+E composite; typically `F=counts`) |
-| Manifolds profile modes | counts + global/region/layer PCA + classic/distilled Isomap |
+| Manifolds profile modes | counts + global/region PCA + classic/distilled Isomap + `diffusion_nystrom` |
 | Observation `F` types (`feature_representations`) | `counts`, `rates`, `sqrt_counts`, `log1p_counts`, `zscore_counts`, `region_normalized_counts`, `cell_type_normalized_counts` |
 | Default `k` list | `(3,)` (override with `--manifold-components-list`) |
 | Manifolds profile `k` | `{3, 8}` |

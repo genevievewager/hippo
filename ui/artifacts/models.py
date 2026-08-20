@@ -59,17 +59,63 @@ SUBDIR_CATEGORY: dict[str, str] = {
     "report": CATEGORY_OTHER,
 }
 
-# Stem prefixes that live under decoder_comparison/ but are manifold figures
+# Stem prefixes that live under decoder_comparison/ but are manifold figures.
+# fig_manifold_vs_spikes_onepager is a decoding comparison (see STEM_CATEGORY_OVERRIDES).
+# fig_decoder_geometry_* is omitted from the UI (not clean enough).
 MANIFOLD_STEM_PREFIXES = (
     "fig_latent_geometry",
     "fig_isomap",
-    "fig_manifold",
-    "fig_decoder_geometry",
     "latent_geometry",
     "isomap_",
-    "manifold_",
     "global_pca_",
     "region_pca_",
+)
+
+# Per-stem category when the figures/ subdirectory would otherwise mis-file them.
+STEM_CATEGORY_OVERRIDES: dict[str, str] = {
+    "fig_neural_drivers": CATEGORY_BEHAVIOR,
+    "fig_manifold_vs_spikes_onepager": CATEGORY_DECODING,
+}
+
+# Hidden from every UI gallery (PDF Figs 21–28).
+UI_HIDDEN_STEM_PREFIXES: tuple[str, ...] = (
+    "fig_decoder_geometry",
+)
+
+# Publication PDF order for included figures (skips decoder-geometry 21–28).
+PDF_UI_STEM_ORDER: tuple[str, ...] = (
+    "fig_probe_trajectory",
+    "fig_behavior_dynamics",
+    "fig_neural_drivers",
+    "fig_spikes_on_trajectory_by_class",
+    "fig_population_tuning",
+    "fig_circuit_feedforward",
+    "fig_population_structure",
+    "fig_population_activity",
+    "fig_sorting_summary",
+    "fig_decoding_performance",
+    "fig_isomap_diagnostics",
+    "fig_isomap_story",
+    "fig_latent_geometry_acceleration",
+    "fig_latent_geometry_distance_to_wall",
+    "fig_latent_geometry_head_direction",
+    "fig_latent_geometry_movement_state",
+    "fig_latent_geometry_position",
+    "fig_latent_geometry_spatial_context",
+    "fig_latent_geometry_speed",
+    "fig_latent_geometry_wall_distance_bin",
+    "fig_decoder_comparison_grid",
+    "fig_window_selection_story",
+    "fig_feature_x_window",
+    "fig_decoder_x_window",
+    "fig_continuous_decoders_feature_x_window",
+    "fig_categorical_decoders_feature_x_window",
+    "fig_manifold_vs_spikes_onepager",
+    "fig_closed_loop",
+    "fig_closed_loop_suite",
+    "fig_deployment",
+    "fig_latency",
+    "fig_latency_realtime",
 )
 
 # Stems promoted as primary/overview figures (order = priority)

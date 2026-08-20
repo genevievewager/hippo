@@ -118,6 +118,40 @@ def parse_args() -> argparse.Namespace:
             "global_isomap_distilled in the feature-mode comparison"
         ),
     )
+    parser.add_argument(
+        "--n-landmarks", type=int, nargs="+", default=None,
+        help="Landmark-count grid for diffusion_nystrom (default: 512)",
+    )
+    parser.add_argument(
+        "--landmark-method",
+        choices=["random", "kmeans", "minibatch_kmeans"],
+        default=None,
+        help="Landmark selection for diffusion_nystrom (default: minibatch_kmeans)",
+    )
+    parser.add_argument(
+        "--diffusion-components", type=int, default=None,
+        help="Latent dim for diffusion_nystrom when --manifold-components-list is omitted",
+    )
+    parser.add_argument(
+        "--diffusion-local-scale-k", type=int, default=None,
+        help="Self-tuning kernel neighbor k for diffusion_nystrom (default: 10)",
+    )
+    parser.add_argument(
+        "--diffusion-alpha", type=float, default=None,
+        help="Diffusion density-normalization alpha (default: 1.0)",
+    )
+    parser.add_argument(
+        "--diffusion-time", type=float, default=None,
+        help="Diffusion time tau (default: 1)",
+    )
+    parser.add_argument(
+        "--benchmark-diffusion-landmarks",
+        action="store_true",
+        help=(
+            "After comparison, write a landmark-count vs accuracy/latency "
+            "table under decoder_comparison/*/diffusion_landmark_benchmark/"
+        ),
+    )
     parser.add_argument("--region-ablation", action="store_true")
     parser.add_argument("--layer-ablation", action="store_true")
     parser.add_argument(
@@ -244,6 +278,12 @@ def main() -> None:
         ),
         isomap_latent_dim=args.isomap_latent_dim,
         enable_isomap_distillation=enable_isomap_distillation,
+        n_landmarks=tuple(args.n_landmarks) if args.n_landmarks else None,
+        landmark_method=args.landmark_method,
+        diffusion_local_scale_k=args.diffusion_local_scale_k,
+        diffusion_alpha=args.diffusion_alpha,
+        diffusion_time=args.diffusion_time,
+        diffusion_components=args.diffusion_components,
         region_ablation=args.region_ablation,
         layer_ablation=args.layer_ablation,
         skip_visualization=args.skip_visualization,
@@ -273,6 +313,27 @@ def main() -> None:
         print(f"  figures:    {result.figures_dir}")
     if result.pdf_path is not None:
         print(f"  pdf:        {result.pdf_path}")
+    if args.benchmark_diffusion_landmarks:
+        from realtime.diffusion_landmark_benchmark import (
+            run_diffusion_landmark_benchmark_from_experiment,
+        )
+        bench_dir = Path(args.output) / "decoder_comparison" / "sorted" / "diffusion_landmark_benchmark"
+        print(f"Running diffusion landmark-count benchmark → {bench_dir}")
+        run_diffusion_landmark_benchmark_from_experiment(
+            Path(args.input),
+            output_dir=bench_dir,
+            landmark_counts=tuple(args.n_landmarks) if args.n_landmarks else None,
+            n_components=(
+                int(args.diffusion_components)
+                if args.diffusion_components is not None
+                else (int(n_comps[0]) if n_comps else 10)
+            ),
+            landmark_method=args.landmark_method or "minibatch_kmeans",
+            local_scale_k=args.diffusion_local_scale_k or 10,
+            alpha=args.diffusion_alpha if args.diffusion_alpha is not None else 1.0,
+            diffusion_time=args.diffusion_time if args.diffusion_time is not None else 1.0,
+            random_state=args.seed,
+        )
 
 
 if __name__ == "__main__":

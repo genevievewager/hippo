@@ -1,15 +1,13 @@
 # Hippocampal Neuropixels Simulation and Decoding
 
-End-to-end hippocampal BCI simulation and deployment testbed: open-field behavior → hippocampal population rates → Neuropixels acquisition degradation → spike sorting → causal neural features → static or dynamic neural representations → behavioral decoding → deployment selection → realtime replay → closed-loop policy.
+End-to-end hippocampal BCI simulation and deployment testbed: open-field behavior → hippocampal population rates → Neuropixels acquisition degradation → spike sorting → causal neural features → static or dynamic neural representations → behavioral decoding → deployment selection → realtime replay → closed-loop policy → live bundle (Replay now; Open Ephys stub).
 
 ```text
 Behavior
    ↓
 Hippocampal population simulation
    ↓
-Neuropixels acquisition degradation
-   ↓
-Spike sorting
+Neuropixels acquisition degradation & Spike sorting
    ↓
 Causal neural features
    ↓
@@ -22,6 +20,8 @@ Deployment selection
 Realtime replay
    ↓
 Closed-loop policy
+   ↓
+Live bundle (Replay / Open Ephys stub)
 ```
 
 The complete BCI design space spans
@@ -46,30 +46,25 @@ spikes → F → neural observation → E → latent/state → D → prediction 
 
 The core decoder benchmark searches `F × E × D × W`. Closed-loop rule `C` is then evaluated on decoded predictions (and during registry replay), not as an additional axis of the same Cartesian decoder grid. Selection uses **sorted spikes only**; ground-truth spikes are oracle / diagnostic / non-deployable. Figures are a separate inspection step and never retrain models.
 
-**Purpose.** Identify a maximally compatible hippocampal BCI decoder under causal and realtime constraints: compare static manifolds and dynamic latents under the same decoder zoo, select deployable configurations on sorted-spike held-out performance (with shortest-near-optimal windows and realtime-compatible representations), export a lab transplant registry, and evaluate closed-loop policies on that registry. Calibration, sorting-degradation summaries, controls, ablations, and cross-run generalization are implemented as additional validation / alternate selection paths (see [Deployment selection](#deployment-selection)).
+**Purpose.** Identify a maximally compatible hippocampal BCI decoder under causal and realtime constraints: compare static manifolds and dynamic latents under the same decoder zoo, select deployable configurations on sorted-spike held-out performance (with shortest-near-optimal windows and realtime-compatible representations), export a lab transplant registry, evaluate closed-loop policies on that registry, and pack a frozen live bundle for Replay (Open Ephys remains a stub). Calibration, sorting-degradation summaries, controls, ablations, and cross-run generalization are implemented as additional validation / alternate selection paths (see [Deployment selection](#deployment-selection)).
+
+Scientific questions this stack is built to answer:
+
+1. Which neural features retain behaviorally useful information in the hippocampal formation?
+2. Do anatomically structured or nonlinear population representations improve variable-specific decoding over raw population activity?
+3. Do dynamic latent-state representations outperform static neural manifolds under causal constraints?
+4. How much causal neural history is optimal for different behavioral variables?
+5. Which configurations are deployable after sorted-spike evaluation and realtime-compatibility constraints?
+6. Which decoded neural variables remain robust enough under recording degradation to support closed-loop BCI operation?
 
 Equations use plain Unicode / code formatting (no LaTeX math plugin required).
 
----
-
-## Scientific questions
-
-1. Which neural features retain behaviorally useful information after Neuropixels-like recording degradation and spike sorting?
-2. Do anatomically structured or nonlinear population representations improve decoding over raw population activity?
-3. Do dynamic latent-state representations outperform static neural manifolds under causal constraints?
-4. How much causal neural history is optimal for different behavioral variables?
-5. Which high-performing configurations remain deployable after sorted-spike evaluation, shortest-near-optimal window selection, and realtime-compatibility constraints (with optional calibration / robustness / cross-run analyses)?
-6. Which decoded neural variables remain robust enough under recording degradation and across runs to support closed-loop BCI operation?
-
-Results answering (3) are **not yet fixed** in this README; LDS/GPFA are implemented and runnable (see [Current results](#current-results)). Longitudinal plasticity via a slowly varying observation mapping `C_t` remains a future direction (dynamic latent state ≠ neural plasticity).
-
----
-
 ## Public workflow
 
-Three scripts **or** the Streamlit UI. The happy path searches `F × E × D × W` inside one comparison (and evaluates closed-loop `C` on the resulting predictions / registry replay); you do not pick windows or models by hand for normal use. `E` may be a **static manifold** (`x_t → z_t`) or a **dynamic latent state** (`z_(t−1), x_t → z_t`).
+Three scripts **or** the Streamlit UI for simulate / search / visualize. The path searches `F × E × D × W` inside one comparison (and evaluates closed-loop `C` on the resulting predictions / registry replay); you do not pick windows or models by hand for normal use. `E` may be a **static manifold** (`x_t → z_t`) or a **dynamic latent state** (`z_(t−1), x_t → z_t`). Packing a live deployment bundle and running `LiveDecoder` is **UI-only** (no public CLI script).
 ```text
 Simulate → Decode / Search / Gate / Export → Visualize
+                                         ↘ Live bundle (UI)
 ```
 
 ### Installation
@@ -95,14 +90,14 @@ streamlit run ui/app.py
 ```text
 Experiment Setup
 → Neural Simulation
-→ Feature Explorer
-→ Manifold Explorer
-→ Static vs Dynamic
+→ Feature Construction
+→ Latent Representations
 → Decoder Benchmark
 → Realtime Replay
+→ Live Deployment
 ```
 
-Use **Experiment Setup** to generate or load a dataset (sets the shared **Active Dataset**), then continue through the pages above.
+Use **Experiment Setup** to generate or load a dataset (sets the shared **Active Dataset**), then continue through the pages above. Page roles: Feature Construction inspects `F`; Latent Representations fits/caches `E` in a static/dynamic × linear/nonlinear grid; Decoder Benchmark searches `D × W` and reuses cached transforms; Realtime Replay compares the three realtime-capable cells (`global_pca`, `diffusion_nystrom`, `global_lds`); Live Deployment packs a frozen `F → E → D` bundle (Replay implemented; Open Ephys stub).
 
 ### CLI happy path
 
@@ -155,6 +150,8 @@ Also check before transplant / realtime review:
 |------|----------|
 | `deployment_decoder_selection/all_sorted_window_scores.csv` | Full target × decoder × window scores |
 | `realtime_decoding/sorted/` | Causal closed-loop replay from the registry |
+| `deployment_bundles/` | Frozen live `F → E → D` bundles (packed from the UI) |
+| `live_sessions/` | Live / Replay session logs |
 | `latency_profiling/` | Stage latencies vs the 50 ms budget |
 | `figures/output.pdf` | Compiled inspection PDF after Step 3 |
 
@@ -166,19 +163,20 @@ Also check before transplant / realtime review:
 | Simulate dataset | `run_simulation.py` |
 | Search representations / decoders / windows | `run_decoder.py` |
 | Generate figures / PDF | `run_visualizations.py` |
+| Pack / run a live bundle | Streamlit **Live Deployment** (no public CLI) |
 
 ### Public vs advanced
 
 | Usage | What you run |
 |-------|----------------|
-| **Public / standard** | UI **or** the three-script happy path above |
+| **Public / standard** | UI **or** the three-script happy path above (live bundle packing is UI-only) |
 | **Advanced / developer** | Profile overrides, GT diagnostics, temporal `W×L`, static+dynamic grids, `run_decoder_comparison.py`, `run_BCI.py` |
 
 Advanced flags (not needed for the happy path):
 
 - `--profile quick` — coarse `W`, counts + global/region PCA smoke
 - `--profile standard` — denser `W` pool, counts + PCA
-- `--profile manifolds` — **default**; PCA family + classic/distilled Isomap
+- `--profile manifolds` — **default**; PCA family + classic/distilled Isomap + `diffusion_nystrom`
 - `--profile full` — densest `W` incl. 25 ms + full model zoo (temporal still opt-in)
 - `--include-ground-truth-diagnostics` — oracle GT comparisons (non-deployable)
 - `--enable-temporal-manifold` — explicit latent-history `W×L` comparison
@@ -373,7 +371,7 @@ Current observation maps to a latent representation (frozen map fit on training 
 x_t → z_t → ŷ_t
 ```
 
-Examples: `counts`/`identity`, `global_pca`, `region_pca`, `layer_pca`, `global_isomap`, `global_isomap_distilled`.
+Examples: `counts`/`identity`, `global_pca`, `region_pca`, `global_isomap`, `global_isomap_distilled`, `diffusion_nystrom`.
 
 ### Dynamic latent state
 
@@ -385,7 +383,16 @@ z_(t−1), x_t → z_t → ŷ_t
 
 The latent representation is dynamic; the downstream behavioral decoder may remain a fixed static map `z_t → ŷ_t`.
 
-Examples: LDS (`global_lds`, causal / realtime); GPFA (`gpfa`, offline / acausal benchmark).
+Examples: LDS (`global_lds`, causal / realtime); GPFA (`gpfa`, offline / acausal benchmark). Dynamic nonlinear `E` is not implemented.
+
+The UI organizes `E` as a 2×2 grid (linearity × temporal dynamics). Realtime Replay uses one realtime-capable representative per filled cell:
+
+| | Linear | Nonlinear |
+|---|---|---|
+| **Static** | `counts`, `global_pca`, `region_pca` | `global_isomap`, `global_isomap_distilled`, `diffusion_nystrom` |
+| **Dynamic** | `global_lds` (realtime), `gpfa` (offline) | — |
+
+Realtime-capable defaults: `global_pca`, `diffusion_nystrom`, `global_lds`. Classic Isomap and GPFA remain offline diagnostics.
 
 ### Explicit temporal history
 
@@ -423,6 +430,14 @@ sqrt(counts) → StandardScaler → optional pre-PCA → Isomap → z_t
 
 `--profile manifolds` enables classic + distilled Isomap by default (lean neighbor/dim grids). Algorithm details, diagnostics, distillation, CLI grids, troubleshooting: [`docs/manifolds.md`](docs/manifolds.md).
 
+### Diffusion Maps + Nyström (summary)
+
+Full nonlinear manifold algorithms are hard to run on streaming observations. `diffusion_nystrom` fits diffusion geometry **offline** on a landmark set and projects each new neural vector with Nyström extension (`transform_one`). The eigendecomposition never runs in the 25 ms / 40 Hz loop. Query-side local bandwidth adapts the kernel to local density; it does **not** retrain the fitted operator. Details and CLI: [`docs/diffusion_nystrom.md`](docs/diffusion_nystrom.md).
+
+```text
+neural window → features → frozen scaler → k(x_t, L) → Nyström z_t → decoder → ŷ_t
+```
+
 ---
 
 ## Search space
@@ -434,7 +449,7 @@ spikes → F → neural observation → E → latent/state → D → ŷ → C
 | Dimension | Meaning | Implemented examples |
 |-----------|---------|----------------------|
 | `F` | Observation / feature construction from spikes | `counts`, `rates`, `sqrt_counts`, `log1p_counts`, `zscore_counts`, `region_normalized_counts`, `cell_type_normalized_counts`; named sets such as `counts_dynamics` / `counts_regional` / `full_population_state` under `--profile feature_robustness` |
-| `E` | Population-state representation | `identity`, `global_pca`, `region_pca`, `layer_pca`, `cell_type_pca`, `rate_model_pca`, `pls`, `bayesian_place_tuning`, `global_isomap`, `global_isomap_distilled`, `global_lds`, `gpfa` |
+| `E` | Population-state representation | `identity`, `global_pca`, `region_pca`, `cell_type_pca`, `rate_model_pca`, `pls`, `bayesian_place_tuning`, `global_isomap`, `global_isomap_distilled`, `diffusion_nystrom`, `global_lds`, `gpfa` |
 | `D` | Behavioral decoder | ridge, random forest, Bayesian place decoder, logistic regression, … |
 | `W` | Causal integration window | profile candidate windows (see Timing) |
 | `C` | Closed-loop rule (evaluated downstream) | spatial-context, wall-distance-bin, distance-to-wall, speed, movement, head-direction triggers |
@@ -510,6 +525,50 @@ Details: [`docs/realtime_deployment.md`](docs/realtime_deployment.md).
 
 ---
 
+## Live Deployment
+
+Single-target causal inference substrate for laboratory / engineering tests. The offline search decides what to deploy; the live runtime executes that **exact** frozen `F → E → D` transform on incoming sorted spikes.
+
+### Workflow
+
+1. Run offline decoder comparison (sorted spikes) and deployment selection so `models/best_realtime_decoders.json` exists.
+2. Open **Live Deployment** in the UI and choose one behavioral target.
+3. Load the best **deployable** `F × E × D × W × C` (packed under `deployment_bundles/` from the UI; `run_decoder.py` does not write these bundles).
+4. Choose **Replay** (stored sorted spikes) or **Live Open Ephys** (stub until the lab connector is wired).
+5. Validate unit / input compatibility (expected vs mapped / missing / unexpected).
+6. Start decoding (does not auto-start on tab open).
+7. Inspect live predictions and runtime diagnostics (inference vs UI refresh are separate cadences).
+8. Retrieve session logs under `live_sessions/session_YYYYMMDD_HHMMSS/` (`deployment_config.json`, `predictions.csv`, `runtime_metrics.csv`, `unit_mapping.json`, `events.log`).
+
+### Pipeline test vs validated deployment
+
+| Mode | When | Meaning |
+|------|------|---------|
+| **Pipeline test** | Simulation-trained bundles, or imperfect unit mapping with explicit override | Validates acquisition, buffering, serialization, timing, and UI — **not** scientifically validated behavior |
+| **Validated deployment** | Bundle metadata marks a real-trained, session-compatible model with exact unit mapping | Future path: same runtime, real-trained bundle |
+
+A simulation-trained model on real spikes must show the **PIPELINE TEST MODE** warning. Do not interpret those predictions as validated behavioral decoding.
+
+### Bundle layout
+
+```text
+deployment_bundles/<target>__<decoder>__w####ms/
+    config.json
+    metadata.json
+    unit_order.json
+    feature_config.json
+    decoder.joblib
+    embedding/          # optional fitted E
+```
+
+Load with `LiveDecoder.from_bundle(path)`. Selection API: `DeploymentRegistry(exp).best(target=..., spike_source="sorted", deployable_only=True)` (see `realtime/deployment_bundle.py`, `realtime/live/`).
+
+### Replay vs Open Ephys
+
+Replay passes stored spikes through the **same** live buffer + `LiveDecoder.step()` path used for real acquisition. `OpenEphysSpikeStream` is an isolated stub (`NotImplementedError` until the laboratory ZMQ / SpikeInterface endpoint is connected); core decoding does not depend on it.
+
+---
+
 ## Current results
 
 ### Deployable decoding benchmark
@@ -532,13 +591,13 @@ No validated, named-run decoder accuracy tables are frozen in this README yet. P
 | closed-loop policy | ~0.01 ms |
 | **total update** | **~112 ms** |
 
-Interpretation for this profiled run only: distilled Isomap itself is fast enough for realtime; the budget overrun is dominated by RF classifier heads; total update exceeds the 50 ms / 20 Hz target. These are implementation measurements for that run, not universal biological conclusions.
+Interpretation for this profiled run only: distilled Isomap itself is fast enough for realtime; the budget overrun is dominated by RF classifier heads; total update exceeds the 50 ms / 20 Hz target. These are implementation measurements for that run, not universal biological conclusions. This table does **not** include `diffusion_nystrom` or live-bundle `LiveDecoder.step()` latency.
 
 ### Static vs dynamic
 
 > Static-vs-dynamic numeric results are currently TBD. LDS and GPFA are implemented and runnable, but this README does not claim that dynamic latents outperform static manifolds until those experiments are run.
 
-Produce local numbers by including both families in a comparison (see [`docs/dynamic_latents.md`](docs/dynamic_latents.md)), then inspect `decoder_comparison_metrics.csv` grouped by `representation_family`, `embedding_type`, `causal_status`, target, window, and latent dimension. Optionally open the Streamlit **Static vs Dynamic** page or `figures/dynamic/` panels.
+Produce local numbers by including both families in a comparison (see [`docs/dynamic_latents.md`](docs/dynamic_latents.md)), then inspect `decoder_comparison_metrics.csv` grouped by `representation_family`, `embedding_type`, `causal_status`, target, window, and latent dimension. Optionally open Streamlit **Realtime Replay** (quadrant comparison) or `figures/dynamic/` panels.
 
 Until that analysis is run and recorded here, treat LDS/GPFA as an implemented, runnable pathway—not a claim about relative performance.
 
@@ -571,6 +630,8 @@ outputs/<run>/
 ├── models/
 │   └── best_realtime_decoders.json
 ├── deployment_decoder_selection/
+├── deployment_bundles/
+├── live_sessions/
 ├── realtime_decoding/
 ├── latency_profiling/
 ├── decoding/
@@ -585,12 +646,14 @@ outputs/<run>/
 | `decoder_comparison/` | Metrics, transforms, `.joblib` models (`sorted/` deployable; `ground_truth/` oracle) |
 | `models/best_realtime_decoders.json` | Deployable registry |
 | `deployment_decoder_selection/` | Window×decoder score tables |
-| `realtime_decoding/` | Causal closed-loop replay |
+| `deployment_bundles/` | Frozen live `F → E → D` bundles (UI) |
+| `live_sessions/` | Live / Replay session logs |
+| `realtime_decoding/` | Causal closed-loop replay (`sorted/`, `dynamic/`, UI `quadrants/`) |
 | `latency_profiling/` | Stage latencies |
 | `decoding/` | Optional temporal `W×L` results |
 | `figures/` | Panels + `output.pdf` (no loose top-level PNGs) |
 
-`decoder_comparison/dynamic/` and `figures/dynamic/` appear when LDS/GPFA association or latent figures are generated. Full artifact schema: [`docs/output_schema.md`](docs/output_schema.md).
+`decoder_comparison/dynamic/` and `figures/dynamic/` appear when LDS/GPFA association or latent figures are generated. Fitted `F` / `E` caches live under `decoder_comparison/*/models/{manifold,feature,neural}_transforms/`. Full artifact schema: [`docs/output_schema.md`](docs/output_schema.md).
 
 ---
 
@@ -613,6 +676,8 @@ Visualization reads saved results, does not retrain models, and is safe to run i
 | 9–11 | Closed-loop replay; deployment winners; latency budget |
 | 12 (suppl.) | Temporal `W×L` heatmaps when `decoding/` exists |
 
+UI pages also write feature-panel, winner-embedding, and realtime-quadrant figures (see [`docs/visualizations.md`](docs/visualizations.md)).
+
 Complete catalog and stems: [`docs/visualizations.md`](docs/visualizations.md).
 
 ---
@@ -626,8 +691,9 @@ Complete catalog and stems: [`docs/visualizations.md`](docs/visualizations.md).
 | [`docs/anatomy_and_trajectory.md`](docs/anatomy_and_trajectory.md) | Trajectories, NTE, capture allowlist |
 | [`docs/decoding_methods.md`](docs/decoding_methods.md) | Decoder zoo, targets, temporal decoding |
 | [`docs/manifolds.md`](docs/manifolds.md) | Isomap details, distillation, diagnostics |
+| [`docs/diffusion_nystrom.md`](docs/diffusion_nystrom.md) | Landmark diffusion maps + Nyström realtime embedding |
 | [`docs/dynamic_latents.md`](docs/dynamic_latents.md) | LDS / GPFA commands and outputs |
-| [`docs/realtime_deployment.md`](docs/realtime_deployment.md) | Gating, registry, latency workflow |
+| [`docs/realtime_deployment.md`](docs/realtime_deployment.md) | Gating, registry, latency, live bundles |
 | [`docs/visualizations.md`](docs/visualizations.md) | Figure catalog |
 | [`docs/output_schema.md`](docs/output_schema.md) | Artifact tree |
 | [`docs/cli_reference.md`](docs/cli_reference.md) | Profiles and CLI flags |
@@ -646,6 +712,9 @@ Complete catalog and stems: [`docs/visualizations.md`](docs/visualizations.md).
 - Dynamic latent state does not itself solve neural plasticity / drift.
 - Sorted spikes lose some ground-truth metadata by construction.
 - Supervised / task-conditioned embeddings (when added) reflect supplied labels.
+- Live Open Ephys is an isolated stub; Replay uses stored sorted spikes through the same `LiveDecoder` path.
+- Simulation-trained live bundles are pipeline tests, not scientifically validated behavioral decoding.
+- Dynamic nonlinear `E` is not implemented.
 
 Public-workflow smoke (simulate → decode → visualize):
 

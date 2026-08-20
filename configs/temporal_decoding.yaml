@@ -22,6 +22,8 @@ manifold:
   optional_representations:
     - raw
     - isomap
+    - diffusion_nystrom
+    - diffusion_nystrom
   latent_dims:
     - 16
   representation_mode: target_specific
@@ -66,6 +68,18 @@ manifold:
         enabled: false
         models: [ridge, kernel_ridge, mlp]
         realtime_latency_budget_ms: 50
+
+    diffusion_nystrom:
+      enabled: true
+      realtime_compatible: true
+      deployment_tag: realtime_nystrom
+      n_landmarks: 512
+      landmark_method: minibatch_kmeans
+      n_components: 10
+      local_scale_k: 10
+      alpha: 1.0
+      diffusion_time: 1
+      dtype: float32
 
 temporal_decoding:
   enabled: false  # opt-in via --enable-temporal-manifold

@@ -105,12 +105,29 @@ def align_extended_behavior_to_decoder_times(
 
 
 def circular_error_deg(true_angles: np.ndarray, pred_angles: np.ndarray) -> np.ndarray:
-    """Absolute circular error in degrees."""
+    """Absolute circular error in degrees.
+
+    ``true_angles`` and ``pred_angles`` must be in **radians**. For degree
+    inputs use :func:`circular_error_from_degrees`.
+    """
     diff = np.arctan2(
         np.sin(pred_angles - true_angles),
         np.cos(pred_angles - true_angles),
     )
     return np.degrees(np.abs(diff))
+
+
+def circular_error_from_degrees(
+    true_deg: np.ndarray,
+    pred_deg: np.ndarray,
+) -> np.ndarray:
+    """Absolute circular error (degrees) from degree-valued angles.
+
+    Uses the shortest arc; 359° vs 1° is 2°, not 358°.
+    """
+    true_rad = np.deg2rad(np.asarray(true_deg, dtype=float))
+    pred_rad = np.deg2rad(np.asarray(pred_deg, dtype=float))
+    return circular_error_deg(true_rad, pred_rad)
 
 
 def angles_from_sin_cos(sin_vals: np.ndarray, cos_vals: np.ndarray) -> np.ndarray:

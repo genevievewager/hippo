@@ -98,6 +98,12 @@ def run_full_decoder_workflow(
     isomap_n_neighbors: tuple[int, ...] | None = None,
     isomap_latent_dim: int | None = None,
     enable_isomap_distillation: bool | None = None,
+    n_landmarks: tuple[int, ...] | None = None,
+    landmark_method: str | None = None,
+    diffusion_local_scale_k: int | None = None,
+    diffusion_alpha: float | None = None,
+    diffusion_time: float | None = None,
+    diffusion_components: int | None = None,
     feature_sets: tuple[str, ...] | None = None,
     embedding_types: tuple[str, ...] | None = None,
     run_feature_ablation: bool | None = None,
@@ -151,9 +157,16 @@ def run_full_decoder_workflow(
     if feature_modes is None:
         feature_modes = prof.feature_modes
     if manifold_n_components is None:
-        manifold_n_components = prof.manifold_n_components
+        if diffusion_components is not None:
+            manifold_n_components = (int(diffusion_components),)
+        else:
+            manifold_n_components = prof.manifold_n_components
     if isomap_n_neighbors is None:
         isomap_n_neighbors = prof.isomap_n_neighbors
+    if n_landmarks is None:
+        n_landmarks = prof.n_landmarks
+    if landmark_method is None:
+        landmark_method = prof.landmark_method
     if isomap_latent_dim is None:
         isomap_latent_dim = 8
     if enable_isomap_distillation is None:
@@ -210,7 +223,8 @@ def run_full_decoder_workflow(
         f"feature_sets={list(feature_sets)}, "
         f"embeddings={list(embedding_types) if embedding_types else list(feature_modes)}, "
         f"manifold_k={list(manifold_n_components)}, "
-        f"isomap_nn={list(isomap_n_neighbors)})..."
+        f"isomap_nn={list(isomap_n_neighbors)}, "
+        f"n_landmarks={list(n_landmarks)})..."
     )
     print(
         "  Deployment selection uses sorted spikes only. "
@@ -230,6 +244,11 @@ def run_full_decoder_workflow(
         run_feature_ablation=bool(run_feature_ablation),
         manifold_n_components=tuple(manifold_n_components),
         isomap_n_neighbors=tuple(isomap_n_neighbors),
+        n_landmarks=tuple(n_landmarks),
+        landmark_method=str(landmark_method),
+        diffusion_local_scale_k=int(diffusion_local_scale_k or 10),
+        diffusion_alpha=float(diffusion_alpha if diffusion_alpha is not None else 1.0),
+        diffusion_time=float(diffusion_time if diffusion_time is not None else 1.0),
         max_models=max_models,
         n_jobs=n_jobs,
         seed=seed,

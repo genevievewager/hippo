@@ -33,7 +33,7 @@ def render_leaderboard(metrics: pd.DataFrame, *, highlight_best: bool = True) ->
                 idx = g["score"].idxmin() if direction == "lower" else g["score"].idxmax()
                 board.loc[idx, "best"] = True
 
-    st.dataframe(board, use_container_width=True, hide_index=True)
+    st.dataframe(board, width="stretch", hide_index=True)
     n_best = int(board["best"].sum()) if "best" in board.columns else 0
     st.caption(f"{len(board)} rows · {n_best} best-per-target highlighted.")
     return board

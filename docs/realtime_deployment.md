@@ -24,9 +24,9 @@ Mandatory for this path:
 
 1. Sorted spikes only (`deployment_spike_source: sorted`)
 2. Held-out metric selection with `shortest_near_optimal` (default) or `best_accuracy`
-3. Prefer `realtime_compatible` embeddings when recommending closed-loop models (classic `global_isomap` remapped; `gpfa` offline-only)
+3. Prefer `realtime_compatible` embeddings when recommending closed-loop models (classic `global_isomap` remapped; `gpfa` offline-only). `diffusion_nystrom` is realtime-eligible: Nyström projection only, with `realtime_qualified` when `P99(T_operation) < 25 ms`.
 
-Latency microbenchmarks and a session latency profile are recorded, but the public registry is **not** required to pass a total-update ≤ 50 ms hard gate before export.
+Latency microbenchmarks and a session latency profile are recorded, but the public registry is **not** required to pass a total-update ≤ 50 ms hard gate before export. Operation compute (default 25 ms) is distinct from decode-window length.
 
 ## Parallel lab-deployable selection
 
@@ -65,6 +65,8 @@ Default for the public registry. Per target, choose the shortest causal window `
 
 Closed-loop replay loads saved artifacts (transforms + `.joblib`) and does **not** retrain when comparison artifacts exist.
 
+This registry replay path is **not** the same as Live Deployment Replay (frozen-bundle `LiveDecoder.step()` on a spike stream). See [Live runtime](#live-runtime) below.
+
 ## Causal window grids (public profiles)
 
 - Public default update rate: **20 Hz / 50 ms** (`update_dt=0.050`). Overridable with `--update-dt` (e.g. 0.025 supported).
@@ -92,3 +94,29 @@ python run_decoder_comparison.py \
     --include-controls \
     --population-ablation
 ```
+
+## Live runtime
+
+Offline search writes `models/best_realtime_decoders.json`. The **Live Deployment** UI packs a frozen single-target bundle and runs causal inference. There is no public CLI for packing or live stepping (`run_decoder.py` does not write `deployment_bundles/`).
+
+```text
+best_realtime_decoders.json
+        ↓
+UI packs deployment_bundles/<target>__<decoder>__w####ms/
+        ↓
+LiveDecoder.from_bundle → ReplaySpikeStream  (implemented)
+                       → OpenEphysSpikeStream (stub)
+        ↓
+live_sessions/session_YYYYMMDD_HHMMSS/
+```
+
+| Item | Notes |
+|------|-------|
+| Bundle | `config.json`, `metadata.json`, `unit_order.json`, `feature_config.json`, `decoder.joblib`, optional `embedding/` |
+| Replay | Stored sorted spikes through the same buffer + `LiveDecoder.step()` path as real acquisition |
+| Open Ephys | Isolated stub (`NotImplementedError`) until the lab ZMQ / SpikeInterface connector is wired |
+| Pipeline test | Simulation-trained bundles, or imperfect unit mapping with explicit override — not validated behavior |
+| Validated | Future path: real-trained, session-compatible bundle with exact unit mapping |
+| Session logs | `deployment_config.json`, `predictions.csv`, `runtime_metrics.csv`, `unit_mapping.json`, `events.log` |
+
+Load API: `LiveDecoder.from_bundle(path)`. Selection: `DeploymentRegistry(exp).best(target=..., spike_source="sorted", deployable_only=True)` (`realtime/deployment_bundle.py`, `realtime/live/`, `realtime/live_decoder.py`). Root README [Live Deployment](../README.md#live-deployment) has the user-facing workflow.

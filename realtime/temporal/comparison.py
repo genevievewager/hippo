@@ -263,6 +263,12 @@ def run_temporal_manifold_comparison(config: TemporalComparisonConfig) -> pd.Dat
                     "n_jobs": config.n_jobs,
                     "random_state": config.seed,
                 })
+            elif rep == "diffusion_nystrom":
+                kwargs.update({
+                    "n_components": getattr(config, "isomap_latent_dim", 8) or 8,
+                    "n_landmarks": 512,
+                    "random_state": config.seed,
+                })
             enc = make_manifold_encoder(rep, **kwargs)
             try:
                 enc.fit(X[train_mask])
