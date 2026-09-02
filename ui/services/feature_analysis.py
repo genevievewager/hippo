@@ -35,9 +35,11 @@ from ui.services.registry import new_run_id, try_git_commit
 from visualization.artifact_manifest import register_artifact
 from visualization.publication_feature_plots import (
     DEFAULT_FEATURE_PANEL_WINDOW_S,
+    PANEL_KINDS,
     plot_feature_panel_pages,
     resolve_feature_panel_windows,
 )
+from realtime.work_progress import WorkTracker, invoke_progress
 
 ProgressCallback = Callable[[str, int, int], None]
 
@@ -55,6 +57,10 @@ class FeatureAnalysisRequest:
     write_per_window_diagnostics: bool = False
     # When False (default), skip when the selection is already on disk.
     force_recompute: bool = False
+    # Pipeline-mode observation committed after a successful run.
+    active_window_s: float | None = None
+    active_feature_set: str | None = None
+    update_dt: float = 0.050
 
 
 def _analysis_dir(input_dir: Path, run_id: str) -> Path:
@@ -112,28 +118,67 @@ def run_feature_analysis(
     results: list[dict[str, Any]] = []
     panel_meta: dict[str, Any] | None = None
 
-    # Optional dense per-window diagnostics (advanced / legacy gallery).
     per_window_jobs: list[tuple[str, float]] = []
     if req.write_per_window_diagnostics:
         per_window_jobs = [(fs, float(w)) for fs in req.feature_sets for w in windows]
 
-    total_steps = (
-        (1 if req.write_panel_pages else 0)
-        + len(per_window_jobs)
-        + (1 if req.regenerate_simulation_figures else 0)
+    checkpoint_jobs = [
+        (str(fs), float(w))
+        for fs in req.feature_sets
+        for w in windows
+    ]
+    for fs, info in (resolved or {}).items():
+        try:
+            if isinstance(info, dict):
+                wf = float(info.get("window_s"))
+            else:
+                wf = float(info)
+        except (TypeError, ValueError):
+            continue
+        if fs in req.feature_sets and (str(fs), wf) not in {
+            (a, b) for a, b in checkpoint_jobs
+        }:
+            checkpoint_jobs.append((str(fs), wf))
+
+    n_panel = (
+        (len(req.feature_sets) + len(PANEL_KINDS)) if req.write_panel_pages else 0
     )
-    total_steps = max(total_steps, 1)
-    step = 0
+    n_sim = 1 if req.regenerate_simulation_figures else 0
+    tracker = WorkTracker(
+        max(n_panel + len(checkpoint_jobs) + len(per_window_jobs) + n_sim, 1),
+        operation="feature_analysis",
+    )
+
+    def _report(message: str, *, bump: bool = False) -> None:
+        if bump:
+            tracker.bump(1, message=message)
+        else:
+            tracker.message = message
+        invoke_progress(
+            progress_callback,
+            tracker.message,
+            tracker.completed,
+            max(tracker.total, 1),
+        )
 
     if req.write_panel_pages:
-        step += 1
-        if progress_callback:
-            progress_callback("Writing panneled feature overview pages…", step, total_steps)
+        _report("Writing panneled feature overview pages…")
+        panel_done = 0
 
         def _cb(msg: str, s: int, n: int) -> None:
-            if progress_callback:
-                # Nest panel progress inside the outer step slot.
-                progress_callback(msg, step, total_steps)
+            nonlocal panel_done
+            delta = max(int(s) - panel_done, 0)
+            panel_done = int(s)
+            if delta:
+                tracker.bump(delta, message=msg)
+            else:
+                tracker.message = msg
+            invoke_progress(
+                progress_callback,
+                tracker.message,
+                tracker.completed,
+                max(tracker.total, 1),
+            )
 
         panel_meta = plot_feature_panel_pages(
             req.input_dir,
@@ -155,37 +200,20 @@ def run_feature_analysis(
             "windows": panel_meta.get("windows"),
             "figures": list((panel_meta.get("figures") or {}).values()),
         })
+        leftover = max(n_panel - tracker.completed, 0)
+        if leftover:
+            tracker.bump(leftover, message="Feature panels ready")
+            invoke_progress(
+                progress_callback,
+                tracker.message,
+                tracker.completed,
+                max(tracker.total, 1),
+            )
 
-    # Shared F checkpoints for Decoder Benchmark (selected windows × sets).
-    checkpoint_jobs = [
-        (str(fs), float(w))
-        for fs in req.feature_sets
-        for w in windows
-    ]
-    # Also include resolved panel windows if they differ from the selection.
-    for fs, info in (resolved or {}).items():
-        try:
-            if isinstance(info, dict):
-                wf = float(info.get("window_s"))
-            else:
-                wf = float(info)
-        except (TypeError, ValueError):
-            continue
-        if fs in req.feature_sets and (str(fs), wf) not in {
-            (a, b) for a, b in checkpoint_jobs
-        }:
-            checkpoint_jobs.append((str(fs), wf))
-
-    n_ckpt = len(checkpoint_jobs)
-    total_steps = max(total_steps + n_ckpt, 1)
     n_feature_checkpoints = 0
     checkpoint_errors: list[dict[str, Any]] = []
     for fs, window in checkpoint_jobs:
-        step += 1
-        if progress_callback:
-            progress_callback(
-                f"Checkpoint F `{fs}` @ {window}s", step, total_steps,
-            )
+        _report(f"Checkpoint F `{fs}` @ {window}s")
         try:
             ck = checkpoint_feature_transform(
                 req.input_dir,
@@ -208,11 +236,10 @@ def run_feature_analysis(
             }
             checkpoint_errors.append(err_row)
             results.append(err_row)
+        _report(f"Checkpoint F `{fs}` @ {window}s", bump=True)
 
     for fs, window in per_window_jobs:
-        step += 1
-        if progress_callback:
-            progress_callback(f"Feature `{fs}` @ {window}s", step, total_steps)
+        _report(f"Feature `{fs}` @ {window}s")
         diag = compute_feature_diagnostics(
             req.input_dir,
             fs,
@@ -238,6 +265,7 @@ def run_feature_analysis(
             "n_samples": diag.n_samples,
             "figures": [str(p) for p in saved],
         })
+        _report(f"Feature `{fs}` @ {window}s", bump=True)
 
     exp_fig = Path(req.input_dir) / "figures" / "features"
     exp_fig.mkdir(parents=True, exist_ok=True)
@@ -258,9 +286,7 @@ def run_feature_analysis(
 
     sim_figs: dict[str, Any] | None = None
     if req.regenerate_simulation_figures:
-        step += 1
-        if progress_callback:
-            progress_callback("Regenerating simulation / feature gallery figures…", step, total_steps)
+        _report("Regenerating simulation / feature gallery figures…")
         try:
             from ui.services.visualizations import VisualizationRequest, generate_visualizations
 
@@ -274,6 +300,7 @@ def run_feature_analysis(
             )
         except Exception as exc:  # noqa: BLE001 — gallery regen is best-effort
             sim_figs = {"error": str(exc)}
+        _report("Regenerating simulation / feature gallery figures…", bump=True)
 
     meta = {
         "run_id": run_id,
@@ -291,7 +318,7 @@ def run_feature_analysis(
         },
         "resolved_panel_windows": resolved,
         "panel_pages": panel_meta,
-        "n_jobs_requested": len(per_window_jobs) + (1 if req.write_panel_pages else 0) + n_ckpt,
+        "n_jobs_requested": len(per_window_jobs) + (1 if req.write_panel_pages else 0) + len(checkpoint_jobs),
         "n_feature_checkpoints": n_feature_checkpoints,
         "n_checkpoint_errors": len(checkpoint_errors),
         "checkpoint_errors": checkpoint_errors,
@@ -313,6 +340,28 @@ def run_feature_analysis(
             "Feature Construction did not write F caches for: "
             f"{details}. Downstream pages will not treat these as generated."
         )
+    try:
+        from realtime.pipeline_artifacts import ObservationConfig
+        from realtime.pipeline_graph import commit_observation, simulation_run_id_from_dir
+
+        active_fs = str(req.active_feature_set or (req.feature_sets[0] if req.feature_sets else "counts"))
+        active_w = req.active_window_s
+        if active_w is None:
+            if 0.250 in windows:
+                active_w = 0.250
+            else:
+                active_w = float(windows[0]) if windows else 0.250
+        obs = ObservationConfig(
+            window_s=float(active_w),
+            update_dt=float(req.update_dt),
+            feature_set=active_fs,
+            source_spikes=str(req.spike_source),
+            simulation_run_id=simulation_run_id_from_dir(Path(req.input_dir)),
+        )
+        commit_observation(Path(req.input_dir), obs, run_id=run_id)
+        meta["active_observation"] = obs.to_dict()
+    except Exception as exc:  # noqa: BLE001 — pipeline ledger is non-fatal
+        meta["pipeline_commit_error"] = str(exc)
     return meta
 
 

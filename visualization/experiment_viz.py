@@ -140,6 +140,7 @@ def generate_experiment_figures(
     include_realtime: bool = True,
     compile_pdf: bool = False,
     rate_bin_size: float = 0.250,
+    progress_callback=None,
 ) -> VizResult:
     """
     Detect available experiment outputs and generate figures.
@@ -156,11 +157,29 @@ def generate_experiment_figures(
     figures_dir.mkdir(parents=True, exist_ok=True)
 
     result = VizResult(figures_dir=figures_dir)
+    total_units = max(
+        int(bool(include_simulation))
+        + int(bool(include_comparison or include_realtime))
+        + int(bool(compile_pdf)),
+        1,
+    )
+    done = 0
+
+    def _viz_progress(message: str) -> None:
+        nonlocal done
+        done += 1
+        if progress_callback is None:
+            return
+        try:
+            progress_callback(message, done, total_units)
+        except TypeError:
+            pass
 
     if include_simulation and has_simulation_outputs(experiment_dir):
         print(f"Generating simulation figures from {experiment_dir}...")
         generate_simulation_figures(experiment_dir, figures_dir, rate_bin_size=rate_bin_size)
         result.simulation = True
+        _viz_progress("Simulation figures")
 
     # Publication multi-panel suite: decoding, manifolds/Isomap, closed-loop,
     # deployment, latency, optional temporal W×L (replaces legacy single-panel sprawl).
@@ -216,6 +235,7 @@ def generate_experiment_figures(
                 print(f"  wrote {path.relative_to(figures_dir)}")
         except Exception as exc:
             print(f"  warning: decoding diagnostic figures skipped ({exc})")
+        _viz_progress("Decoder / manifold / realtime figures")
 
     if compile_pdf:
         print(f"Compiling PDF under {figures_dir}...")
@@ -223,5 +243,6 @@ def generate_experiment_figures(
             figures_dir=figures_dir,
             experiment_dir=experiment_dir,
         )
+        _viz_progress("Compiled figures PDF")
 
     return result

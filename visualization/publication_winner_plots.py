@@ -144,61 +144,65 @@ def plot_fig_winner_embeddings(
 
     written: list[Path] = []
     diag_cache: dict[tuple, object] = {}
-    n_targets = len(ALL_TARGETS)
+    n_pngs = len(ALL_TARGETS) * 2
+    done = 0
 
-    for ti, target in enumerate(ALL_TARGETS, start=1):
-        if progress_callback is not None:
-            progress_callback(
-                f"{TARGET_TITLES.get(target, target)} ({ti}/{n_targets})",
-                ti,
-                n_targets,
-            )
+    for target in ALL_TARGETS:
         counts_w, man_w = best_counts_and_manifold_winners(
             metrics if not metrics.empty else None,
             target,
             spike_source=spike_source,
         )
         for kind, winner in (("counts", counts_w), ("manifold", man_w)):
-            key = (
-                winner.embedding_type,
-                winner.feature_set,
-                float(winner.decode_window),
-                int(winner.n_components),
-                int(winner.n_neighbors or 0),
-            )
             try:
-                if key not in diag_cache:
-                    diag_cache[key] = _load_winner_embedding(
-                        experiment_dir, winner, spike_source=spike_source,
-                    )
-                diag = diag_cache[key]
-            except Exception as exc:
-                print(f"  warning: winner {kind}/{target} embed failed ({exc})")
-                continue
-
-            mode = "counts" if winner.is_counts else winner.embedding_type
-            title = (
-                f"Raw counts · {TARGET_TITLES.get(target, target)}"
-                if kind == "counts"
-                else f"Best manifold · {TARGET_TITLES.get(target, target)}"
-            )
-            out_path = out_dir / f"fig_winner_{kind}_{target}.png"
-            try:
-                path = _write_single_winner_png(
-                    out_path,
-                    Z=diag.latent,
-                    behavior=diag.behavior,
-                    target=target,
-                    mode=mode,
-                    title=title,
-                    subtitle=_subtitle(winner),
+                key = (
+                    winner.embedding_type,
+                    winner.feature_set,
+                    float(winner.decode_window),
+                    int(winner.n_components),
+                    int(winner.n_neighbors or 0),
                 )
-            except Exception as exc:
-                print(f"  warning: winner {kind}/{target} plot failed ({exc})")
-                continue
-            if path is not None:
-                written.append(path)
-                print(f"  wrote {path.relative_to(figures_dir)}")
+                try:
+                    if key not in diag_cache:
+                        diag_cache[key] = _load_winner_embedding(
+                            experiment_dir, winner, spike_source=spike_source,
+                        )
+                    diag = diag_cache[key]
+                except Exception as exc:
+                    print(f"  warning: winner {kind}/{target} embed failed ({exc})")
+                    continue
+
+                mode = "counts" if winner.is_counts else winner.embedding_type
+                title = (
+                    f"Raw counts · {TARGET_TITLES.get(target, target)}"
+                    if kind == "counts"
+                    else f"Best manifold · {TARGET_TITLES.get(target, target)}"
+                )
+                out_path = out_dir / f"fig_winner_{kind}_{target}.png"
+                try:
+                    path = _write_single_winner_png(
+                        out_path,
+                        Z=diag.latent,
+                        behavior=diag.behavior,
+                        target=target,
+                        mode=mode,
+                        title=title,
+                        subtitle=_subtitle(winner),
+                    )
+                except Exception as exc:
+                    print(f"  warning: winner {kind}/{target} plot failed ({exc})")
+                    continue
+                if path is not None:
+                    written.append(path)
+                    print(f"  wrote {path.relative_to(figures_dir)}")
+            finally:
+                done += 1
+                if progress_callback is not None:
+                    progress_callback(
+                        f"{TARGET_TITLES.get(target, target)} {kind}",
+                        done,
+                        n_pngs,
+                    )
 
     return written
 

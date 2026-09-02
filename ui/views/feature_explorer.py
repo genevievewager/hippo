@@ -15,6 +15,7 @@ from ui.components.run_status import (
     render_job_autofresh,
     render_workload_estimate,
 )
+from ui.components.pipeline_status import render_pipeline_status
 from ui.components.viz_actions import render_generate_viz_panel
 from ui.jobs import get_slot_job, submit_job
 from ui.services.comparison import (
@@ -86,10 +87,15 @@ def _estimate_feature_workload(
 
 def render(outputs_root: Path) -> None:
     st.header("Feature Construction")
+    st.caption(
+        "Neural observation O(W, F): spikes in `[t−W, t)` become the feature "
+        "matrix used by every downstream stage. Window size is owned here."
+    )
 
     dataset = require_active_dataset(outputs_root)
     if dataset is None:
         return
+    render_pipeline_status(dataset, current_stage="features")
     spike_source = active_spike_source(dataset, readonly=True)
 
     _render_run_analysis(dataset, spike_source)
@@ -150,10 +156,10 @@ def _render_run_analysis(dataset: Path, spike_source: str) -> None:
     st.subheader("Run Feature Analysis")
     st.markdown(
         f"**Active dataset:** `{dataset.name}`. "
-        "Pick **feature sets** and **decode windows** for a new run matrix "
-        "(one diagnostic package per feature×window). Also writes three panneled "
-        "overview pages under `figures/features/` — panels use **250 ms** until "
-        "decoder metrics exist, then each feature set's own best window."
+        "Pick **feature sets** and **history windows** to write observation "
+        "caches (feature × window). Commit one combination as the "
+        "**active pipeline observation**; downstream pages inherit that W. "
+        "Benchmark mode on Decoder Benchmark can still sweep cached windows."
     )
 
     sets = list(list_feature_sets())
@@ -171,13 +177,39 @@ def _render_run_analysis(dataset: Path, spike_source: str) -> None:
         )
     with col_w:
         windows = st.multiselect(
-            "Decode windows",
+            "History windows (observation W)",
             options=_WINDOW_OPTIONS,
             default=[DEFAULT_FEATURE_PANEL_WINDOW_S],
             format_func=format_decode_window,
             key="feat_run_wins_v2",
-            help="Windows to run for each selected feature set (feature × window matrix).",
+            help=(
+                "Causal windows `[t−W, t)` to construct. Pipeline mode uses the "
+                "active window below; extra windows stay available for benchmarks."
+            ),
         )
+
+    active_fs = feature_sets[0] if feature_sets else "counts"
+    active_w = DEFAULT_FEATURE_PANEL_WINDOW_S
+    if feature_sets and windows:
+        col_a, col_b = st.columns(2)
+        with col_a:
+            active_fs = st.selectbox(
+                "Active pipeline feature set",
+                options=feature_sets,
+                index=0,
+                key="feat_active_fs",
+            )
+        with col_b:
+            active_w = st.selectbox(
+                "Active pipeline history window",
+                options=windows,
+                index=windows.index(DEFAULT_FEATURE_PANEL_WINDOW_S)
+                if DEFAULT_FEATURE_PANEL_WINDOW_S in windows
+                else 0,
+                format_func=format_decode_window,
+                key="feat_active_w",
+                help="Downstream pipeline pages inherit this W.",
+            )
 
     coverage: dict | None = None
     if feature_sets and windows:
@@ -283,6 +315,8 @@ def _render_run_analysis(dataset: Path, spike_source: str) -> None:
         regenerate_simulation_figures=_REGEN_FIGS,
         write_panel_pages=_WRITE_PANELS,
         write_per_window_diagnostics=_WRITE_MATRIX,
+        active_window_s=float(active_w) if windows else None,
+        active_feature_set=str(active_fs) if feature_sets else None,
     )
 
     def _job_fn(*, progress_callback=None):

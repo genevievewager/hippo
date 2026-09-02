@@ -79,6 +79,7 @@ class LiveDecoder:
         self.decoder = bundle.decoder
         self.embedding = bundle.embedding
         self.neural_extractor = bundle.neural_extractor
+        self.feature_transform = getattr(bundle, "feature_transform", None)
         self.feature_type = str(
             (bundle.feature_config or {}).get("feature_mode")
             or bundle.config.extras.get("feature_mode")
@@ -330,6 +331,17 @@ class LiveDecoder:
             base = counts / max(self.decode_window_s, 1e-9)
         else:
             base = counts
+
+        base = np.asarray(base, dtype=float)
+        if base.ndim == 1:
+            base = base.reshape(1, -1)
+        if self.feature_transform is not None:
+            if hasattr(self.feature_transform, "transform_one"):
+                base = np.asarray(
+                    self.feature_transform.transform_one(base.ravel()), dtype=float,
+                ).reshape(1, -1)
+            else:
+                base = np.asarray(self.feature_transform.transform(base), dtype=float)
 
         if self.embedding is None:
             return base

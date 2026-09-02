@@ -100,6 +100,16 @@ from realtime.transform_cache import (
     try_load_feature_transform,
     try_load_manifold,
 )
+from realtime.work_progress import WorkTracker, invoke_progress
+from realtime.artifact_cache import (
+    load_feature_matrix,
+    save_feature_matrix,
+)
+from realtime.pipeline_artifacts import (
+    ArtifactOrigin,
+    ObservationConfig,
+    write_provenance,
+)
 
 import time
 
@@ -128,6 +138,50 @@ def comparison_targets(config: "ComparisonRunConfig | None" = None) -> tuple[str
         return ALL_TARGETS
     allowed = set(ALL_TARGETS)
     return tuple(t for t in raw if t in allowed)
+
+
+_BAYESIAN_PLACE_TUNING_TARGETS = (
+    "position", "distance_to_wall", "spatial_context", "wall_distance_bin",
+)
+# Persist metrics + save models. Caller table PNGs happen after return (99% cap).
+DECODER_TAIL_STEPS = 2
+
+
+def count_decoder_eval_jobs(
+    config: "ComparisonRunConfig",
+    fe_jobs: list,
+    feature_sets: list[str] | tuple[str, ...],
+    windows: list[float] | tuple[float, ...],
+) -> int:
+    """Count F×E×D×W×target evals using the same expanders as the comparison loop."""
+    n = 0
+    selected = getattr(config, "decoder_names", None)
+    targets = comparison_targets(config)
+    for _window in windows:
+        for feature_set in feature_sets:
+            for _f, embedding_type, _k, _nn in filter_fe_jobs_for_feature_set(
+                fe_jobs, feature_set,
+            ):
+                for target in targets:
+                    if (
+                        embedding_type == "bayesian_place_tuning"
+                        and target not in _BAYESIAN_PLACE_TUNING_TARGETS
+                    ):
+                        continue
+                    model_names = resolve_model_names_for_target(
+                        target,
+                        max_models=config.max_models,
+                        selected=selected,
+                    )
+                    for decoder_name in model_names:
+                        if (
+                            embedding_type == "bayesian_place_tuning"
+                            and not is_bayesian_model(decoder_name)
+                        ):
+                            continue
+                        n += 1
+    return n
+
 
 PRIMARY_METRIC = {
     "position": ("mean_position_error_cm", "lower"),
@@ -516,42 +570,41 @@ def run_decoder_comparison(
     window_queue = list(dict.fromkeys(float(w) for w in config.decode_windows))
     tested_windows: list[float] = []
     refined_once = False
-    jobs_per_feature_set = {
-        fs: len(filter_fe_jobs_for_feature_set(fe_jobs, fs)) for fs in feature_sets
-    }
-    n_fe_w = max(sum(jobs_per_feature_set.values()) * max(len(window_queue), 1), 1)
-    # Prefer decoder-level progress in the UI: estimate D×T per F×E×W job.
-    _selected = tuple(getattr(config, "decoder_names", None) or ())
-    if _selected:
-        n_dec_est = max(len(_selected), 1)
-    else:
-        n_dec_est = 5 if str(config.max_models) == "quick" else 10
-    n_target_est = max(len(comparison_targets(config)), 1)
-    planned_job_steps = max(n_fe_w + n_fe_w * n_target_est * n_dec_est, 1)
-    progress_step = 0
-    progress_t0 = time.perf_counter()
-    progress_t_prev = progress_t0
+    n_eval = count_decoder_eval_jobs(config, fe_jobs, feature_sets, window_queue)
+    tracker = WorkTracker(
+        max(n_eval + DECODER_TAIL_STEPS, DECODER_TAIL_STEPS),
+        operation="decoder_comparison",
+    )
 
-    def _progress(message: str, step: int | None = None, total: int | None = None, *, bump: bool = False) -> None:
-        """UI progress: optional bump, always annotate last-step and elapsed times."""
-        nonlocal progress_step, planned_job_steps, progress_t_prev
-        now = time.perf_counter()
-        last_s = max(now - progress_t_prev, 0.0)
+    def _progress(
+        message: str,
+        *,
+        bump: bool = False,
+        stage: str = "",
+        task: str = "",
+        reserve_tail: bool = True,
+    ) -> None:
+        """Report work-based progress. Bump only after a finished unit."""
         if bump:
-            progress_step += 1
-            progress_t_prev = now
-        if step is not None:
-            progress_step = int(step)
-            progress_t_prev = now
-        if total is not None:
-            planned_job_steps = max(int(total), 1)
-        display_total = max(planned_job_steps, progress_step, 1)
-        elapsed_s = max(now - progress_t0, 0.0)
-        annotated = (
-            f"{message} · last {last_s:.1f}s · elapsed {elapsed_s:.0f}s"
+            if reserve_tail:
+                need = tracker.completed + 1 + DECODER_TAIL_STEPS
+                if tracker.total < need:
+                    tracker.set_total(need)
+            tracker.bump(1, message=message, stage=stage or None, task=task or message)
+        else:
+            tracker.message = message
+            if stage:
+                tracker.stage = stage
+            if task:
+                tracker.task = task
+        invoke_progress(
+            progress_callback,
+            tracker.message,
+            tracker.completed,
+            max(tracker.total, 1),
+            stage=tracker.stage,
+            task=tracker.task,
         )
-        if progress_callback is not None:
-            progress_callback(annotated, progress_step, display_total)
 
     reuse_counts = {"manifold": 0, "feature": 0, "fitted": 0}
     reuse_roots = [output_dir, *[Path(p) for p in config.reuse_search_roots if p]]
@@ -611,6 +664,16 @@ def run_decoder_comparison(
 
         for feature_set in feature_sets:
             t_fs = time.perf_counter()
+            observation = ObservationConfig(
+                window_s=float(decode_window),
+                update_dt=float(update_dt),
+                feature_set=str(feature_set),
+                feature_type="counts",
+                source_spikes=str(config.spike_source),
+                simulation_run_id=str(config.run_id or config.input_dir.name),
+                seed=int(config.seed),
+                train_frac=float(config.train_frac),
+            )
             extractor = NeuralFeatureExtractor.from_feature_set(
                 feature_set,
                 units_df=data["units_df"],
@@ -622,27 +685,73 @@ def run_decoder_comparison(
                 allow_full_pairwise=config.allow_full_pairwise,
                 lagged_coupling_lags=config.lagged_coupling_lags,
             )
-            feat_result = extractor.extract_matrix(
-                spikes_df,
-                decode_times,
-                counts=None if extractor.needs_coactivity_bins() else X_counts,
-            )
+            cached_feat = None
+            if config.reuse_transforms:
+                cached_feat = load_feature_matrix(output_dir, observation)
+                if cached_feat is None:
+                    for root in reuse_roots:
+                        cached_feat = load_feature_matrix(root, observation)
+                        if cached_feat is not None:
+                            break
+            reused_x = False
+            if cached_feat is not None:
+                X_cached, cached_times, feat_names, _cache_path = cached_feat
+                X_cached = np.asarray(X_cached, dtype=float)
+                cached_times = np.asarray(cached_times, dtype=float)
+                if (
+                    X_cached.shape[0] == len(decode_times)
+                    and cached_times.shape[0] == len(decode_times)
+                ):
+                    X_feat = X_cached
+                    feat_extract_ms = 0.0
+                    reuse_counts["feature"] += 1
+                    reused_x = True
+                del feat_names
+            if not reused_x:
+                feat_result = extractor.extract_matrix(
+                    spikes_df,
+                    decode_times,
+                    counts=None if extractor.needs_coactivity_bins() else X_counts,
+                )
+                X_feat = np.asarray(feat_result.feature_vector, dtype=float)
+                feat_extract_ms = float(feat_result.extras.get("feature_extract_ms", 0.0))
+                try:
+                    save_feature_matrix(
+                        output_dir,
+                        observation,
+                        X_feat,
+                        decode_times,
+                        list(feat_result.feature_names),
+                        origin=ArtifactOrigin.COMPUTED,
+                    )
+                except OSError:
+                    pass
             timer.add(
                 "feature_extraction",
                 time.perf_counter() - t_fs,
                 detail=f"W={decode_window:.3f}|set={feature_set}",
-                notes="NeuralFeatureExtractor.extract_matrix",
+                notes=(
+                    "FeatureDataset cache" if reused_x
+                    else "NeuralFeatureExtractor.extract_matrix"
+                ),
                 decode_window_s=decode_window,
                 feature_set=feature_set,
             )
-            X_feat = np.asarray(feat_result.feature_vector, dtype=float)
             feat_dim = int(X_feat.shape[1])
-            feat_extract_ms = float(feat_result.extras.get("feature_extract_ms", 0.0))
 
             ext_name = (
                 f"{feature_set}_w{int(round(decode_window * 1000)):04d}ms"
             )
             extractor.save(neural_dir / ext_name)
+            write_provenance(neural_dir / ext_name, {
+                "kind": "NeuralFeatureExtractor",
+                "observation": observation.to_dict(),
+                "config_hash": observation.hash(),
+                "origin": (
+                    ArtifactOrigin.CACHE.value if reused_x
+                    else ArtifactOrigin.COMPUTED.value
+                ),
+            })
 
             jobs = filter_fe_jobs_for_feature_set(fe_jobs, feature_set)
             print(
@@ -654,7 +763,8 @@ def run_decoder_comparison(
             for feature_type, embedding_type, n_components, n_neighbors in jobs:
                 _progress(
                     f"Fit E · W={decode_window:.3f}s · {feature_set} · {embedding_type}",
-                    bump=True,
+                    stage="Embedding",
+                    task=f"{feature_set} · {embedding_type}",
                 )
                 t_emb = time.perf_counter()
                 feature_mode = compose_feature_mode(feature_type, embedding_type)
@@ -697,6 +807,23 @@ def run_decoder_comparison(
                 if not reused_f:
                     f_transform.fit(X_train_raw)
                     f_transform.save(f_path)
+                    write_provenance(f_path, {
+                        "kind": "SpikeFeatureTransformer",
+                        "observation": observation.to_dict(),
+                        "config_hash": observation.fit_hash(),
+                        "origin": ArtifactOrigin.COMPUTED.value,
+                        "train_frac": float(config.train_frac),
+                        "seed": int(config.seed),
+                        "includes_fitted_transform": True,
+                    })
+                else:
+                    write_provenance(f_path, {
+                        "kind": "SpikeFeatureTransformer",
+                        "observation": observation.to_dict(),
+                        "config_hash": observation.fit_hash(),
+                        "origin": ArtifactOrigin.CACHE.value,
+                        "includes_fitted_transform": True,
+                    })
                 X_train_f = f_transform.transform(X_train_raw)
                 X_test_f = f_transform.transform(X_test_raw)
 
@@ -823,6 +950,17 @@ def run_decoder_comparison(
                     meta = unsupervised_embed.get_metadata()
                     if not reused_e:
                         unsupervised_embed.save(transform_path)
+                        write_provenance(transform_path, {
+                            "kind": "RepresentationResult",
+                            "representation_name": embedding_type,
+                            "source_feature_hash": observation.hash(),
+                            "window_s": float(decode_window),
+                            "update_dt": float(update_dt),
+                            "origin": ArtifactOrigin.COMPUTED.value,
+                            "train_frac": float(config.train_frac),
+                            "seed": int(config.seed),
+                            "includes_fitted_transform": True,
+                        })
                         if is_diffusion_nystrom(embedding_type):
                             try:
                                 from realtime.manifolds.diffusion_nystrom_diagnostics import (
@@ -1113,11 +1251,11 @@ def run_decoder_comparison(
                     for decoder_name in model_names:
                         if embedding_type == "bayesian_place_tuning" and not is_bayesian_model(decoder_name):
                             continue
-                        _progress(
+                        eval_msg = (
                             f"W={decode_window:.3f}s · {feature_set} · {embedding_type} · "
-                            f"{decoder_name} · {target}",
-                            bump=True,
+                            f"{decoder_name} · {target}"
                         )
+                        _progress(eval_msg, stage="Decoder eval", task=eval_msg)
                         try:
                             fit = _fit_and_evaluate(
                                 X_train, X_test, beh_train, beh_test,
@@ -1147,6 +1285,7 @@ def run_decoder_comparison(
                             }
                             stamp_config_id(skip_row)
                             rows.append(skip_row)
+                            _progress(eval_msg, bump=True, stage="Decoder eval", task=eval_msg)
                             continue
                         row = _base_row(
                             config, data, feature_type, decode_window, update_dt,
@@ -1199,6 +1338,7 @@ def run_decoder_comparison(
                         _maybe_update_best_by_window(
                             best_by_window, best_by_window_meta, target, row, fit,
                         )
+                        _progress(eval_msg, bump=True, stage="Decoder eval", task=eval_msg)
                 timer.add(
                     "comparison_embedding",
                     time.perf_counter() - t_emb,
@@ -1279,6 +1419,10 @@ def run_decoder_comparison(
                     + ", ".join(f"{w:.3f}s" for w in extras)
                 )
                 window_queue.extend(float(w) for w in extras)
+                n_left = count_decoder_eval_jobs(
+                    config, fe_jobs, feature_sets, window_queue[wi:],
+                )
+                tracker.set_total(tracker.completed + n_left + DECODER_TAIL_STEPS)
             refined_once = True
 
     metrics_df = pd.DataFrame(rows)
@@ -1288,6 +1432,13 @@ def run_decoder_comparison(
         output_dir=output_dir,
         experiment_dir=Path(config.input_dir),
         spike_source=str(config.spike_source),
+    )
+    _progress(
+        "Writing comparison metrics…",
+        bump=True,
+        stage="Persist",
+        task="metrics",
+        reserve_tail=False,
     )
     with open(output_dir / "decoder_comparison_metrics.json", "w") as f:
         json.dump(_json_safe(metrics_df.to_dict(orient="records")), f, indent=2)
@@ -1366,6 +1517,13 @@ def run_decoder_comparison(
 
     _save_best_models(best_fits, best_meta, models_dir)
     _save_best_predictions(best_fits, best_meta, examples_dir)
+    _progress(
+        "Saving decoder models…",
+        bump=True,
+        stage="Persist",
+        task="models",
+        reserve_tail=False,
+    )
 
     # Lab-deployable selection for this single-run comparison.
     from realtime.lab_deployable import select_best_lab_deployable_decoders
@@ -1412,7 +1570,16 @@ def _base_row(
         "manifold": embedding_type,
         "feature_mode": compose_feature_mode(feature_type, embedding_type),
         "decode_window_s": decode_window,
+        "window_s": float(decode_window),
         "update_dt_s": float(update_dt if update_dt is not None else config.update_dt),
+        "observation_config_hash": ObservationConfig(
+            window_s=float(decode_window),
+            update_dt=float(update_dt if update_dt is not None else config.update_dt),
+            feature_set=str(feature_set),
+            feature_type=str(feature_type),
+            source_spikes=str(config.spike_source),
+            simulation_run_id=str(config.run_id or getattr(config.input_dir, "name", "")),
+        ).hash(),
         "n_units": len(data["unit_ids"]),
         "max_compute_ms": float(config.max_compute_ms),
         "max_effective_history_s": float(config.max_effective_history_s),

@@ -756,6 +756,28 @@ def run_benchmark(sel: UIBenchmarkSelection, progress_callback=None):
     if sel.decoder_names and not hasattr(cfg, "decoder_names"):
         cfg.decoder_names = tuple(sel.decoder_names)
     try:
-        return _dc.run_decoder_comparison(cfg, progress_callback=progress_callback)
+        result = _dc.run_decoder_comparison(cfg, progress_callback=progress_callback)
     except TypeError:
-        return _dc.run_decoder_comparison(cfg)
+        result = _dc.run_decoder_comparison(cfg)
+    try:
+        from realtime.pipeline_artifacts import config_hash as _cfg_hash
+        from realtime.pipeline_graph import commit_stage, load_or_infer_pipeline
+
+        pipe = load_or_infer_pipeline(Path(sel.input_dir))
+        src = pipe.observation.hash() if pipe.observation is not None else None
+        commit_stage(
+            Path(sel.input_dir),
+            "decoder",
+            run_id=sel.run_id,
+            config_hash=_cfg_hash({
+                "windows": list(sel.decode_windows),
+                "feature_sets": list(sel.feature_sets),
+                "manifolds": list(sel.manifolds),
+                "decoders": list(sel.decoder_names),
+                "targets": list(sel.targets),
+            }),
+            source_hash=src,
+        )
+    except Exception:  # noqa: BLE001
+        pass
+    return result

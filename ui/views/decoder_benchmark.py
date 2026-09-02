@@ -13,6 +13,11 @@ from ui.components.controls import (
     gated_decode_window_selector,
     require_active_dataset,
 )
+from ui.components.pipeline_status import (
+    load_active_pipeline,
+    render_inherited_observation,
+    render_pipeline_status,
+)
 from ui.components.run_status import render_job_autofresh, render_workload_estimate
 from ui.jobs import get_slot_job, submit_job
 from realtime.decoder_comparison import CATEGORICAL_TARGETS, CONTINUOUS_TARGETS
@@ -126,22 +131,60 @@ def _render_decoding_tables(
 def render(outputs_root: Path) -> None:
     st.header("Decoder Benchmark")
     st.caption(
-        "Background job (same paradigm as Feature Construction / Latent Representations). "
-        "Continuous and discrete targets run as separate jobs. "
-        "Progress shows window · feature · manifold · decoder · target with "
-        "last-step and elapsed timing."
+        "Background job. Quick inherits the active observation window; "
+        "Targeted sweeps only the axes you select; Full factorial is an explicit opt-in. "
+        "Changing widgets never starts a run."
     )
 
     dataset = require_active_dataset(outputs_root)
     if dataset is None:
         return
+    render_pipeline_status(dataset, current_stage="decoder")
     spike_source = active_spike_source(dataset, readonly=True)
+
+    mode = st.radio(
+        "Benchmark mode",
+        options=("quick", "targeted", "full"),
+        format_func=lambda k: {
+            "quick": "Quick / interactive",
+            "targeted": "Targeted comparison",
+            "full": "Full factorial (opt-in)",
+        }[k],
+        horizontal=True,
+        key="bench_mode",
+        help=(
+            "Quick: one inherited W, few representations, one or two decoders. "
+            "Targeted: sweep only selected dimensions. "
+            "Full: exhaustive F×E×D×W×target — never starts from a widget change."
+        ),
+    )
+    state.set_benchmark_mode(mode)
+    if mode == "full":
+        st.warning(
+            "Full factorial can be very expensive. It will not run until you "
+            "check the confirmation and click **Run**."
+        )
+        full_ok = st.checkbox(
+            "I want the full factorial search",
+            value=False,
+            key="bench_full_confirm",
+        )
+    else:
+        full_ok = True
 
     st.subheader("Feature sets")
     feature_sets = feature_set_multiselect(
         key="bench_feature_sets",
         defaults=("counts", "counts_dynamics"),
     )
+    if mode == "quick" and feature_sets:
+        pipe = load_active_pipeline(dataset)
+        if pipe is not None and pipe.observation is not None:
+            feature_sets = [pipe.observation.feature_set]
+            st.caption(
+                f"Quick mode uses the active observation feature set "
+                f"`{feature_sets[0]}`."
+            )
 
     st.subheader("Representations")
     st.caption(
@@ -164,21 +207,31 @@ def render(outputs_root: Path) -> None:
             key=f"bench_mans_{qid}",
         )
         manifolds.extend(picked)
+    if mode == "quick":
+        manifolds = manifolds[:3] or list(REPRESENTATION_QUADRANTS["static_linear"])[:2]
 
-    st.subheader("Decode windows")
+    pipe = load_active_pipeline(dataset)
+    inherited, sweep = render_inherited_observation(
+        pipe, allow_benchmark_override=(mode != "quick"),
+    )
     from realtime.transform_cache import list_cached_decode_windows
 
     cached_windows = list_cached_decode_windows(
         dataset, spike_source=spike_source, feature_sets=feature_sets,
     )
-    decode_windows = gated_decode_window_selector(
-        cached_windows,
-        key="bench_windows",
-        defaults=[0.100, 0.250],
-        label="Decode windows",
-    )
+    if mode == "quick" or not sweep:
+        decode_windows = [float(inherited)] if inherited is not None else []
+        if not decode_windows:
+            st.info("Generate an observation on **Feature Construction** first.")
+    else:
+        decode_windows = gated_decode_window_selector(
+            cached_windows,
+            key="bench_windows",
+            defaults=[0.100, 0.250],
+            label="History windows to sweep",
+        )
 
-    max_models = "quick"
+    max_models = "full" if mode == "full" else "quick"
     run_feature_ablation = False
     compare_sources = False
     include_controls = False
@@ -287,40 +340,46 @@ def render(outputs_root: Path) -> None:
         key="bench_family_tab",
     )
     if family_tab == "continuous":
+        fam_targets = CONTINUOUS_TARGETS[:1] if mode == "quick" else CONTINUOUS_TARGETS
+        fam_defaults = UI_DEFAULT_CONTINUOUS_DECODERS[:2] if mode == "quick" else UI_DEFAULT_CONTINUOUS_DECODERS
         _render_family_tab(
             dataset=dataset,
             family="continuous",
-            targets=CONTINUOUS_TARGETS,
+            targets=fam_targets,
             decoder_options=UI_CONTINUOUS_DECODER_OPTIONS,
-            decoder_defaults=UI_DEFAULT_CONTINUOUS_DECODERS,
+            decoder_defaults=fam_defaults,
             table_figures=_CONTINUOUS_TABLE_FIGURES,
             feature_sets=feature_sets,
             manifolds=manifolds,
             decode_windows=decode_windows,
-            busy=busy,
+            busy=busy or not full_ok,
             max_models=max_models,
             compare_sources=compare_sources,
             run_feature_ablation=run_feature_ablation,
             n_components=n_components,
             transform_inventory=inv,
+            mode=mode,
         )
     else:
+        fam_targets = CATEGORICAL_TARGETS[:1] if mode == "quick" else CATEGORICAL_TARGETS
+        fam_defaults = UI_DEFAULT_CATEGORICAL_DECODERS[:1] if mode == "quick" else UI_DEFAULT_CATEGORICAL_DECODERS
         _render_family_tab(
             dataset=dataset,
             family="discrete",
-            targets=CATEGORICAL_TARGETS,
+            targets=fam_targets,
             decoder_options=UI_CATEGORICAL_DECODER_OPTIONS,
-            decoder_defaults=UI_DEFAULT_CATEGORICAL_DECODERS,
+            decoder_defaults=fam_defaults,
             table_figures=_CATEGORICAL_TABLE_FIGURES,
             feature_sets=feature_sets,
             manifolds=manifolds,
             decode_windows=decode_windows,
-            busy=busy,
+            busy=busy or not full_ok,
             max_models=max_models,
             compare_sources=compare_sources,
             run_feature_ablation=run_feature_ablation,
             n_components=n_components,
             transform_inventory=inv,
+            mode=mode,
         )
 
     _submit_pending_benchmark(
@@ -370,6 +429,7 @@ def _render_family_tab(
     run_feature_ablation: bool,
     n_components: list[int],
     transform_inventory: dict | None = None,
+    mode: str = "quick",
 ) -> None:
     st.caption("Targets: `" + "`, `".join(targets) + "`.")
     decoder_names = st.multiselect(
@@ -378,8 +438,30 @@ def _render_family_tab(
         default=[d for d in decoder_defaults if d in decoder_options],
         key=f"bench_decoders_{family}",
     )
+    if mode == "quick" and decoder_names:
+        decoder_names = decoder_names[:2]
     if not decoder_names:
         st.caption("Select at least one decoder.")
+    from realtime.benchmark_plan import plan_benchmark
+
+    pipe = load_active_pipeline(dataset)
+    inherited_w = pipe.inherited_window_s() if pipe is not None else None
+    plan = plan_benchmark(
+        mode=mode,
+        targets=targets,
+        windows=decode_windows,
+        feature_sets=feature_sets,
+        representations=manifolds,
+        decoders=decoder_names,
+        n_components=n_components,
+        inherited_window_s=inherited_w,
+        max_models=max_models,
+    )
+    st.info("\n".join(plan.summary_lines()))
+    if plan.swept_axes:
+        st.caption("Swept axes: " + ", ".join(plan.swept_axes))
+    else:
+        st.caption("No axis is being swept (single configuration).")
     workload = estimate_workload(
         feature_sets=feature_sets,
         manifolds=manifolds,
@@ -390,6 +472,12 @@ def _render_family_tab(
         n_components=n_components,
         n_decoders_hint=len(decoder_names) if decoder_names else None,
         n_targets_hint=len(targets),
+    )
+    workload["planned_configurations"] = int(plan.n_configurations)
+    workload["detail_label"] = (
+        f"{len(plan.targets)} target(s) · {len(plan.windows)} window(s) · "
+        f"{len(plan.feature_sets)} feature(s) · {len(plan.representations)} representation(s) · "
+        f"{len(plan.decoders)} decoder(s)"
     )
     inv = transform_inventory or {}
     n_requested = int(inv.get("n_requested") or 0)
@@ -508,10 +596,6 @@ def _submit_pending_benchmark(
     def _job_fn(*, progress_callback=None):
         try:
             result = run_benchmark(sel, progress_callback=progress_callback)
-            if progress_callback is not None:
-                progress_callback(
-                    "Writing feature/decoder × window tables…", 1, 1,
-                )
             table_paths, table_errors = _regenerate_decoding_tables(Path(sel.input_dir))
             meta.status = "completed"
             save_run_metadata(meta, output_dir)

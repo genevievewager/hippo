@@ -686,14 +686,8 @@ def run_quadrant_ridge_diagnostics(
 
     methods = [m for m in RIDGE_QUADRANT_METHODS if m["quadrant"] != "dynamic_nonlinear"]
     results: dict[str, MethodDiagnostics] = {}
-    total = len(methods)
+    total = len(methods) + 1
     for i, method in enumerate(methods, start=1):
-        if progress_callback:
-            progress_callback(
-                f"Ridge diagnostics · {method['label']}",
-                i,
-                total,
-            )
         diag = _evaluate_method(
             experiment_dir=input_dir,
             spike_source=spike_source,
@@ -714,6 +708,12 @@ def run_quadrant_ridge_diagnostics(
         results[str(method["id"])] = diag
         if diag.available and diag.decoded is not None:
             diag.decoded.to_csv(out_root / f"decoded_{method['id']}.csv", index=False)
+        if progress_callback:
+            progress_callback(
+                f"Ridge diagnostics · {method['label']}",
+                i,
+                total,
+            )
 
     true_decoded = _decoded_dataframe(
         beh_test,
@@ -828,4 +828,6 @@ def run_quadrant_ridge_diagnostics(
     sidecar_path = out_root / "quadrant_ridge_summary.json"
     sidecar_path.write_text(json.dumps(sidecar, indent=2) + "\n")
     sidecar["sidecar_path"] = str(sidecar_path)
+    if progress_callback:
+        progress_callback("Wrote ridge diagnostic figures", total, total)
     return sidecar

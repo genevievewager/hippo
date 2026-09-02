@@ -123,6 +123,11 @@ class SpikeFeatureTransformer(BaseEstimator, TransformerMixin):
                 self.group_std_[str(g)] = sd
         return self
 
+    def transform_one(self, x: np.ndarray) -> np.ndarray:
+        """Apply the frozen train-fit transform to a single observation."""
+        row = np.asarray(x, dtype=float).reshape(1, -1)
+        return np.asarray(self.transform(row), dtype=float).ravel()
+
     def transform(self, X: np.ndarray) -> np.ndarray:
         X = np.asarray(X, dtype=float)
         ft = self.feature_type

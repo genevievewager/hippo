@@ -233,16 +233,17 @@ def plot_feature_panel_pages(
 
     diagnostics: dict[str, Any] = {}
     n = max(len(feature_sets), 1)
+    panel_total = n + len(PANEL_KINDS)
     for i, fs in enumerate(feature_sets, start=1):
         window = float(resolved[fs]["window_s"])
-        if progress_callback:
-            progress_callback(f"Feature panel `{fs}` @ {window:.3f}s", i, n + len(PANEL_KINDS))
         diagnostics[fs] = compute_feature_diagnostics(
             experiment_dir,
             fs,
             spike_source=spike_source,
             decode_window=window,
         )
+        if progress_callback:
+            progress_callback(f"Feature panel `{fs}` @ {window:.3f}s", i, panel_total)
 
     paths: dict[str, str] = {}
     drawers = {
@@ -258,8 +259,6 @@ def plot_feature_panel_pages(
 
     rows, cols = _grid_shape(len(feature_sets))
     for j, kind in enumerate(PANEL_KINDS, start=1):
-        if progress_callback:
-            progress_callback(f"Writing fig_feature_panel_{kind}", n + j, n + len(PANEL_KINDS))
         fig, axes = plt.subplots(rows, cols, figsize=(4.2 * cols, 3.4 * rows), squeeze=False)
         last_im = None
         for idx, fs in enumerate(feature_sets):
@@ -291,6 +290,8 @@ def plot_feature_panel_pages(
             feature_set=",".join(feature_sets),
             run_id=run_id,
         )
+        if progress_callback:
+            progress_callback(f"Writing fig_feature_panel_{kind}", n + j, panel_total)
 
     meta_path = out_dir / "feature_panel_windows.json"
     import json

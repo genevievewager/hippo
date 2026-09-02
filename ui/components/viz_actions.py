@@ -107,7 +107,7 @@ def render_generate_viz_panel(
     progress = st.progress(0, text="Starting…")
 
     def _cb(msg: str, step: int, n: int) -> None:
-        progress.progress(min(step / max(n, 1), 1.0), text=msg)
+        progress.progress(min(step / max(n, 1), 0.99), text=f"[{step}/{n}] {msg}")
 
     try:
         with st.spinner(f"Generating figures → {dataset.name}/figures"):

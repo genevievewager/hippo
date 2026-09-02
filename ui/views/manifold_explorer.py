@@ -22,6 +22,10 @@ from ui.components.controls import (
     active_spike_source,
     require_active_dataset,
 )
+from ui.components.pipeline_status import (
+    render_inherited_observation,
+    render_pipeline_status,
+)
 from ui.components.run_status import (
     render_job_autofresh,
     render_run_action_row,
@@ -456,6 +460,7 @@ def render(outputs_root: Path) -> None:
     dataset = require_active_dataset(outputs_root)
     if dataset is None:
         return
+    render_pipeline_status(dataset, current_stage="representation")
     spike_source = active_spike_source(dataset, readonly=True)
 
     _render_job_status(dataset, spike_source)
@@ -525,15 +530,28 @@ def _render_run_analysis(
         key=mans_key,
     )
     from realtime.transform_cache import list_cached_decode_windows
+    from ui.components.pipeline_status import load_active_pipeline
 
     cached_windows = list_cached_decode_windows(
         dataset, spike_source=spike_source, feature_sets=feature_sets,
     )
-    windows = _gated_windows_for_page(
-        cached_windows,
-        key=wins_prefix,
-        defaults=[0.100, 0.250, 0.500],
-    )
+    pipe = load_active_pipeline(dataset)
+    inherited, sweep = render_inherited_observation(pipe, allow_benchmark_override=True)
+    if sweep:
+        windows = _gated_windows_for_page(
+            cached_windows,
+            key=wins_prefix,
+            defaults=[0.100, 0.250, 0.500],
+        )
+    elif inherited is not None:
+        windows = [float(inherited)]
+        st.caption("Pipeline mode uses the inherited observation window only.")
+    else:
+        windows = _gated_windows_for_page(
+            cached_windows,
+            key=wins_prefix,
+            defaults=[0.250],
+        )
     n_components = st.select_slider(
         "Components", options=[2, 3, 5, 8, 10], key=k_key,
     )
@@ -669,15 +687,26 @@ def _submit_pending_job() -> None:
     label = pending.get("label") or "Latent representation"
 
     def _job_fn(*, progress_callback=None):
-        meta = run_manifold_analysis(req, progress_callback=progress_callback)
+        last = {"step": 0, "total": 1}
+
+        def _analysis_cb(msg: str, step: int, n: int, **_kw) -> None:
+            last["step"] = int(step)
+            last["total"] = int(n) + _N_WINNER_EXPECTED
+            if progress_callback:
+                progress_callback(msg, last["step"], last["total"])
+
+        meta = run_manifold_analysis(req, progress_callback=_analysis_cb)
         try:
             from visualization.publication_winner_plots import (
                 generate_publication_winner_figures,
             )
 
-            def _winner_cb(msg: str, step: int, n: int) -> None:
+            base = last["step"]
+            grand = last["total"]
+
+            def _winner_cb(msg: str, step: int, n: int, **_kw) -> None:
                 if progress_callback:
-                    progress_callback(f"Winner PNGs: {msg}", step, n)
+                    progress_callback(f"Winner PNGs: {msg}", base + int(step), grand)
 
             paths = generate_publication_winner_figures(
                 Path(req.input_dir),

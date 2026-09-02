@@ -35,6 +35,8 @@ KEY_VIZ_GENERATE_REQUESTED = "hippo_viz_generate_requested"
 KEY_REPLAY_INDEX = "hippo_replay_index"
 KEY_SELECTED_RESULT_RUN = "hippo_selected_result_run"
 KEY_USE_CONFIG_FOR_REPLAY = "hippo_use_config_for_replay"
+KEY_PIPELINE_MODE = "hippo_pipeline_mode"
+KEY_BENCHMARK_MODE = "hippo_benchmark_mode"
 
 # Backward-compatible alias
 KEY_DATASET = KEY_ACTIVE_DATASET
@@ -64,6 +66,8 @@ def init_session_state(outputs_root: Path | None = None) -> None:
         KEY_REPLAY_INDEX: 0,
         KEY_SELECTED_RESULT_RUN: None,
         KEY_USE_CONFIG_FOR_REPLAY: None,
+        KEY_PIPELINE_MODE: "pipeline",
+        KEY_BENCHMARK_MODE: "quick",
     }
     for key, value in defaults.items():
         if key not in st.session_state:
@@ -152,3 +156,25 @@ def consume_action(flag_key: str) -> bool:
         st.session_state[flag_key] = False
         return True
     return False
+
+
+def get_pipeline_mode() -> str:
+    raw = str(st.session_state.get(KEY_PIPELINE_MODE) or "pipeline")
+    return raw if raw in {"pipeline", "benchmark"} else "pipeline"
+
+
+def set_pipeline_mode(mode: str) -> None:
+    st.session_state[KEY_PIPELINE_MODE] = (
+        mode if mode in {"pipeline", "benchmark"} else "pipeline"
+    )
+
+
+def get_benchmark_mode() -> str:
+    raw = str(st.session_state.get(KEY_BENCHMARK_MODE) or "quick")
+    return raw if raw in {"quick", "targeted", "full"} else "quick"
+
+
+def set_benchmark_mode(mode: str) -> None:
+    st.session_state[KEY_BENCHMARK_MODE] = (
+        mode if mode in {"quick", "targeted", "full"} else "quick"
+    )

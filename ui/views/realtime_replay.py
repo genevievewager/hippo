@@ -19,6 +19,11 @@ from ui.components.plots import (
     error_over_time,
     speed_true_vs_pred,
 )
+from ui.components.pipeline_status import (
+    load_active_pipeline,
+    render_inherited_observation,
+    render_pipeline_status,
+)
 from ui.components.run_status import render_job_autofresh
 from ui.jobs import get_slot_job, submit_job
 from ui.services.realtime import (
@@ -143,6 +148,7 @@ def render(outputs_root: Path) -> None:
     dataset = require_active_dataset(outputs_root)
     if dataset is None:
         return
+    render_pipeline_status(dataset, current_stage="replay")
     spike_source = active_spike_source(dataset, readonly=True)
 
     slot = "realtime:quadrant"
@@ -293,10 +299,9 @@ def _render_quadrant_figures(dataset: Path) -> None:
 
 def _render_quadrant_run(dataset: Path, spike_source: str, *, slot: str) -> None:
     st.markdown(
-        "Replay **one** behavioral target at **one** generated window across the "
-        "three realtime-capable quadrants (`global_pca`, `diffusion_nystrom`, "
-        "`global_lds`). Reuses Latent Representations embeddings; Decoder "
-        "Benchmark heads when present. Dynamic nonlinear is left empty."
+        "Replay **one** behavioral target using the **model's saved observation** "
+        "(W is not re-selected). Quadrant comparison uses the inherited pipeline "
+        "window unless you explicitly sweep cached windows."
     )
     from realtime.decoder_comparison import ALL_TARGETS
 
@@ -306,19 +311,29 @@ def _render_quadrant_run(dataset: Path, spike_source: str, *, slot: str) -> None
         index=0,
         key="rt_quad_target",
     )
+    pipe = load_active_pipeline(dataset)
+    inherited, sweep = render_inherited_observation(pipe, allow_benchmark_override=True)
     cached_windows = list_replay_ready_windows(dataset, spike_source)
-    window_sel = gated_decode_window_selector(
-        cached_windows,
-        key="rt_quad_w",
-        defaults=[0.250],
-        label="Decode window",
-        multiple=False,
-        disabled_help=(
-            "Run Decoder Benchmark for this window and the three realtime "
-            "representations first."
-        ),
-    )
-    decode_window = window_sel[0] if window_sel else None
+    if sweep:
+        window_sel = gated_decode_window_selector(
+            cached_windows,
+            key="rt_quad_w",
+            defaults=[inherited or 0.250],
+            label="History windows (benchmark sweep)",
+            multiple=False,
+            disabled_help=(
+                "Run Decoder Benchmark for this window and the three realtime "
+                "representations first."
+            ),
+        )
+        decode_window = window_sel[0] if window_sel else None
+    else:
+        decode_window = float(inherited) if inherited is not None else None
+        if decode_window is not None and decode_window not in cached_windows:
+            st.warning(
+                f"Inherited W={decode_window*1000:.0f} ms is not replay-ready yet. "
+                "Run Decoder Benchmark for this observation, or enable a window sweep."
+            )
     cached_ks: list[int] = []
     if decode_window is not None:
         cached_ks = list_cached_n_components(dataset, spike_source, float(decode_window))

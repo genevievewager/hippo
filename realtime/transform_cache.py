@@ -766,16 +766,30 @@ def save_feature_transform_checkpoint(
     )
     path.mkdir(parents=True, exist_ok=True)
     transformer.save(path)
-    enrich_transform_meta(
-        path,
-        {
+    extra = {
+        "feature_set": feature_set,
+        "feature_type": feature_type_eff,
+        "feature_type_eff": feature_type_eff,
+        "decode_window_s": float(decode_window),
+        "window_s": float(decode_window),
+        **(extra_meta or {}),
+    }
+    enrich_transform_meta(path, extra)
+    try:
+        from realtime.pipeline_artifacts import write_provenance
+
+        write_provenance(path, {
+            "kind": "SpikeFeatureTransformer",
+            "window_s": float(decode_window),
             "feature_set": feature_set,
             "feature_type": feature_type_eff,
-            "feature_type_eff": feature_type_eff,
-            "decode_window_s": float(decode_window),
-            **(extra_meta or {}),
-        },
-    )
+            "origin": extra.get("origin", "computed"),
+            "includes_fitted_transform": True,
+            "train_frac": extra.get("train_frac"),
+            "seed": extra.get("seed"),
+        })
+    except Exception:  # noqa: BLE001
+        pass
     return path
 
 
