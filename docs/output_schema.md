@@ -4,6 +4,7 @@ Concise tree (see root README for the public summary):
 
 ```text
 outputs/<run>/
+├── pipeline_run.json          # committed observation + stale/fresh stage ledger
 ├── behavior.csv
 ├── units.csv
 ├── spikes_ground_truth.csv
@@ -72,7 +73,8 @@ Key files (per source):
 - `decoded_examples/best_{target}_predictions.csv` — overall winner only (legacy)
 - `best_decoder_by_target.csv` / related selection tables (`best_config_id` on the winner)
 - `models/manifold_transforms/...`  # fitted `E` (UI Latent Representations + comparison reuse)
-- `models/feature_transforms/...`   # fitted `F` extractors when used
+- `models/feature_transforms/...`   # fitted `F` extractors when used (`provenance.json` + `meta.json`)
+- `models/feature_datasets/...`     # cached unfitted observation matrices `X` (keyed by observation hash)
 - `models/neural_feature_extractors/...`
 - `models/*.joblib`
 

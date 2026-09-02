@@ -368,10 +368,23 @@ def apply_trajectory_to_config(
     return config
 
 
-def run_pipeline(config: SimConfig) -> dict:
-    """Run full simulation and save outputs."""
+def run_pipeline(config: SimConfig, progress_callback=None) -> dict:
+    """Run full simulation and save outputs.
+
+    ``progress_callback(message, step, total)`` is optional. Stages report
+    after each existing ``[n/7]`` block completes (not during simulate_*).
+    """
     config.output_dir.mkdir(parents=True, exist_ok=True)
     rng = np.random.default_rng(config.seed)
+    n_stages = 7
+
+    def _after(stage: int, label: str) -> None:
+        if progress_callback is None:
+            return
+        try:
+            progress_callback(label, int(stage), n_stages)
+        except TypeError:
+            pass
 
     print("[1/7] Simulating behavior (RatInABox)...", flush=True)
     behavior_result = simulate_behavior(config)
@@ -386,6 +399,7 @@ def run_pipeline(config: SimConfig) -> dict:
         "acceleration_cm_s2": behavior.acceleration_cm_s2,
     })
     behavior_df.to_csv(config.output_dir / "behavior.csv", index=False)
+    _after(1, "Simulating behavior (RatInABox)")
 
     print("[2/7] Building anatomy and unit assignments...", flush=True)
     if config.anatomy_table:
@@ -409,6 +423,7 @@ def run_pipeline(config: SimConfig) -> dict:
 
     anatomy_df.to_csv(config.output_dir / "anatomy_regions.csv", index=False, na_rep="NA")
     region_table = anatomy_df.to_dict(orient="records")
+    _after(2, "Building anatomy and unit assignments")
 
     print("[3/7] Generating neural activity (RatInABox)...", flush=True)
     units, rates, neural_metadata = simulate_neural_activity(
@@ -437,15 +452,18 @@ def run_pipeline(config: SimConfig) -> dict:
     n_excluded = int((~units_df["include_in_decoder"].astype(bool)).sum()) if len(units_df) else 0
 
     anatomy = AnatomyMap(units=units, region_table=region_table, channel_to_region={})
+    _after(3, "Generating neural activity (RatInABox)")
 
     print("[4/7] Generating ground-truth spike trains...", flush=True)
     spike_trains = generate_spike_trains(rates, config, rng, time_axis=behavior.time_s)
     gt_df = _spikes_to_dataframe(spike_trains, units_df)
     gt_df.to_csv(config.output_dir / "spikes_ground_truth.csv", index=False)
+    _after(4, "Generating ground-truth spike trains")
 
     print("[5/7] Building templates and simulating Neuropixels recording...", flush=True)
     templates = build_unit_templates(anatomy, config, rng)
     events = simulate_recording(spike_trains, templates, config, rng)
+    _after(5, "Building templates and simulating Neuropixels recording")
 
     print("[6/7] Kilosort-like re-extraction...", flush=True)
     sorted_spikes = kilosort_like_sort(events, templates, spike_trains, config, rng)
@@ -457,6 +475,7 @@ def run_pipeline(config: SimConfig) -> dict:
         "confidence": s.confidence,
     } for s in sorted_spikes]
     pd.DataFrame(sorted_rows).to_csv(config.output_dir / "spikes_sorted.csv", index=False)
+    _after(6, "Kilosort-like re-extraction")
 
     print("[7/7] Saving summary + trajectory figures...", flush=True)
     # Keep anatomy_regions_used.csv identical to the table driving the simulation.
@@ -576,6 +595,7 @@ def run_pipeline(config: SimConfig) -> dict:
     with open(config.output_dir / "trajectory_meta.json", "w") as f:
         json.dump(config.trajectory_meta or {}, f, indent=2, default=str)
 
+    _after(7, "Saving summary + trajectory figures")
     print("Done.", flush=True)
     print(json.dumps(summary, indent=2), flush=True)
     return summary

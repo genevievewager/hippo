@@ -95,6 +95,18 @@ def build_replay_config(
             (float(decode_window),),
             spike_source=str(spike_source),
         )
+    else:
+        # A saved model permanently owns its observation window.
+        try:
+            payload = load_best_realtime_decoders(Path(input_dir))
+            entry = migrate_legacy_decoder_entry(
+                (payload.get("targets") or {}).get(closed_loop_target) or {}
+            )
+            saved_w = entry.get("window_s")
+            if saved_w is not None:
+                decode_window = float(saved_w)
+        except Exception:  # noqa: BLE001 — no registry: keep caller window
+            pass
     return RealtimeReplayConfig(
         input_dir=Path(input_dir),
         output_dir=Path(output_dir),
@@ -493,7 +505,8 @@ def run_quadrant_comparison(
     occupied = [
         q for q in QUADRANT_ORDER if REALTIME_QUADRANT_DEFAULTS.get(q)
     ]
-    total = max(len(occupied), 1)
+    n_quad = max(len(occupied), 1)
+    total = n_quad + 1
     runs: dict[str, Any] = {}
     decoded_by_q: dict[str, pd.DataFrame | None] = {
         "dynamic_nonlinear": None,
@@ -535,12 +548,6 @@ def run_quadrant_comparison(
                 + (f": {missing}" if missing is not None else ".")
                 + " Run Decoder Benchmark with this representation and window."
             )
-        if progress_callback:
-            progress_callback(
-                f"Replay {label} ({emb}) · loaded E from cache · loaded D from cache",
-                i,
-                total,
-            )
         out_dir = input_dir / "realtime_decoding" / "quadrants" / qid
         run_realtime_pipeline(
             input_dir=input_dir,
@@ -567,6 +574,12 @@ def run_quadrant_comparison(
             "decoder_source": "cached",
             "n_components": k,
         }
+        if progress_callback:
+            progress_callback(
+                f"Replay {label} ({emb}) · loaded E from cache · loaded D from cache",
+                i,
+                total,
+            )
         stability_png, behavior_png = _write_quadrant_figures(
             input_dir,
             decode_window=float(decode_window),
@@ -601,6 +614,24 @@ def run_quadrant_comparison(
     side_path.parent.mkdir(parents=True, exist_ok=True)
     side_path.write_text(json.dumps(sidecar, indent=2) + "\n")
     sidecar["sidecar_path"] = str(side_path)
+    try:
+        from realtime.pipeline_artifacts import config_hash as _cfg_hash
+        from realtime.pipeline_graph import commit_stage
+
+        commit_stage(
+            Path(input_dir),
+            "replay",
+            config_hash=_cfg_hash({
+                "target": target,
+                "window_s": float(decode_window),
+                "update_dt": float(update_dt),
+                "n_components": k,
+            }),
+        )
+    except Exception:  # noqa: BLE001
+        pass
+    if progress_callback:
+        progress_callback("Wrote replay figures", total, total)
     return sidecar
 
 

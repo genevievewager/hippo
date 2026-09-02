@@ -9,19 +9,15 @@ Hippocampal population simulation
    ↓
 Neuropixels acquisition degradation & Spike sorting
    ↓
-Causal neural features
+Observation construction O(W, F)     ← history window W lives here
    ↓
-Static OR dynamic neural representation
+Representation E
    ↓
-Behavioral decoder
+Decoder D
    ↓
-Deployment selection
+Deployment / closed-loop C
    ↓
-Realtime replay
-   ↓
-Closed-loop policy
-   ↓
-Live bundle (Replay / Open Ephys stub)
+Realtime replay → live bundle
 ```
 
 The complete BCI design space spans
@@ -32,16 +28,16 @@ F × E × D × W × C
 
 where:
 
-* `F` = neural observation construction from spikes
+* `F` = neural observation construction from spikes (owns causal window `W`)
 * `E` = population-state representation applied to that observation
 * `D` = behavioral decoder
-* `W` = causal spike integration window
+* `W` = causal spike integration window `[t−W, t)` — part of the observation, not a free decoder knob
 * `C` = closed-loop rule
 
 Architecturally:
 
 ```text
-spikes → F → neural observation → E → latent/state → D → prediction → C (policy)
+spikes → Observation O(W, F) → Representation E → Decoder D → Deployment / closed-loop C
 ```
 
 The core decoder benchmark searches `F × E × D × W`. Closed-loop rule `C` is then evaluated on decoded predictions (and during registry replay), not as an additional axis of the same Cartesian decoder grid. Selection uses **sorted spikes only**; ground-truth spikes are oracle / diagnostic / non-deployable. Figures are a separate inspection step and never retrain models.
@@ -97,7 +93,55 @@ Experiment Setup
 → Live Deployment
 ```
 
-Use **Experiment Setup** to generate or load a dataset (sets the shared **Active Dataset**), then continue through the pages above. Page roles: Feature Construction inspects `F`; Latent Representations fits/caches `E` in a static/dynamic × linear/nonlinear grid; Decoder Benchmark searches `D × W` and reuses cached transforms; Realtime Replay compares the three realtime-capable cells (`global_pca`, `diffusion_nystrom`, `global_lds`); Live Deployment packs a frozen `F → E → D` bundle (Replay implemented; Open Ephys stub).
+Use **Experiment Setup** to generate or load a dataset (sets the shared **Active Dataset**), then continue through the pages above. Pages are views into one connected pipeline run (`pipeline_run.json` on the experiment). Feature Construction owns the active observation `O(W, F)`; later pages **inherit** that window in pipeline mode rather than choosing a new `W`. Decoder Benchmark can still sweep cached windows in Targeted / Full modes. Changing an upstream observation marks representation, decoder, and replay **stale** until you explicitly re-run those stages.
+
+### Active pipeline window vs window benchmark sweep
+
+* **Active pipeline window** — one committed observation on Feature Construction (source spikes, feature set, `W`, `update_dt`). Downstream pipeline pages display it; a model trained at 250 ms is permanently a 250 ms model.
+* **Window benchmark sweep** — Targeted / Full benchmark may evaluate several cached `W` values. The selected model's `W` is stored with that model and loaded automatically for realtime replay / deployment.
+
+### Caching and provenance
+
+Expensive deterministic nodes (feature matrices, fitted `F` transforms, fitted `E` transforms) are keyed by their true dependencies, for example:
+
+```text
+hash(simulation_run_id, spike_source, W, update_dt, feature_config [, representation, seed, train_frac])
+```
+
+Fitted transforms include `train_frac` and `seed` so test data cannot leak into a reused fit. `provenance.json` next to a cache records whether a result was newly computed or loaded from cache. Stale / incompatible stages are recorded in `pipeline_run.json`, not deleted.
+
+### Quick, Targeted, and Full benchmark modes
+
+| Mode | Typical grid | Starts how |
+|------|----------------|------------|
+| **Quick / interactive** | 1 target, 1 inherited `W`, 1 feature set, few representations, 1–2 decoders | Explicit **Run** |
+| **Targeted** | Sweep only the axes you select (e.g. `W` with E/D fixed) | Explicit **Run**; plan shows which axes are swept |
+| **Full** | Broad `F × E × D × W × target` | Explicit opt-in checkbox **and** **Run** — never from a widget change |
+
+CLI profiles (`quick` / `standard` / `manifolds` / `full` / `feature_robustness`) still set decoder-search defaults; they are not replaced.
+
+A four-stage search helper (`realtime.benchmark_plan.default_staged_search`) can compare timescales, then representations, then decoders, then finalists. It is not auto-applied to saved results.
+
+### Invalidation
+
+| You change | Becomes stale |
+|------------|----------------|
+| Simulation / dataset | Features, representation, decoder, replay |
+| Feature Construction observation (`W`, feature set, spike source) | Representation, decoder, replay |
+| Representation | Decoder, replay |
+| Decoder | Replay |
+
+Widgets can be edited freely. **Run / Recompute** commits a configuration and writes artifacts. Previously computed downstream results remain visible but marked stale until recomputed.
+
+### Artifact dependency graph
+
+```text
+Replay / deployment bundle
+ └── DecoderResult          (target, D, inherited W, fitted decoder)
+      └── RepresentationResult  (E, source feature hash, inherited W)
+           └── FeatureDataset   (X, timestamps, W, update_dt, feature set, spike source)
+                └── SimulationResult
+```
 
 ### CLI happy path
 

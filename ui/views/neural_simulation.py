@@ -14,6 +14,7 @@ from ui.artifacts.models import (
 from ui.artifacts.discovery import filter_artifacts
 from ui.artifacts.rendering import load_artifacts, render_tabbed_gallery
 from ui.components.controls import metric_row, require_active_dataset, spike_source_selector
+from ui.components.pipeline_status import render_pipeline_status
 from ui.services.datasets import inspect_dataset
 from ui.services.simulation import available_trajectories
 from ui import state
@@ -33,6 +34,7 @@ def render(outputs_root: Path) -> None:
     dataset = require_active_dataset(outputs_root)
     if dataset is None:
         return
+    render_pipeline_status(dataset, current_stage="simulation")
     spike_source = spike_source_selector(dataset, key="sim_spike_source")
 
     if "sim_section" not in st.session_state:
@@ -121,12 +123,20 @@ def _render_new_sim(outputs_root: Path) -> None:
             trajectory=None if trajectory == "(default)" else trajectory,
             generate_diagnostic_figures=True,
         )
-        with st.spinner(f"Running simulation → {outputs_root / cfg.dataset_name}"):
-            try:
-                summary = generate_ui_dataset(cfg)
-                path = Path(summary["output_dir"])
-                st.success(f"Simulation complete: {path}")
-                state.set_active_dataset(path)
-            except Exception as exc:
-                logger.exception("Simulation failed")
-                st.error(f"Simulation failed: {exc}")
+        progress = st.progress(0, text="Starting simulation…")
+
+        def _cb(msg: str, step: int, n: int) -> None:
+            progress.progress(
+                min(step / max(n, 1), 0.99),
+                text=f"[{step}/{n}] {msg}",
+            )
+
+        try:
+            summary = generate_ui_dataset(cfg, progress_callback=_cb)
+            progress.progress(1.0, text="Complete.")
+            path = Path(summary["output_dir"])
+            st.success(f"Simulation complete: {path}")
+            state.set_active_dataset(path)
+        except Exception as exc:
+            logger.exception("Simulation failed")
+            st.error(f"Simulation failed: {exc}")

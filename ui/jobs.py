@@ -15,9 +15,20 @@ import uuid
 from dataclasses import dataclass, field
 from typing import Any, Callable
 
+from realtime.work_progress import (
+    EMA_ALPHA,
+    STATUS_ERROR,
+    STATUS_RUNNING,
+    append_progress_history,
+    eta_seconds,
+    prior_unit_seconds,
+    running_fraction,
+    update_ema,
+)
+
 logger = logging.getLogger(__name__)
 
-ProgressCallback = Callable[[str, int, int], None]
+ProgressCallback = Callable[..., None]
 JobFn = Callable[..., Any]
 
 
@@ -30,6 +41,8 @@ class JobState:
     message: str = ""
     step: int = 0
     total: int = 1
+    stage: str = ""
+    task: str = ""
     error: str | None = None
     traceback: str | None = None
     result: Any = None
@@ -39,6 +52,9 @@ class JobState:
     finished_at: float | None = None
     eta_remaining_s: float | None = None
     eta_updated_at: float | None = None
+    ema_unit_s: float | None = None
+    n_measured_units: int = 0
+    last_unit_at: float | None = None
 
     @property
     def is_active(self) -> bool:
@@ -51,8 +67,30 @@ class JobState:
         return max(t1 - t0, 0.0)
 
     def progress_fraction(self) -> float:
-        total = max(int(self.total), 1)
-        return min(max(int(self.step), 0) / total, 1.0)
+        if self.status == "completed":
+            return 1.0
+        status = STATUS_RUNNING if self.is_active else STATUS_ERROR
+        return running_fraction(self.step, self.total, status=status)
+
+    def live_eta_s(self) -> float | None:
+        if self.status == "completed":
+            return 0.0
+        if not self.is_active:
+            return None
+        prior = self.meta.get("prior_unit_s")
+        try:
+            prior_f = float(prior) if prior is not None else None
+        except (TypeError, ValueError):
+            prior_f = None
+        if prior_f is None:
+            prior_f = prior_unit_seconds(str(self.meta.get("operation") or self.kind))
+        return eta_seconds(
+            completed=self.step,
+            total=self.total,
+            ema_unit_s=self.ema_unit_s,
+            n_measured=self.n_measured_units,
+            prior_unit_s=prior_f,
+        )
 
 
 _LOCK = threading.RLock()
@@ -104,21 +142,51 @@ def update_progress(
     message: str,
     step: int,
     total: int,
+    *,
+    stage: str | None = None,
+    task: str | None = None,
 ) -> None:
     with _LOCK:
         job = _JOBS.get(job_id)
         if job is None:
             return
+        now = time.time()
+        new_step = max(int(step), 0)
+        new_total = max(int(total), 1)
+        if new_step > job.step:
+            n_add = new_step - job.step
+            t_ref = job.last_unit_at or job.started_at or now
+            sample = max(now - t_ref, 0.0) / n_add
+            job.ema_unit_s = update_ema(job.ema_unit_s, sample, alpha=EMA_ALPHA)
+            job.n_measured_units += n_add
+            job.last_unit_at = now
         job.message = str(message)
-        job.step = int(step)
-        job.total = max(int(total), 1)
+        job.step = new_step
+        job.total = new_total
+        if stage is not None:
+            job.stage = str(stage)
+        if task is not None:
+            job.task = str(task)
+        job.eta_remaining_s = job.live_eta_s()
+        job.eta_updated_at = now
         if job.status == "pending":
             job.status = "running"
 
 
 def make_progress_callback(job_id: str) -> ProgressCallback:
-    def _cb(message: str, step: int, total: int) -> None:
-        update_progress(job_id, message, step, total)
+    def _cb(
+        message: str,
+        step: int,
+        total: int,
+        *,
+        stage: str = "",
+        task: str = "",
+    ) -> None:
+        update_progress(
+            job_id, message, step, total,
+            stage=stage or None,
+            task=task or None,
+        )
 
     return _cb
 
@@ -149,13 +217,19 @@ def submit_job(
                 return existing
 
         job_id = _new_id(kind)
+        job_meta = dict(meta or {})
+        job_meta.setdefault("operation", kind)
+        if "prior_unit_s" not in job_meta:
+            prior = prior_unit_seconds(str(job_meta.get("operation") or kind))
+            if prior is not None:
+                job_meta["prior_unit_s"] = prior
         job = JobState(
             job_id=job_id,
             kind=kind,
             label=label,
             status="pending",
             message="Queued…",
-            meta=dict(meta or {}),
+            meta=job_meta,
         )
         _JOBS[job_id] = job
         if slot:
@@ -177,6 +251,15 @@ def submit_job(
                 job.message = "Complete"
                 job.step = max(job.step, job.total)
                 job.finished_at = time.time()
+                job.eta_remaining_s = 0.0
+            try:
+                append_progress_history(
+                    str(job.meta.get("operation") or job.kind),
+                    job.elapsed_s,
+                    max(int(job.total), 1),
+                )
+            except Exception:  # noqa: BLE001
+                pass
         except Exception as exc:  # noqa: BLE001
             logger.exception("Background job %s failed", job_id)
             with _LOCK:
@@ -185,6 +268,7 @@ def submit_job(
                 job.traceback = traceback.format_exc()
                 job.message = f"Failed: {exc}"
                 job.finished_at = time.time()
+                job.eta_remaining_s = None
 
     thread = threading.Thread(
         target=_runner,
@@ -206,7 +290,10 @@ def active_job_summary() -> list[dict[str, Any]]:
             "message": job.message,
             "step": job.step,
             "total": job.total,
+            "stage": job.stage,
+            "task": job.task,
             "elapsed_s": job.elapsed_s,
             "fraction": job.progress_fraction(),
+            "eta_s": job.live_eta_s(),
         })
     return out

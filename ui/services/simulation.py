@@ -216,12 +216,18 @@ def generate_ui_dataset(
         raise ValueError("; ".join(errors))
 
     sim = build_sim_config(cfg)
-    summary = generate_dataset(sim, progress_callback=progress_callback)
+    n_total = 8 if cfg.generate_diagnostic_figures else 7
+
+    def _pipe_cb(msg: str, step: int, n: int) -> None:
+        if progress_callback:
+            progress_callback(msg, step, n_total)
+
+    summary = generate_dataset(sim, progress_callback=_pipe_cb)
     save_simulation_config_yaml(cfg, sim)
 
     if cfg.generate_diagnostic_figures:
         if progress_callback:
-            progress_callback("Generating diagnostic figures...", 8, 8)
+            progress_callback("Generating diagnostic figures...", 7, 8)
         try:
             from visualization.experiment_viz import generate_experiment_figures
 
@@ -235,6 +241,8 @@ def generate_ui_dataset(
         except Exception as exc:  # noqa: BLE001 — figures are best-effort after sim
             summary = dict(summary)
             summary["figure_generation_warning"] = str(exc)
+        if progress_callback:
+            progress_callback("Diagnostic figures ready", 8, 8)
 
     summary = dict(summary)
     summary["output_dir"] = str(sim.output_dir)

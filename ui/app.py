@@ -54,11 +54,9 @@ st.sidebar.markdown(
 )
 
 from ui.components.controls import render_active_dataset_sidebar
-from ui.components.run_status import render_sidebar_jobs
 
 render_active_dataset_sidebar(OUTPUTS_ROOT)
 st.sidebar.markdown(f"`outputs/` → `{OUTPUTS_ROOT}`")
-render_sidebar_jobs()
 
 
 def _page(fn):

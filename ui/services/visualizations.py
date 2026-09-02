@@ -62,9 +62,6 @@ def generate_visualizations(
     if not exp.is_dir():
         raise FileNotFoundError(f"Experiment directory not found: {exp}")
 
-    if progress_callback:
-        progress_callback("Generating experiment figures…", 1, 2)
-
     result: VizResult = generate_experiment_figures(
         experiment_dir=exp,
         figures_dir=exp / "figures",
@@ -73,10 +70,8 @@ def generate_visualizations(
         include_realtime=req.include_realtime,
         compile_pdf=req.compile_pdf,
         rate_bin_size=req.rate_bin_size,
+        progress_callback=progress_callback,
     )
-
-    if progress_callback:
-        progress_callback("Figures ready", 2, 2)
 
     generated: list[str] = []
     if result.simulation:

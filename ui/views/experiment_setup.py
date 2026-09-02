@@ -15,6 +15,7 @@ from ui.artifacts.models import (
 from ui.artifacts.discovery import filter_artifacts
 from ui.artifacts.rendering import load_artifacts, render_artifact_gallery
 from ui.components.controls import dataset_selector, dataset_summary_cards
+from ui.components.pipeline_status import render_pipeline_status
 from ui.services.datasets import (
     inspect_dataset,
     list_datasets,
@@ -41,6 +42,7 @@ def render(outputs_root: Path) -> None:
         "Generate a new dataset or load an existing one. "
         "The **Active Dataset** is shared by every page."
     )
+    render_pipeline_status(state.get_active_dataset(), current_stage="simulation")
 
     if "setup_section" not in st.session_state:
         st.session_state["setup_section"] = "load"
@@ -226,7 +228,7 @@ def _render_generate(outputs_root: Path) -> None:
         status_box = st.empty()
 
         def _cb(msg: str, step: int, n: int) -> None:
-            frac = min(step / max(n, 1), 1.0)
+            frac = min(step / max(n, 1), 0.99)
             progress.progress(frac, text=f"[{step}/{n}] {msg}")
             status_box.info(msg)
 
@@ -240,6 +242,12 @@ def _render_generate(outputs_root: Path) -> None:
             # Bust artifact cache by touching path identity
             progress.progress(1.0, text="Complete.")
             st.success(f"Dataset generated successfully. Active dataset: **{out.name}**")
+            try:
+                from realtime.pipeline_graph import commit_simulation
+
+                commit_simulation(out, summary=summary)
+            except Exception:  # noqa: BLE001
+                pass
             st.json({
                 "n_units": summary.get("n_units"),
                 "session_duration_s": summary.get("session_duration_s"),

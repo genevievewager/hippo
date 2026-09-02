@@ -40,6 +40,7 @@ from visualization.publication_isomap_plots import (
     plot_fig_latent_geometry_for_feature,
     plot_latent_geometry_page_from_embeddings,
 )
+from realtime.work_progress import WorkTracker, invoke_progress
 
 ProgressCallback = Callable[[str, int, int], None]
 
@@ -360,7 +361,12 @@ def run_manifold_analysis(
             used_publication = True
             n_skipped += 1
             if progress_callback:
-                progress_callback("Reusing existing publication latent-geometry suite…", 1, 2)
+                invoke_progress(
+                    progress_callback,
+                    "Reusing existing publication latent-geometry suite…",
+                    0,
+                    1,
+                )
             for color_key, color_title in (
                 COLOR_FEATURES if req.behavioral_colors is None else color_pages
             ):
@@ -387,7 +393,12 @@ def run_manifold_analysis(
             })
         else:
             if progress_callback:
-                progress_callback("Regenerating publication latent-geometry suite…", 1, 2)
+                invoke_progress(
+                    progress_callback,
+                    "Regenerating publication latent-geometry suite…",
+                    0,
+                    1,
+                )
             try:
                 if req.behavioral_colors is None:
                     path = plot_fig_latent_geometry(
@@ -511,24 +522,22 @@ def run_manifold_analysis(
         load_for_page.append((fs, m, w))
 
     panels_by_fs: dict[str, list[LatentGeometryPanel]] = {fs: [] for fs in fit_sets}
-    n_fits = max(len(jobs_to_run) + len(load_for_page), 1)
     n_pages = len(dirty_fs) * len(color_pages)
-    total_steps = max(
-        len(jobs_to_run) + len(load_for_page) + n_pages + (
-            1 if ("counts" in feature_sets and has_decoder_comparison(req.input_dir)) else 0
-        ),
-        1,
+    pub_unit = 1 if ("counts" in feature_sets and has_decoder_comparison(req.input_dir)) else 0
+    tracker = WorkTracker(
+        max(pub_unit + len(jobs_to_run) + len(load_for_page) + n_pages, 1),
+        operation="manifold_analysis",
     )
-    step = 1 if ("counts" in feature_sets and has_decoder_comparison(req.input_dir)) else 0
+    if pub_unit:
+        tracker.bump(1, message="Publication latent-geometry suite")
+        tracker.notify(progress_callback)
 
     # Persist / refresh shared transform checkpoints for the full window grid.
     fitted_diags: dict[tuple, Any] = {}
     for fs, manifold, window in jobs_to_run:
-        step += 1
-        if progress_callback:
-            progress_callback(
-                f"Fit `{manifold}` on `{fs}` @ {window}s", step, total_steps,
-            )
+        fit_msg = f"Fit `{manifold}` on `{fs}` @ {window}s"
+        tracker.message = fit_msg
+        tracker.notify(progress_callback)
         try:
             diag = compute_manifold_diagnostics(
                 req.input_dir,
@@ -548,6 +557,8 @@ def run_manifold_analysis(
                 "decode_window_s": window,
                 "error": str(exc),
             })
+            tracker.bump(1, message=fit_msg)
+            tracker.notify(progress_callback)
             continue
         fitted_diags[(fs, manifold, _window_key(window))] = diag
         n_computed += 1
@@ -563,17 +574,17 @@ def run_manifold_analysis(
             "saved_path": (diag.extras or {}).get("saved_path"),
             "skipped": False,
         })
+        tracker.bump(1, message=fit_msg)
+        tracker.notify(progress_callback)
 
     for fs, manifold, window in load_for_page:
-        step += 1
         gkey = (fs, manifold, _window_key(window))
         diag = fitted_diags.get(gkey)
         is_skip_reload = diag is None
-        if progress_callback:
-            verb = "Reload" if is_skip_reload else "Panel"
-            progress_callback(
-                f"{verb} `{manifold}` on `{fs}` @ {window}s", step, total_steps,
-            )
+        verb = "Reload" if is_skip_reload else "Panel"
+        load_msg = f"{verb} `{manifold}` on `{fs}` @ {window}s"
+        tracker.message = load_msg
+        tracker.notify(progress_callback)
         if diag is None:
             try:
                 diag = compute_manifold_diagnostics(
@@ -594,6 +605,8 @@ def run_manifold_analysis(
                     "decode_window_s": window,
                     "error": str(exc),
                 })
+                tracker.bump(1, message=load_msg)
+                tracker.notify(progress_callback)
                 continue
 
         mode = resolve_manifold_alias(manifold)
@@ -616,6 +629,8 @@ def run_manifold_analysis(
                 n_neighbors=nn,
             ),
         )
+        tracker.bump(1, message=load_msg)
+        tracker.notify(progress_callback)
 
     for fs in fit_sets:
         if fs not in dirty_fs:
@@ -651,17 +666,17 @@ def run_manifold_analysis(
         ordered = order or panels
 
         for color_key, color_title in color_pages:
-            step += 1
-            if progress_callback:
-                progress_callback(
-                    f"Page `{color_key}` · `{fs}`", step, total_steps,
-                )
+            page_msg = f"Page `{color_key}` · `{fs}`"
+            tracker.message = page_msg
+            tracker.notify(progress_callback)
             stem = _geometry_stem(color_key, fs)
             pub_path = pub_fig_dir / f"{stem}.png"
             path = plot_latent_geometry_page_from_embeddings(
                 ordered, color_key, color_title, pub_path,
             )
             if path is None:
+                tracker.bump(1, message=page_msg)
+                tracker.notify(progress_callback)
                 continue
             n_computed += 1
             run_copy = run_fig_dir / path.name
@@ -676,6 +691,8 @@ def run_manifold_analysis(
                 decode_window=ordered[0].decode_window_s if ordered else preferred,
                 run_id=run_id,
             )
+            tracker.bump(1, message=page_msg)
+            tracker.notify(progress_callback)
 
     meta = {
         "run_id": run_id,
@@ -709,6 +726,26 @@ def run_manifold_analysis(
     (out_dir / "analysis_summary.json").write_text(
         json.dumps(meta, indent=2, default=str) + "\n",
     )
+    try:
+        from realtime.pipeline_artifacts import config_hash as _cfg_hash
+        from realtime.pipeline_graph import commit_stage, load_or_infer_pipeline
+
+        pipe = load_or_infer_pipeline(Path(req.input_dir))
+        src = pipe.observation.hash() if pipe.observation is not None else None
+        commit_stage(
+            Path(req.input_dir),
+            "representation",
+            run_id=run_id,
+            config_hash=_cfg_hash({
+                "manifolds": list(req.manifolds),
+                "feature_sets": list(feature_sets),
+                "windows": list(windows),
+                "n_components": req.n_components,
+            }),
+            source_hash=src,
+        )
+    except Exception:  # noqa: BLE001
+        pass
     return meta
 
 

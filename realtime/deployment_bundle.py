@@ -250,6 +250,7 @@ class DeploymentBundle:
     embedding: Any | None = None
     neural_extractor: Any | None = None
     feature_config: dict[str, Any] | None = None
+    feature_transform: Any | None = None
 
     @property
     def target(self) -> str:
@@ -342,6 +343,52 @@ def pack_deployment_bundle(
             except Exception:
                 emb = load_feature_transformer(tpath)
 
+    # Fitted F (SpikeFeatureTransformer) — same object used at train time.
+    f_transform = None
+    try:
+        from realtime.neural_features.comparison import effective_spike_feature_type
+        from realtime.transform_cache import (
+            comparison_roots_for_feature_cache,
+            find_feature_transform_in_roots,
+            try_load_feature_transform,
+        )
+
+        fs = str(cfg.feature_set or "counts")
+        f_eff = effective_spike_feature_type(fs, str(cfg.extras.get("feature_type") or "counts"))
+        roots = comparison_roots_for_feature_cache(experiment_dir, str(cfg.spike_source or "sorted"))
+        f_path = find_feature_transform_in_roots(
+            roots,
+            feature_set=fs,
+            feature_type_eff=f_eff,
+            decode_window=float(cfg.decode_window_s),
+        )
+        if f_path is not None:
+            dest_f = out / "feature_transform"
+            if dest_f.exists():
+                shutil.rmtree(dest_f)
+            shutil.copytree(f_path, dest_f)
+            f_transform = try_load_feature_transform(dest_f)
+    except Exception:  # noqa: BLE001 — older experiments may lack F caches
+        f_transform = None
+
+    # Neural extractor (observation construction)
+    try:
+        from realtime.transform_cache import neural_extractor_dirname
+
+        source = str(cfg.spike_source or "sorted")
+        ne_src = (
+            experiment_dir / "decoder_comparison" / source / "models"
+            / "neural_feature_extractors"
+            / neural_extractor_dirname(str(cfg.feature_set or "counts"), float(cfg.decode_window_s))
+        )
+        if ne_src.exists():
+            dest_ne = out / "neural_extractor"
+            if dest_ne.exists():
+                shutil.rmtree(dest_ne)
+            shutil.copytree(ne_src, dest_ne)
+    except Exception:  # noqa: BLE001
+        pass
+
     # Metadata
     meta = {
         "schema_version": SCHEMA_VERSION,
@@ -384,8 +431,11 @@ def pack_deployment_bundle(
                 "feature_mode": cfg.extras.get("feature_mode"),
                 "embedding_type": cfg.embedding_type,
                 "decode_window_s": cfg.decode_window_s,
+                "window_s": float(cfg.decode_window_s),
                 "update_dt_s": cfg.update_dt_s,
                 "manifold_n_components": cfg.manifold_n_components,
+                "source_spikes": cfg.spike_source,
+                "observation_owned_by": "feature_construction",
             },
             indent=2,
         )
@@ -418,11 +468,20 @@ def load_deployment_bundle(bundle_dir: Path | str) -> DeploymentBundle:
     ne_dir = bundle_dir / "neural_extractor"
     if ne_dir.exists():
         try:
-            from realtime.neural_features import load_neural_feature_extractor
+            from realtime.neural_features import NeuralFeatureExtractor
 
-            neural = load_neural_feature_extractor(ne_dir)
+            neural = NeuralFeatureExtractor.load(ne_dir)
         except Exception:
             neural = None
+    f_transform = None
+    ft_dir = bundle_dir / "feature_transform"
+    if ft_dir.exists():
+        try:
+            from realtime.transform_cache import try_load_feature_transform
+
+            f_transform = try_load_feature_transform(ft_dir)
+        except Exception:
+            f_transform = None
     return DeploymentBundle(
         path=bundle_dir,
         config=config,
@@ -432,4 +491,5 @@ def load_deployment_bundle(bundle_dir: Path | str) -> DeploymentBundle:
         embedding=embedding,
         neural_extractor=neural,
         feature_config=feature_config,
+        feature_transform=f_transform,
     )

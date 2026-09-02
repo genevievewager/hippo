@@ -4,55 +4,36 @@ from __future__ import annotations
 
 import time
 from datetime import timedelta
-from typing import Any, Callable
+from typing import Any
 
 import streamlit as st
 
-from ui.jobs import JobState, get_job, get_slot_job, list_jobs
+from realtime.work_progress import eta_seconds
+from ui.jobs import JobState, get_job, get_slot_job
 from ui.services.comparison import format_duration
 from ui.services.registry import RunMetadata
 
 
 def remaining_s(
-    elapsed: float,
-    step: int,
-    total: int,
-    estimate_s: float | None = None,
-    prev_remaining: float | None = None,
     *,
-    dt: float = 0.0,
+    completed: int,
+    total: int,
+    ema_unit_s: float | None,
+    n_measured: int,
+    prior_unit_s: float | None = None,
 ) -> float | None:
-    """Non-increasing remaining-time estimate in seconds.
+    """Work-based ETA in seconds (EMA of unit duration × remaining units).
 
-    Uses the pre-run estimate until pace is trustworthy (``step >= 2``), then
-    pace ETA. Displayed remaining never increases; optional ``dt`` counts it
-    down between polls when the step counter is stuck.
+    Returns ``None`` until enough units have finished (or a history prior exists).
+    Does not use elapsed / pre-run estimate as percent complete.
     """
-    elapsed = max(float(elapsed or 0.0), 0.0)
-    step = max(int(step or 0), 0)
-    total = max(int(total or 1), 1)
-    dt = max(float(dt or 0.0), 0.0)
-
-    candidate: float | None = None
-    if step >= 2 and elapsed > 0.0:
-        candidate = (elapsed / float(step)) * float(max(total - step, 0))
-    elif estimate_s is not None:
-        try:
-            candidate = max(float(estimate_s) - elapsed, 0.0)
-        except (TypeError, ValueError):
-            candidate = None
-    elif step >= 1 and elapsed > 0.0:
-        candidate = (elapsed / float(step)) * float(max(total - step, 0))
-
-    if candidate is None:
-        if prev_remaining is None:
-            return None
-        return max(float(prev_remaining) - dt, 0.0)
-
-    if prev_remaining is not None:
-        ceiling = max(float(prev_remaining) - dt, 0.0)
-        candidate = min(float(candidate), ceiling)
-    return max(float(candidate), 0.0)
+    return eta_seconds(
+        completed=completed,
+        total=total,
+        ema_unit_s=ema_unit_s,
+        n_measured=n_measured,
+        prior_unit_s=prior_unit_s,
+    )
 
 
 def render_status(status: str, *, error: str | None = None) -> None:
@@ -88,65 +69,9 @@ def render_workload_estimate(workload: dict[str, Any]) -> None:
         )
     st.info(
         f"About **{n_cfg:,}** configurations · {detail}  \n"
-        f"Estimated runtime **~{eta}** (likely {eta_range}; heuristic from selected configs)"
+        f"Estimated runtime **~{eta}** (likely {eta_range}; "
+        "heuristic prior for ETA, not percent complete)"
     )
-
-
-class RuntimeProgressTracker:
-    """Live progress bar with elapsed time and ETA while a benchmark runs."""
-
-    def __init__(
-        self,
-        *,
-        estimated_runtime_s: float | None = None,
-        label: str = "Starting decoder comparison…",
-    ) -> None:
-        self.estimated_runtime_s = (
-            float(estimated_runtime_s) if estimated_runtime_s is not None else None
-        )
-        self.t0 = time.perf_counter()
-        self._prev_remaining: float | None = None
-        self.progress = st.progress(0.0, text=label)
-        self.status_box = st.empty()
-        self.timing_box = st.empty()
-        self._update_timing(step=0, total=1, msg=label)
-
-    def _eta_s(self, step: int, total: int, elapsed: float) -> float | None:
-        eta = remaining_s(
-            elapsed,
-            step,
-            total,
-            self.estimated_runtime_s,
-            getattr(self, "_prev_remaining", None),
-        )
-        self._prev_remaining = eta
-        return eta
-
-    def _update_timing(self, *, step: int, total: int, msg: str) -> None:
-        elapsed = time.perf_counter() - self.t0
-        eta = self._eta_s(step, total, elapsed)
-        eta_label = format_duration(eta) if eta is not None else "—"
-        self.timing_box.caption(
-            f"Elapsed **{format_duration(elapsed)}** · "
-            f"remaining ~**{eta_label}** · "
-            f"step {step}/{max(total, 1)}"
-        )
-        self.status_box.caption(msg)
-
-    def callback(self) -> Callable[[str, int, int], None]:
-        def _cb(msg: str, step: int, n: int) -> None:
-            total = max(int(n), 1)
-            frac = min(max(int(step), 0) / total, 1.0)
-            self.progress.progress(frac, text=f"[{step}/{n}] {msg}")
-            self._update_timing(step=step, total=total, msg=msg)
-
-        return _cb
-
-    def complete(self, text: str = "Complete") -> None:
-        elapsed = time.perf_counter() - self.t0
-        self.progress.progress(1.0, text=text)
-        self.timing_box.caption(f"Finished in **{format_duration(elapsed)}**")
-        self.status_box.caption(text)
 
 
 def render_job_panel(
@@ -155,6 +80,7 @@ def render_job_panel(
     estimated_runtime_s: float | None = None,
 ) -> JobState | None:
     """Render progress for a background job (safe across page navigation)."""
+    del estimated_runtime_s  # pre-run seconds are a caption prior, never the bar
     if job is None:
         return None
 
@@ -172,37 +98,26 @@ def render_job_panel(
                 st.code(job.traceback)
 
     frac = job.progress_fraction()
-    label = f"[{job.step}/{max(job.total, 1)}] {job.message or job.status}"
+    pct = int(round(frac * 100))
+    label = f"{pct}% [{job.step}/{max(job.total, 1)}] {job.message or job.status}"
     st.progress(frac, text=label)
 
+    stage_bits = [p for p in (job.stage, job.task) if p]
+    if stage_bits:
+        st.caption(" · ".join(stage_bits))
+
     elapsed = job.elapsed_s
-    eta = None
+    eta = job.live_eta_s() if job.is_active else None
     if job.is_active:
-        estimate = estimated_runtime_s
-        if estimate is None and job.meta:
-            raw_est = job.meta.get("estimated_runtime_s")
-            try:
-                estimate = float(raw_est) if raw_est is not None else None
-            except (TypeError, ValueError):
-                estimate = None
-        now = time.time()
-        dt = (now - job.eta_updated_at) if job.eta_updated_at else 0.0
-        eta = remaining_s(
-            elapsed,
-            job.step,
-            job.total,
-            estimate,
-            job.eta_remaining_s,
-            dt=dt,
+        if eta is None:
+            remain = "Estimating time remaining…"
+        else:
+            remain = f"~**{format_duration(eta)}**"
+        st.caption(
+            f"Elapsed **{format_duration(elapsed)}** · remaining {remain} · `{job.job_id}`"
         )
-        job.eta_remaining_s = eta
-        job.eta_updated_at = now
-    eta_label = format_duration(eta) if eta is not None else "—"
-    st.caption(
-        f"Elapsed **{format_duration(elapsed)}**"
-        + (f" · remaining ~**{eta_label}**" if job.is_active else "")
-        + f" · `{job.job_id}`"
-    )
+    else:
+        st.caption(f"Elapsed **{format_duration(elapsed)}** · `{job.job_id}`")
     return job
 
 
@@ -239,34 +154,6 @@ def render_job_autofresh(
             time.sleep(min(interval_s, 1.0))
             st.rerun()
         return job
-
-
-def render_sidebar_jobs() -> None:
-    """Show active background jobs in the sidebar (call from app.py)."""
-    active = list_jobs(active_only=True)
-    st.sidebar.markdown("---")
-    st.sidebar.markdown("### Background jobs")
-    if not active:
-        st.sidebar.caption("No running jobs — safe to navigate freely.")
-        return
-    for job in active:
-        st.sidebar.markdown(f"**{job.label}**")
-        st.sidebar.progress(job.progress_fraction())
-        st.sidebar.caption(
-            f"{job.message or job.status} · {format_duration(job.elapsed_s)}"
-        )
-    try:
-        @st.fragment(run_every=timedelta(seconds=3))
-        def _tick() -> None:
-            jobs = list_jobs(active_only=True)
-            if jobs:
-                st.caption(f"{len(jobs)} active · updating…")
-            else:
-                st.caption("All jobs finished.")
-
-        _tick()
-    except Exception:  # noqa: BLE001
-        pass
 
 
 def render_run_action_row(
