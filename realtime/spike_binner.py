@@ -11,23 +11,16 @@ import pandas as pd
 
 
 def _resolve_spike_columns(spikes_df: pd.DataFrame) -> tuple[str, str]:
-    time_candidates = ["time", "spike_time", "spike_time_s", "timestamp", "times"]
-    unit_candidates = ["unit_id", "unit", "cluster_id"]
+    """Delegate to the single shared alias table.
 
-    time_col = next((c for c in time_candidates if c in spikes_df.columns), None)
-    unit_col = next((c for c in unit_candidates if c in spikes_df.columns), None)
+    This module used to keep its own candidate lists, as did
+    live/spike_stream.py and live/spike_buffer.py. Neither of the three was a
+    superset of the others, so the same sorted-spike frame could be accepted
+    here and rejected two modules later.
+    """
+    from realtime.live.spike_buffer import resolve_spike_columns
 
-    if time_col is None:
-        raise ValueError(
-            f"No spike time column found. Expected one of {time_candidates}; "
-            f"got columns: {list(spikes_df.columns)}"
-        )
-    if unit_col is None:
-        raise ValueError(
-            f"No unit id column found. Expected one of {unit_candidates}; "
-            f"got columns: {list(spikes_df.columns)}"
-        )
-    return time_col, unit_col
+    return resolve_spike_columns(spikes_df)
 
 
 def count_spikes_in_window(
@@ -56,6 +49,18 @@ def count_spikes_in_window(
     time_col, unit_col = _resolve_spike_columns(spikes_df)
     times = spikes_df[time_col].to_numpy()
     units = spikes_df[unit_col].to_numpy(dtype=int)
+
+    # searchsorted on unsorted input returns a plausible but wrong count with
+    # no error. The docstring's precondition is therefore checked, not assumed:
+    # one vectorised comparison per call, against a silent wrong answer on the
+    # decode path.
+    if times.size > 1 and not np.all(times[:-1] <= times[1:]):
+        raise ValueError(
+            "count_spikes_in_window requires spike times sorted ascending; "
+            "the frame passed is not monotonic. Sort once at load time "
+            "(load_simulation_data / RealTimeDecoder.replay already do) rather "
+            "than per call."
+        )
 
     left = int(np.searchsorted(times, t_start, side="left"))
     right = int(np.searchsorted(times, t_end, side="left"))
