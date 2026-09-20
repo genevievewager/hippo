@@ -83,8 +83,35 @@ EXCLUDED_CELL_TYPES: frozenset[str] = frozenset({
 })
 
 
+# Stem matching, applied only after the exact-alias table misses.
+#
+# Region tables are written by hand, by Neuropixels Trajectory Explorer
+# exports, and by CCF lookups, at whatever granularity the track warranted.
+# A single insertion can therefore be labelled `entorhinal_cortex` in one file
+# and `medial_entorhinal_layer2` in another. Exact-match aliasing cannot keep
+# up with that, and the failure is silent: an unmatched label becomes
+# `unknown`, the unit is dropped from decoding, and the run reports a result
+# rather than an error.
+#
+# Order matters — the first match wins, so more specific stems come first.
+_REGION_STEMS: tuple[tuple[tuple[str, ...], str], ...] = (
+    (("visual", "vis_", "visp", "visl", "vispor", "visli"), "visual_cortex"),
+    (("subiculum", "subicular", "prosubiculum", "pros", "hpf_pros", "_sub", "sub_"), "Subiculum"),
+    (("dentate", "_dg", "dg_", "granule"), "DG"),
+    (("ca1",), "CA1"),
+    (("ca2",), "CA2"),
+    (("ca3",), "CA3"),
+    (("entorhinal", "ent_", "_ent", "entm", "entl", "mec", "hata"), "MEC"),
+)
+
+
 def canonicalize_region(region: Any) -> str:
-    """Map free-text / lab region labels to a canonical analysis name."""
+    """Map free-text / lab region labels to a canonical analysis name.
+
+    Exact aliases first, then stem matching, so layer- and subdivision-level
+    labels (`entorhinal_cortex_layer5`, `medial_entorhinal_layer2`,
+    `HPF_ProS_transition`) resolve instead of silently becoming `unknown`.
+    """
     if region is None or (isinstance(region, float) and np.isnan(region)):
         return "unknown"
     raw = str(region).strip()
@@ -96,6 +123,10 @@ def canonicalize_region(region: Any) -> str:
     # Already canonical?
     for canon in CANONICAL_REGIONS:
         if raw == canon or key == canon.lower():
+            return canon
+    padded = f"_{key}_"
+    for stems, canon in _REGION_STEMS:
+        if any(stem in padded for stem in stems):
             return canon
     return raw
 

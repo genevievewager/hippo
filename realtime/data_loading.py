@@ -3,12 +3,15 @@
 from __future__ import annotations
 
 import json
+import warnings
 from pathlib import Path
 
 import numpy as np
 import pandas as pd
 
 from hippo.anatomy.hippocampal_system import (
+    CANONICAL_REGIONS,
+    NON_HIPPOCAMPAL_REGIONS,
     annotate_units_for_analysis,
     filter_unit_ids_for_analysis,
 )
@@ -70,6 +73,50 @@ def load_simulation_data(
     unit_ids = filter_unit_ids_for_analysis(
         units_df, all_ids, include_non_hippocampal=include_non_hippocampal,
     )
+    if all_ids and unit_ids and len(unit_ids) < len(all_ids):
+        # Partial exclusion is legitimate (visual cortex on the way in), but an
+        # unrecognised label is not: it drops real units and looks identical to
+        # a deliberate exclusion. Name the labels so the drop is a decision.
+        dropped = units_df[~units_df["unit_id"].isin(unit_ids)]
+        unrecognised = sorted(
+            {
+                str(r)
+                for r in dropped.get("region_canonical", pd.Series(dtype=str))
+                if str(r) not in NON_HIPPOCAMPAL_REGIONS
+                and str(r) not in CANONICAL_REGIONS
+                and str(r) != "unknown"
+            }
+        )
+        if unrecognised:
+            warnings.warn(
+                f"{len(dropped)} of {len(all_ids)} units were excluded from analysis "
+                f"under region labels that canonicalize_region does not recognise: "
+                f"{unrecognised}. These are being dropped as non-hippocampal by "
+                "default. If they are on the probe track and should be decoded, add "
+                "them to hippo.anatomy.hippocampal_system.REGION_ALIASES.",
+                UserWarning,
+                stacklevel=2,
+            )
+
+    if all_ids and not unit_ids:
+        # Excluding every unit is never a valid analysis result. Returning an
+        # empty frame here reads downstream as a science finding — all-zero
+        # features, a decoder trained on nothing, accuracy at chance — instead
+        # of as the load failure it is.
+        observed = sorted(
+            {str(r) for r in units_df.get("region_canonical", pd.Series(dtype=str))}
+        ) or ["<no region column>"]
+        raise ValueError(
+            f"All {len(all_ids)} units were excluded from analysis, leaving nothing "
+            f"to decode.\n"
+            f"  region_canonical values seen: {observed}\n"
+            f"  units.csv columns: {list(units_raw.columns)}\n"
+            "Usual causes: the units table carries no region / cell-type columns "
+            "(a bare Kilosort or Phy export), or its region labels are not "
+            "recognised by hippo.anatomy.hippocampal_system.canonicalize_region. "
+            "Add the labels to REGION_ALIASES, supply a region mapping at ingest, "
+            "or pass include_non_hippocampal=True if the exclusion is intended."
+        )
     # Restrict spikes to analysis units so contamination cannot leak in.
     spikes_df = spikes_df[spikes_df["unit_id"].isin(unit_ids)].copy()
 

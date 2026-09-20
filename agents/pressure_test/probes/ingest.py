@@ -322,7 +322,12 @@ class IngestProbe(Probe):
 
         from realtime.data_loading import load_simulation_data
 
-        data = load_simulation_data(d, spike_source="ground_truth")
+        try:
+            data = load_simulation_data(d, spike_source="ground_truth")
+        except ValueError:
+            # Refusing to return an empty analysis set is the correct behaviour;
+            # the failure mode this check exists for is returning one silently.
+            return []
         n_units = len(data["unit_ids"])
         n_spikes = len(data["spikes_df"])
         if n_units == 0 or n_spikes == 0:
