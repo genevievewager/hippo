@@ -29,6 +29,7 @@ class IngestProbe(Probe):
         yield from self.check(self._buffer_schemas)
         yield from self.check(self._stub_streams_declared)
         yield from self.check(self._sample_index_vs_seconds)
+        yield from self.check(self._loader_silently_drops_all_units)
 
     # -------------------------------------------------------------------
 
@@ -291,3 +292,84 @@ class IngestProbe(Probe):
                 )
             ]
         return []
+
+    def _loader_silently_drops_all_units(self):
+        """A units table without simulator annotations must not silently zero out.
+
+        load_simulation_data annotates units and then filters to
+        analysis-eligible ones. A units.csv lacking the region / cell-type
+        columns marks every unit `unknown` -> `include_in_decoder=False`, so
+        the filter removes all of them and the loader returns an empty spike
+        frame with no warning. Sorted output from Kilosort/Phy has no such
+        annotations, so this is the shape real lab data arrives in.
+        """
+        import json
+        import tempfile
+        from pathlib import Path
+
+        out = []
+        d = Path(tempfile.mkdtemp(prefix="hippo_ingest_probe_"))
+        pd.DataFrame(
+            {"time": [0.0, 0.05, 0.10], "x": [1.0, 2.0, 3.0], "y": [1.0, 2.0, 3.0],
+             "speed": [0.0, 1.0, 1.0], "head_direction": [0.0, 0.1, 0.2]}
+        ).to_csv(d / "behavior.csv", index=False)
+        # Exactly what a Phy export gives you: ids, nothing else.
+        pd.DataFrame({"unit_id": [1, 2]}).to_csv(d / "units.csv", index=False)
+        pd.DataFrame(
+            {"unit_id": [1, 2, 1, 2], "spike_time_s": [0.08, 0.02, 0.03, 0.09]}
+        ).to_csv(d / "spikes_ground_truth.csv", index=False)
+        (d / "summary.json").write_text(json.dumps({"session_duration_s": 0.1}))
+
+        from realtime.data_loading import load_simulation_data
+
+        data = load_simulation_data(d, spike_source="ground_truth")
+        n_units = len(data["unit_ids"])
+        n_spikes = len(data["spikes_df"])
+        if n_units == 0 or n_spikes == 0:
+            out.append(
+                Finding(
+                    probe=self.name,
+                    title="Loader silently returns zero units for an unannotated units.csv",
+                    severity=Severity.CRITICAL,
+                    category="ingest",
+                    where="realtime/data_loading.py:load_simulation_data",
+                    detail=(
+                        "A units.csv carrying only unit_id — which is all a Phy or "
+                        "Kilosort export gives you — is annotated region_canonical="
+                        "'unknown', include_in_decoder=False for every unit. "
+                        "filter_unit_ids_for_analysis then drops all of them, and the "
+                        "loader returns an empty spike frame and an empty unit list "
+                        "without raising or warning.\n\n"
+                        "Downstream this looks like a science result, not a load "
+                        "failure: features are all-zero, decoders train on nothing, "
+                        "and the reported accuracy is whatever chance is for that "
+                        "target. n_units_excluded records the drop, but nothing reads "
+                        "it and nothing surfaces it."
+                    ),
+                    evidence={
+                        "unit_ids_returned": list(data["unit_ids"]),
+                        "spikes_returned": n_spikes,
+                        "n_units_excluded": data.get("n_units_excluded"),
+                        "units_csv_columns": ["unit_id"],
+                    },
+                    repro=(
+                        "# units.csv with only a unit_id column\n"
+                        "data = load_simulation_data(d, spike_source='ground_truth')\n"
+                        "len(data['unit_ids'])  # -> 0, no warning"
+                    ),
+                    reachability=(
+                        "Yes, on the first real sorted dataset. The simulator writes "
+                        "the region columns, so the synthetic path never sees this; "
+                        "a Phy export has none of them."
+                    ),
+                    suggestion=(
+                        "Raise when the analysis filter removes every unit while the "
+                        "raw table was non-empty — that state is never a valid result. "
+                        "Separately decide the semantics for unannotated units: either "
+                        "include them by default, or require an explicit region mapping "
+                        "at ingest. Silently dropping is the one option that cannot be "
+                        "right."
+                    ),
+                )
+            )
+        return out
