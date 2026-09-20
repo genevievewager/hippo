@@ -71,25 +71,38 @@ class ReplaySpikeStream(SpikeStream):
 
             data = load_simulation_data(self.experiment_dir, self.spike_source)
             self._spikes = data["spikes_df"].copy()
+            df = self._spikes.rename(columns=self._column_map(self._spikes))
             self._unit_ids = [int(u) for u in data["unit_ids"]]
         else:
-            u = self._spikes.get("unit_id", self._spikes.get("unit"))
-            self._unit_ids = sorted({int(x) for x in np.asarray(u).ravel().tolist()})
-        # Normalize columns
-        df = self._spikes
-        if "time" not in df.columns:
-            for c in ("time_s", "spike_time", "t"):
-                if c in df.columns:
-                    df = df.rename(columns={c: "time"})
-                    break
-        if "unit_id" not in df.columns:
-            for c in ("unit", "cluster_id"):
-                if c in df.columns:
-                    df = df.rename(columns={c: "unit_id"})
-                    break
-        self._spikes = df.sort_values("time").reset_index(drop=True)
+            # Normalise the vendor column names FIRST. Reading unit ids before
+            # the rename is why Phy exports (cluster_id / clusters) failed here:
+            # the lookup returned None and died in int().
+            df = self._spikes.rename(columns=self._column_map(self._spikes))
+            self._unit_ids = sorted(
+                {int(x) for x in df["unit_id"].to_numpy().ravel().tolist()}
+            )
+        self._spikes = df.sort_values("time", kind="mergesort").reset_index(drop=True)
         self._cursor = 0
         self._connected = True
+
+    @staticmethod
+    def _column_map(df: pd.DataFrame) -> dict[str, str]:
+        """Map this frame's vendor column names onto `time` / `unit_id`.
+
+        Uses the one shared alias table (realtime.live.spike_buffer), rather
+        than a private list that drifts from the ones in spike_binner and
+        spike_buffer — that drift is why the same frame could pass one module
+        and fail another.
+        """
+        from realtime.live.spike_buffer import resolve_spike_columns
+
+        tcol, ucol = resolve_spike_columns(df)
+        mapping: dict[str, str] = {}
+        if tcol != "time":
+            mapping[tcol] = "time"
+        if ucol != "unit_id":
+            mapping[ucol] = "unit_id"
+        return mapping
 
     def disconnect(self) -> None:
         self._connected = False
