@@ -32,6 +32,7 @@ _REPO_ROOT = Path(__file__).resolve().parents[2]
 def _load_probes():
     from .probes.correctness import CorrectnessProbe
     from .probes.causality import CausalityProbe
+    from .probes.leakage import LeakageProbe
     from .probes.ingest import IngestProbe
     from .probes.latency import LatencyProbe
     from .probes.ui import UIProbe
@@ -40,7 +41,7 @@ def _load_probes():
     return {
         p.name: p
         for p in (
-            CorrectnessProbe, CausalityProbe, IngestProbe,
+            CorrectnessProbe, CausalityProbe, LeakageProbe, IngestProbe,
             LatencyProbe, UIProbe, HygieneProbe,
         )
     }
