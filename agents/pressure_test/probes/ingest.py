@@ -234,64 +234,126 @@ class IngestProbe(Probe):
                 Finding(
                     probe=self.name,
                     title=f"`{name}` is an unimplemented acquisition path",
-                    severity=Severity.HIGH,
+                    severity=Severity.MEDIUM,
                     category="ingest",
                     where=f"realtime/live/spike_stream.py:{name}",
                     detail=(
-                        "connect() raises NotImplementedError, so there is currently no "
-                        "live acquisition: everything labelled 'realtime' is replay of "
-                        "stored spikes. That is a sound way to build, but it means the "
-                        "live-vs-replay gap (jitter, dropouts, cluster drift, arrival "
-                        "reordering) has never been exercised."
+                        "connect() raises NotImplementedError. Sorted-spike ingest is "
+                        "covered by PhySpikeStream (including follow=True, which "
+                        "re-reads a sort as it grows), so this is no longer the only "
+                        "path in — but streaming acquisition straight from Open Ephys "
+                        "still does not exist, and the live-vs-replay gap (jitter, "
+                        "dropouts, cluster drift, arrival reordering) remains "
+                        "unexercised against hardware."
                     ),
                     evidence={"class": name},
                     suggestion=(
-                        "Since the lab path is Kilosort/Phy, the highest-value next "
-                        "adapter is a Phy-directory stream that tails "
-                        "spike_times.npy / spike_clusters.npy, plus a ReplaySpikeStream "
-                        "wrapper that injects jitter and drops so the loop is tested "
-                        "against non-ideal arrival before hardware day."
+                        "Next: a ReplaySpikeStream/PhySpikeStream wrapper that injects "
+                        "jitter, dropouts and out-of-order arrival, so the loop is "
+                        "tested against non-ideal timing before hardware day."
                     ),
                 )
             )
         return out
 
     def _sample_index_vs_seconds(self):
-        """Phy ships sample indices. Seconds vs samples is a silent 30000x error."""
-        from realtime.spike_binner import build_causal_spike_matrix
+        """Phy ships sample indices. Seconds vs samples is a silent 30000x error.
 
-        fs = 30000.0
-        samples = np.array([30000, 45000, 60000, 90000], dtype=np.int64)  # 1.0..3.0 s
-        df = pd.DataFrame({"time": samples, "unit_id": [1, 1, 2, 2]})
-        X = build_causal_spike_matrix(df, [1, 2], np.array([2.0]), 1.0)
-        if np.isfinite(X).all() and X.sum() == 0:
+        The gate belongs at ingest, where a sampling rate exists — not in the
+        binner, which has no way to know what units it was handed. So this
+        checks that the Phy loader refuses an implausible conversion rather
+        than returning a well-formed empty session.
+        """
+        import tempfile
+        from pathlib import Path
+
+        out = []
+        try:
+            from realtime.live.phy_stream import PhyIngestError, load_phy_spikes
+        except ImportError:
             return [
                 Finding(
                     probe=self.name,
-                    title="Sample-index timestamps are accepted as seconds",
+                    title="No Phy ingest path exists",
                     severity=Severity.HIGH,
                     category="ingest",
-                    where="realtime/spike_binner.py / realtime/data_loading.py",
+                    where="realtime/live/",
                     detail=(
-                        "`spike_times.npy` from Kilosort holds sample indices, not "
-                        "seconds. Passing them through yields an empty but perfectly "
-                        "well-formed count matrix — no error, no warning, just a "
-                        "decoder that trains on silence. Nothing in the ingest path "
-                        "records a sampling rate or sanity-checks the time range."
-                    ),
-                    evidence={
-                        "fs_hz": fs,
-                        "timestamps_passed": samples.tolist(),
-                        "counts_returned": X.tolist(),
-                    },
-                    suggestion=(
-                        "Require an explicit `fs` (or `time_units`) at the ingest "
-                        "boundary and assert the resulting duration is plausible "
-                        "(e.g. 1 s < span < 24 h) before anything downstream runs."
+                        "Kilosort writes spike_times.npy as sample indices. With no "
+                        "loader that records a sampling rate, those indices reach the "
+                        "binner as seconds and produce an empty but perfectly "
+                        "well-formed count matrix — a decoder trained on silence."
                     ),
                 )
             ]
-        return []
+
+        d = Path(tempfile.mkdtemp(prefix="hippo_fs_probe_"))
+        fs = 30000.0
+        rng = np.random.default_rng(self.ctx.seed)
+        t = np.sort(rng.uniform(0.0, 120.0, 2000))
+        np.save(d / "spike_times.npy", (t * fs).astype(np.int64))
+        np.save(d / "spike_clusters.npy", rng.choice([3, 11], 2000).astype(np.int32))
+        (d / "params.py").write_text(f"sample_rate = {fs}\n")
+
+        # Correct rate must work.
+        try:
+            _, meta = load_phy_spikes(d, accepted_groups=None)
+            ok = 100.0 < meta["duration_s"] < 140.0
+        except Exception as exc:
+            out.append(
+                Finding(
+                    probe=self.name,
+                    title="Phy loader rejects a well-formed sort",
+                    severity=Severity.HIGH,
+                    category="ingest",
+                    where="realtime/live/phy_stream.py:load_phy_spikes",
+                    detail=f"A valid 120 s sort at 30 kHz raised {type(exc).__name__}: {exc}",
+                )
+            )
+            return out
+        if not ok:
+            out.append(
+                Finding(
+                    probe=self.name,
+                    title="Phy loader mis-converts sample indices to seconds",
+                    severity=Severity.CRITICAL,
+                    category="ingest",
+                    where="realtime/live/phy_stream.py:load_phy_spikes",
+                    detail=(
+                        f"A 120 s sort at 30 kHz came back as "
+                        f"{meta['duration_s']:.6g} s."
+                    ),
+                    evidence={"meta": meta},
+                )
+            )
+
+        # A wrong rate must raise, not yield an empty-but-valid session.
+        for bad_fs, label in ((1.0, "indices treated as seconds"),
+                              (3.0e7, "rate too high by 1000x")):
+            try:
+                _, bad_meta = load_phy_spikes(d, fs=bad_fs, accepted_groups=None)
+            except PhyIngestError:
+                continue
+            except Exception:
+                continue
+            out.append(
+                Finding(
+                    probe=self.name,
+                    title=f"Implausible sampling rate accepted ({label})",
+                    severity=Severity.CRITICAL,
+                    category="ingest",
+                    where="realtime/live/phy_stream.py:load_phy_spikes",
+                    detail=(
+                        f"fs={bad_fs} produced a session of "
+                        f"{bad_meta['duration_s']:.6g} s without raising. A wrong "
+                        "sampling rate scales every timestamp by a constant factor; "
+                        "the windows still fill or still empty, and nothing "
+                        "downstream can detect it."
+                    ),
+                    evidence={"fs": bad_fs, "meta": bad_meta},
+                )
+            )
+        return out
 
     def _loader_silently_drops_all_units(self):
         """A units table without simulator annotations must not silently zero out.

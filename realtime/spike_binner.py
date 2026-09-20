@@ -102,6 +102,16 @@ def build_causal_spike_matrix(
     time_col, unit_col = _resolve_spike_columns(spikes_df)
     spikes = spikes_df[[time_col, unit_col]].copy()
     spikes.columns = ["time", "unit_id"]
+    # NaN sorts last and is then dropped by the window search, so corrupt
+    # timestamps produce a perfectly well-formed count matrix that is quietly
+    # missing spikes. Reject at the boundary instead.
+    _t = spikes["time"].to_numpy(dtype=float)
+    if _t.size and not np.isfinite(_t).all():
+        raise ValueError(
+            f"{int((~np.isfinite(_t)).sum())} non-finite spike timestamp(s) in the "
+            "input frame. NaN/inf in a spike train is corrupt acquisition, not "
+            "data, and would be silently dropped from every window."
+        )
     spikes = spikes.sort_values("time", kind="mergesort")
     spikes = spikes[spikes["unit_id"].isin(unit_ids)]
 

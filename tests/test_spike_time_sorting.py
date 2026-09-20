@@ -22,7 +22,17 @@ def test_load_simulation_data_sorts_unsorted_ground_truth_spikes(tmp_path: Path)
             "head_direction": [0.0, 0.1, 0.2],
         }
     )
-    units = pd.DataFrame({"unit_id": [1, 2]})
+    # Region / cell_type are what make a unit analysis-eligible. A bare
+    # unit_id table is now rejected by load_simulation_data rather than
+    # silently yielding zero decodable units; this test is about spike time
+    # ordering, so give it units that survive the filter.
+    units = pd.DataFrame(
+        {
+            "unit_id": [1, 2],
+            "region": ["CA1", "CA1"],
+            "cell_type": ["CA1_pyr", "CA1_pyr"],
+        }
+    )
     # Deliberately unsorted spike times (as in spikes_ground_truth.csv exports).
     spikes = pd.DataFrame(
         {

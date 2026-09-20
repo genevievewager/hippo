@@ -628,9 +628,11 @@ def plot_latent_geometry_page_from_embeddings(
             beh = beh.iloc[idx].reset_index(drop=True)
         plot_packs.append((panel.mode, None, (Z, beh, "ui")))
 
-    if not any(p[-1] is not None for p in plot_packs):
-        return None
-
+    # Every panel being unavailable is itself the result worth showing: the
+    # modes were benchmarked but no held-out embedding was written for any of
+    # them. Returning None here made that indistinguishable from the figure
+    # never having been attempted, and the panel loop below already renders an
+    # annotated empty state per mode.
     n = len(plot_packs)
     cols = min(3, n)
     rows_n = int(np.ceil(n / cols))

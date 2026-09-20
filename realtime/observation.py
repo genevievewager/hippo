@@ -224,7 +224,14 @@ class ObservationTransformer:
             if counts is not None:
                 self._prev_counts = np.asarray(counts, dtype=float).reshape(1, -1)
             else:
-                self._prev_counts = raw
+                # `raw` is the assembled feature vector (1 x n_features), not a
+                # count vector (1 x n_units). Storing it here meant the two
+                # realtime entry points kept incompatible history, and the value
+                # was fed back as prev_counts on the next call, overriding the
+                # extractor's own correct copy. With no counts supplied, let the
+                # extractor keep its history rather than overwriting it with
+                # something of the wrong shape and meaning.
+                self._prev_counts = None
         elif counts is not None:
             counts_2d = np.asarray(counts, dtype=float).reshape(1, -1)
             result = self.extractor._assemble(
