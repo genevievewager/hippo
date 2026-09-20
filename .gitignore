@@ -6,3 +6,6 @@ outputs/
 *.pdf
 *.zip
 external/
+
+# pressure-test agent
+reports/
