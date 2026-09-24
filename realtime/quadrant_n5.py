@@ -21,6 +21,18 @@ DEFAULT_CONFIG_PATH = REPO_ROOT / "configs" / "quadrant_n5.yaml"
 SEEDS_0_4_PROVENANCE_SHA = "775fa1c38063a1ecea07df28c64174beea8f122e"
 
 
+def report_code_sha() -> str | None:
+    """Git HEAD of the tree that writes reports (commit (c) when PDFs are regenerated)."""
+    try:
+        import subprocess
+
+        return subprocess.check_output(
+            ["git", "rev-parse", "HEAD"], cwd=REPO_ROOT, text=True,
+        ).strip()
+    except Exception:
+        return None
+
+
 def config_sha256(path: Path | None = None) -> str:
     loc = Path(path) if path is not None else DEFAULT_CONFIG_PATH
     digest = hashlib.sha256(loc.read_bytes()).hexdigest()

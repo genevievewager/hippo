@@ -9,6 +9,7 @@ from typing import Any
 import numpy as np
 
 from realtime.quadrant_n5 import REPO_ROOT, SEEDS_0_4_PROVENANCE_SHA, load_quadrant_n5_yaml
+from realtime.quadrant_n5_replay import display_a9_label
 from realtime.quadrant_n5_run import METHOD_KEYS, OUTPUT_ROOT
 
 AUDIT_KEYS = tuple(f"A{i}" for i in range(1, 15))
@@ -73,21 +74,50 @@ def audit_seed(seed_index: int, cfg: dict[str, Any] | None = None) -> dict[str, 
     a8 = "PASS" if (model_root / "sorted").exists() else "N/A"
     rows.append(_row("A8", a8, "fitted objects under outputs/quadrant_n5/models/"))
 
-    rows.append(_row(
-        "A9", "N/A",
-        "empirical per-step vs batch is recorded at replay; GPFA expected_label=offline_only",
-    ))
+    replay_json = root / "replay" / "sorted_summary.json"
+    if replay_json.is_file():
+        replay = _load(replay_json)
+        a9_bits = []
+        for m in replay.get("methods") or []:
+            lab = display_a9_label(m.get("a9_label"))
+            a9_bits.append(f"{m['method']}={lab}")
+        rows.append(_row(
+            "A9", "PASS" if a9_bits else "N/A",
+            "empirical step-vs-batch; " + ", ".join(a9_bits) if a9_bits
+            else "replay JSON has no methods",
+        ))
+    else:
+        rows.append(_row(
+            "A9", "N/A",
+            "replay not run; raw/pca/isomap must be labelled "
+            "'untested: no per-step path', never offline_only",
+        ))
     sim_meta = root / "sim" / "quadrant_n5_sim.json"
     rows.append(_row(
         "A10", "PASS" if sim_meta.is_file() else "FAIL",
         "sim keyed on seed streams + probe hash + session; methods stream excluded",
     ))
-    replay_json = root / "replay" / "sorted_summary.json"
-    rows.append(_row(
-        "A11", "PASS" if replay_json.is_file() else "N/A",
-        "offline vs replay filled after replay stage" if not replay_json.is_file()
-        else "see replay/sorted_summary.json",
-    ))
+    if replay_json.is_file():
+        replay = _load(replay_json)
+        a11_notes = []
+        a11_fail = False
+        for m in replay.get("methods") or []:
+            d_off = m.get("phase3_vs_replay_offline_ridge")
+            d_pred = m.get("a11_max_abs_pred")
+            if d_off is not None and float(d_off) > 1e-9:
+                a11_fail = True
+            a11_notes.append(
+                f"{m['method']}: phase3−offline={d_off} |ŷ|_∞={d_pred}"
+            )
+        rows.append(_row(
+            "A11", "FAIL" if a11_fail else "PASS",
+            "; ".join(a11_notes) if a11_notes else "see replay/sorted_summary.json",
+        ))
+    else:
+        rows.append(_row(
+            "A11", "N/A",
+            "offline vs replay filled after replay stage",
+        ))
     rows.append(_row(
         "A12", "N/A",
         "n5 config is CLI-frozen; Streamlit is not the analysis-config source",

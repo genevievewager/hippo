@@ -10,7 +10,8 @@ import numpy as np
 from matplotlib.backends.backend_pdf import PdfPages
 import matplotlib.pyplot as plt
 
-from realtime.quadrant_n5 import SEEDS_0_4_PROVENANCE_SHA, load_quadrant_n5_yaml
+from realtime.quadrant_n5 import SEEDS_0_4_PROVENANCE_SHA, load_quadrant_n5_yaml, report_code_sha
+from realtime.quadrant_n5_replay import display_a9_label
 from realtime.quadrant_n5_run import METHOD_KEYS, OUTPUT_ROOT
 
 POP_BLURB = (
@@ -31,7 +32,8 @@ SEED_4_RIDGE_WEAK_CONTROL = (
     "(sorted Ridge Δ range [−1.984, −0.837]; every method negative). "
     "The kNN control is clean on seed 4 (all completed kNN Δ ≥ +1.16). "
     "Ground-truth DM Ridge is A13 FAIL / unreliable "
-    "(non-null control / session residual, not leakage)."
+    "(Δ = −2.544; non-null control / session residual, not leakage). "
+    "Ground-truth LDS Ridge also A13 FAIL (Δ = −2.561); kNN remains clean."
 )
 
 
@@ -106,6 +108,7 @@ def write_seed_pdf(seed_index: int, cfg: dict[str, Any]) -> Path:
             f"git_sha        {sorted_sum.get('git_sha')}",
             f"dirty_tree     {sorted_sum.get('dirty_tree')}",
             f"seeds_0_4_code {SEEDS_0_4_PROVENANCE_SHA}",
+            f"report_code_sha {report_code_sha()}",
             f"numpy          {(sorted_sum.get('versions') or {}).get('numpy')}",
             f"sklearn        {(sorted_sum.get('versions') or {}).get('sklearn')}",
             f"seed_streams   {sorted_sum.get('seed_streams')}",
@@ -140,6 +143,28 @@ def write_seed_pdf(seed_index: int, cfg: dict[str, Any]) -> Path:
         if seed_index == 4:
             lines += ["", SEED_4_RIDGE_WEAK_CONTROL]
         _text_page(pdf, f"Seed {seed_index} primary-d errors (cm, median)", lines)
+        replay = _load(root / "replay" / "sorted_summary.json") if (
+            root / "replay" / "sorted_summary.json"
+        ).is_file() else {}
+        rlines = [
+            "A9 is empirical step-vs-batch on sorted. "
+            "No per-step path → 'untested: no per-step path', never offline_only.",
+            "A11: Phase-3 ridge vs replay batch ridge, and per-sample pred |offline−step|.",
+            f"latency budget {cfg['latency_budget_ms']} ms",
+            "",
+        ]
+        for m in replay.get("methods") or []:
+            a9 = display_a9_label(m.get("a9_label"))
+            rlines.append(
+                f"{m['method']:8s} A9={a9}  "
+                f"|Z|_∞={m.get('max_abs_step_vs_batch')}  "
+                f"p50={m.get('step_ms_p50')} p99={m.get('step_ms_p99')} ms  "
+                f"A11 |ŷ|_∞={m.get('a11_max_abs_pred')}  "
+                f"phase3−offline={m.get('phase3_vs_replay_offline_ridge')}"
+            )
+        if not replay.get("methods"):
+            rlines.append("replay/sorted_summary.json missing")
+        _text_page(pdf, f"Seed {seed_index} A9 / A11 replay", rlines)
     return dest
 
 
@@ -156,6 +181,7 @@ def write_aggregate_pdf(cfg: dict[str, Any]) -> Path:
         _text_page(pdf, "quadrant_n5 aggregate", [
             f"config_sha256 {cfg['config_sha256']}",
             f"seeds_0_4_code {SEEDS_0_4_PROVENANCE_SHA}",
+            f"report_code_sha {report_code_sha()}",
             f"n_seeds with sorted results: {len(seeds)}",
             "",
             POP_BLURB,
@@ -211,6 +237,26 @@ def write_aggregate_pdf(cfg: dict[str, Any]) -> Path:
                 f"sign(a<b) {sign}/{len(diffs)}  values={[round(d,2) for d in diffs]}"
             )
         _text_page(pdf, "Planned contrasts (sorted, Ridge)", lines)
+        a9_lines = [
+            "A9 labels and A11 agreement across seeds (sorted).",
+            "No per-step path is 'untested: no per-step path', never offline_only.",
+            "",
+        ]
+        for i in range(n):
+            rp = OUTPUT_ROOT / f"seed_{i}" / "replay" / "sorted_summary.json"
+            if not rp.is_file():
+                a9_lines.append(f"seed {i}: replay missing")
+                continue
+            rec = _load(rp)
+            a9_lines.append(f"seed {i}")
+            for m in rec.get("methods") or []:
+                a9_lines.append(
+                    f"  {m['method']:8s} {display_a9_label(m.get('a9_label'))}  "
+                    f"|Z|_∞={m.get('max_abs_step_vs_batch')}  "
+                    f"p50={m.get('step_ms_p50')} p99={m.get('step_ms_p99')}  "
+                    f"A11 |ŷ|_∞={m.get('a11_max_abs_pred')}"
+                )
+        _text_page(pdf, "A9 / A11 across seeds", a9_lines)
     return dest
 
 

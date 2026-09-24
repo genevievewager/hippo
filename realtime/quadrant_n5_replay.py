@@ -28,6 +28,26 @@ from realtime.spike_binner import build_causal_spike_matrix
 from realtime.timing import extract_behavior_times
 from realtime.train_decoder import align_behavior_to_decoder_times, causal_train_test_split
 
+A9_UNTESTED = "untested: no per-step path"
+A9_MATCH_TOL = 1e-5
+
+
+def display_a9_label(label: str | None) -> str:
+    """Never show exception-path strings as offline_only."""
+    if not label:
+        return A9_UNTESTED
+    if label.startswith("offline_only (") or "TypeError" in label or "NotImplemented" in label:
+        return A9_UNTESTED
+    return label
+
+
+def a9_label_from_result(*, max_abs: float | None, error: BaseException | None) -> str:
+    if error is not None or max_abs is None:
+        return A9_UNTESTED
+    if max_abs <= A9_MATCH_TOL:
+        return "realtime_compatible"
+    return "offline_only"
+
 
 def _step_latents(model, X: np.ndarray) -> tuple[np.ndarray, list[float]]:
     if hasattr(model, "reset_state"):
@@ -93,21 +113,32 @@ def replay_seed(seed_index: int) -> dict[str, Any]:
         Z_batch = fit_transform_representation(key, model, X, train_ok)
         if nested and reducing:
             Z_batch = Z_batch[:, : int(rec["primary_d"])]
-        label = "offline_only"
         step_ms: list[float] = []
         max_abs = None
+        Z_step = None
+        step_error = None
         try:
             Z_step, step_ms = _step_latents(model, X)
             if nested and reducing:
                 Z_step = Z_step[:, : int(rec["primary_d"])]
             max_abs = float(np.max(np.abs(Z_batch[eval_mask] - Z_step[eval_mask])))
-            label = "realtime_compatible" if max_abs <= 1e-5 else "offline_only"
         except Exception as exc:
-            label = f"offline_only ({type(exc).__name__})"
+            step_error = exc
+        label = a9_label_from_result(max_abs=max_abs, error=step_error)
         pred = _fit_predict_ridge(
             Z_batch[train_ok], y[train_ok], Z_batch[eval_mask], float(rec["ridge_alpha"]),
         )
         offline = _euclid(pred, y[eval_mask])
+        replay_err = None
+        a11_max_abs_pred = None
+        if Z_step is not None:
+            pred_step = _fit_predict_ridge(
+                Z_step[train_ok], y[train_ok], Z_step[eval_mask], float(rec["ridge_alpha"]),
+            )
+            replay_err = _euclid(pred_step, y[eval_mask])
+            a11_max_abs_pred = float(np.max(np.abs(pred - pred_step)))
+        ridge_med = (rec.get("ridge") or {}).get("median")
+        phase3_ridge = float(ridge_med) if ridge_med is not None else float("nan")
         over = float(np.mean(np.asarray(step_ms) > budget)) if step_ms else None
         row = {
             "method": key,
@@ -115,6 +146,10 @@ def replay_seed(seed_index: int) -> dict[str, Any]:
             "expected_label": (cfg["representations"].get(key) or {}).get("expected_label"),
             "max_abs_step_vs_batch": max_abs,
             "offline_ridge": offline,
+            "replay_ridge": replay_err,
+            "a11_max_abs_pred": a11_max_abs_pred,
+            "phase3_ridge_median": phase3_ridge,
+            "phase3_vs_replay_offline_ridge": abs(offline["median"] - phase3_ridge),
             "step_ms_p50": float(np.median(step_ms)) if step_ms else None,
             "step_ms_p99": float(np.quantile(step_ms, 0.99)) if step_ms else None,
             "step_ms_max": float(np.max(step_ms)) if step_ms else None,

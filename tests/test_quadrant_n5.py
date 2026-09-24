@@ -287,3 +287,50 @@ def test_sim_fit_hash_keyed_on_seed_and_config(tmp_path):
     assert promote_unkeyed_sim(dest, cfg, s0, h0)
     assert sim_provenance_matches(dest, h0)
     assert not sim_provenance_matches(dest, h1)
+
+
+def test_transform_one_raw_pca_isomap_matches_batch_row():
+    from realtime.manifold_features import make_feature_transformer
+    from realtime.quadrant_n5_replay import A9_UNTESTED, a9_label_from_result, display_a9_label
+
+    rng = np.random.default_rng(0)
+    Xtr = rng.normal(size=(60, 8))
+    Xte = rng.normal(size=(12, 8))
+    for mode, kwargs in (
+        ("identity", {}),
+        ("global_pca", {"n_components": 3, "random_state": 0}),
+        ("global_isomap", {"n_components": 3, "n_neighbors": 5, "random_state": 0,
+                           "isomap_pre_pca_enabled": False}),
+    ):
+        model = make_feature_transformer(mode, decode_window=0.250, **kwargs)
+        model.fit(Xtr)
+        Z = model.transform(np.vstack([Xtr, Xte]))
+        rows = [model.transform_one(np.vstack([Xtr, Xte])[i]) for i in range(len(Z))]
+        got = np.vstack(rows)
+        np.testing.assert_allclose(got, Z, atol=1e-9, rtol=1e-9)
+
+    assert display_a9_label("offline_only (TypeError)") == A9_UNTESTED
+    assert display_a9_label("offline_only (NotImplementedError)") == A9_UNTESTED
+    assert a9_label_from_result(max_abs=None, error=TypeError("no per-step path")) == A9_UNTESTED
+    assert a9_label_from_result(max_abs=1e-8, error=None) == "realtime_compatible"
+    assert a9_label_from_result(max_abs=1e-3, error=None) == "offline_only"
+
+
+def test_gpfa_a9_filter_vs_smooth_is_a_real_mismatch():
+    from realtime.dynamic_latents.adapters import DynamicLatentEmbedding
+
+    rng = np.random.default_rng(1)
+    X = rng.normal(size=(80, 6))
+    model = DynamicLatentEmbedding(
+        model_name="gpfa", n_components=2, update_dt=0.050,
+        random_state=1, causal_default=False, max_iter=4,
+        factor_analysis_max_iter=50,
+    )
+    model.fit(X[:50])
+    Z_batch = model.transform(X)
+    model.reset_state()
+    Z_step = np.vstack([model.transform_one(X[i]) for i in range(len(X))])
+    mismatch = float(np.max(np.abs(Z_batch - Z_step)))
+    assert mismatch > 1e-5
+    with pytest.raises(NotImplementedError):
+        model.step(X[0])

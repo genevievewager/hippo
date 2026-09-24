@@ -192,6 +192,10 @@ class PassThroughEmbedding(BaseEstimator, TransformerMixin):
     def transform(self, X: np.ndarray) -> np.ndarray:
         return np.asarray(X, dtype=float)
 
+    def transform_one(self, x: np.ndarray) -> np.ndarray:
+        """Apply the fitted pass-through to one row. No refit."""
+        return np.asarray(self.transform(np.asarray(x, dtype=float).reshape(1, -1))).ravel()
+
     def get_metadata(self) -> dict[str, Any]:
         return {
             "manifold_type": manifold_type_for_feature_mode(self.embedding_type),
@@ -317,6 +321,10 @@ class IdentityFeatures(BaseEstimator, TransformerMixin):
         if self.feature_mode == "rates":
             return X / self.decode_window
         return X
+
+    def transform_one(self, x: np.ndarray) -> np.ndarray:
+        """Apply the fitted pass-through to one row. No refit."""
+        return np.asarray(self.transform(np.asarray(x, dtype=float).reshape(1, -1))).ravel()
 
     def get_metadata(self) -> dict[str, Any]:
         return {
@@ -498,6 +506,10 @@ class GlobalPCAManifold(BaseEstimator, TransformerMixin):
         if self.pca_ is None:
             raise RuntimeError("GlobalPCAManifold must be fit before transform")
         return self.pca_.transform(np.asarray(X, dtype=float))
+
+    def transform_one(self, x: np.ndarray) -> np.ndarray:
+        """Apply the fitted PCA to one row. No refit."""
+        return np.asarray(self.transform(np.asarray(x, dtype=float).reshape(1, -1))).ravel()
 
     def get_metadata(self) -> dict[str, Any]:
         return {
@@ -786,6 +798,10 @@ class IsomapManifold(BaseEstimator, TransformerMixin):
         if self._encoder is None:
             raise RuntimeError("IsomapManifold must be fit before transform")
         return self._encoder.transform(np.asarray(X, dtype=float))
+
+    def transform_one(self, x: np.ndarray) -> np.ndarray:
+        """Apply the fitted Isomap out-of-sample map to one row. No refit."""
+        return np.asarray(self.transform(np.asarray(x, dtype=float).reshape(1, -1))).ravel()
 
     def get_metadata(self) -> dict[str, Any]:
         if self._encoder is None:
