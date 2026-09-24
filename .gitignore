@@ -3,6 +3,8 @@ __pycache__/
 *.pyc
 .pytest_cache/
 outputs/
+# Experiment outputs (explicit so they cannot be tracked the way .hippo/ was)
+outputs/quadrant_n5/
 *.pdf
 *.zip
 external/

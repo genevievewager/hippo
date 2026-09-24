@@ -7,9 +7,10 @@ the window, not on how much history is retained.
 Three invariants, each of which was a silent wrong-answer bug when it was only
 an assumption:
 
-  1. Non-finite timestamps are rejected on insert. NaN compares False against
-     every ordering test, so a single NaN that gets in is counted into every
-     window forever and never prunes.
+  1. Non-finite timestamps are dropped on insert and counted in
+     ``n_rejected_nonfinite``. NaN compares False against every ordering
+     test, so a single NaN that gets in is counted into every window forever
+     and never prunes.
   2. Storage is sorted by time regardless of arrival order. Live sorters
      deliver events slightly out of order; a scan that assumes monotonic
      arrival silently undercounts.
@@ -94,7 +95,8 @@ class CausalSpikeBuffer:
         times: np.ndarray | list[float],
         unit_ids: np.ndarray | list[int],
     ) -> None:
-        t = np.asarray(times, dtype=float).ravel()
+        raw_times = np.asarray(times)
+        t = np.asarray(raw_times, dtype=float).ravel()
         u = np.asarray(unit_ids).ravel()
         if t.size != u.size:
             raise ValueError("times and unit_ids must have the same length")
@@ -103,13 +105,22 @@ class CausalSpikeBuffer:
 
         finite = np.isfinite(t)
         if not finite.all():
+            # Drop + count. Raising would abort a live stream; including NaN
+            # would count it into every window and freeze _prune. The counter
+            # is the diagnostic; the sample never enters storage.
             self.n_rejected_nonfinite += int((~finite).sum())
-            raise ValueError(
-                f"{int((~finite).sum())} non-finite spike timestamp(s) rejected. "
-                "NaN/inf in a spike train is corrupt acquisition, not data: it "
-                "would be counted into every decode window and would disable "
-                "history pruning."
-            )
+            t, u = t[finite], u[finite]
+            if t.size == 0:
+                return
+
+        from realtime.pipeline_invariants import assert_times_in_seconds
+
+        # Preserve integer dtype so sample-index arrays still fail the gate.
+        # No 24 h cap: a far-future glitch is a retention problem, not units.
+        to_check = raw_times.ravel() if np.issubdtype(raw_times.dtype, np.integer) else t
+        assert_times_in_seconds(
+            to_check, context="CausalSpikeBuffer.extend", plausible_cap=False,
+        )
 
         cols = np.fromiter(
             (self._unit_to_col.get(int(x), -1) for x in u),

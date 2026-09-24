@@ -42,6 +42,7 @@ class GPFAModel(DynamicLatentModel):
         n_components: int = 5,
         *,
         max_iter: int = 20,
+        factor_analysis_max_iter: int = 500,
         random_state: int = 42,
         update_dt: float = 0.025,
         default_tau: float = 0.250,
@@ -51,6 +52,7 @@ class GPFAModel(DynamicLatentModel):
     ):
         self.n_components = int(n_components)
         self.max_iter = int(max_iter)
+        self.factor_analysis_max_iter = int(factor_analysis_max_iter)
         self.random_state = int(random_state)
         self.update_dt = float(update_dt)
         self.default_tau = float(default_tau)
@@ -89,7 +91,11 @@ class GPFAModel(DynamicLatentModel):
         self.actual_n_components_ = int(k)
         self.n_features_in_ = int(n)
 
-        fa = FactorAnalysis(n_components=k, random_state=self.random_state, max_iter=500)
+        fa = FactorAnalysis(
+            n_components=k,
+            random_state=self.random_state,
+            max_iter=self.factor_analysis_max_iter,
+        )
         Z = fa.fit_transform(X)
         self.C_ = np.asarray(fa.components_.T, dtype=float)  # [n, k]
         self.d_ = np.mean(X, axis=0)
@@ -216,6 +222,7 @@ class GPFAModel(DynamicLatentModel):
                 random_seed=self.random_state,
                 hyperparameters={
                     "max_iter": self.max_iter,
+                    "factor_analysis_max_iter": self.factor_analysis_max_iter,
                     "default_tau": self.default_tau,
                     "tau": self.tau_.tolist() if self.tau_ is not None else None,
                 },
@@ -267,6 +274,7 @@ class GPFAModel(DynamicLatentModel):
             "class_name": "GPFAModel",
             "n_components": self.n_components,
             "max_iter": self.max_iter,
+            "factor_analysis_max_iter": self.factor_analysis_max_iter,
             "random_state": self.random_state,
             "update_dt": self.update_dt,
             "default_tau": self.default_tau,
@@ -293,6 +301,7 @@ class GPFAModel(DynamicLatentModel):
         obj = cls(
             n_components=meta["n_components"],
             max_iter=meta.get("max_iter", 20),
+            factor_analysis_max_iter=meta.get("factor_analysis_max_iter", 500),
             random_state=meta.get("random_state", 42),
             update_dt=meta.get("update_dt", 0.025),
             default_tau=meta.get("default_tau", 0.250),

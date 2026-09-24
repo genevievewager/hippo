@@ -59,8 +59,9 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--out", default="reports/pressure_test",
                    help="output directory for the report pair (default: %(default)s)")
     p.add_argument("--seed", type=int, default=0)
-    p.add_argument("--latency-budget-ms", type=float, default=20.0,
-                   help="per-decode-step budget used by the latency probe")
+    p.add_argument("--latency-budget-ms", type=float, default=50.0,
+                   help="per-decode-step budget used by the latency probe "
+                        "(default 50 = update_dt)")
     p.add_argument("--experiment-dir", default=None,
                    help="optional real experiment directory to additionally validate")
     p.add_argument("--fail-on", default="none",

@@ -64,6 +64,7 @@ class ReplaySpikeStream(SpikeStream):
         self._unit_ids: list[int] = []
 
     def connect(self) -> None:
+        session_s: float | None = None
         if self._spikes is None:
             if self.experiment_dir is None:
                 raise ValueError("ReplaySpikeStream needs spikes_df or experiment_dir")
@@ -73,6 +74,7 @@ class ReplaySpikeStream(SpikeStream):
             self._spikes = data["spikes_df"].copy()
             df = self._spikes.rename(columns=self._column_map(self._spikes))
             self._unit_ids = [int(u) for u in data["unit_ids"]]
+            session_s = data.get("session_duration")
         else:
             # Normalise the vendor column names FIRST. Reading unit ids before
             # the rename is why Phy exports (cluster_id / clusters) failed here:
@@ -82,6 +84,13 @@ class ReplaySpikeStream(SpikeStream):
                 {int(x) for x in df["unit_id"].to_numpy().ravel().tolist()}
             )
         self._spikes = df.sort_values("time", kind="mergesort").reset_index(drop=True)
+        from realtime.pipeline_invariants import assert_times_in_seconds
+
+        assert_times_in_seconds(
+            self._spikes["time"].to_numpy(),
+            session_length_s=session_s,
+            context="ReplaySpikeStream.connect",
+        )
         self._cursor = 0
         self._connected = True
 

@@ -14,8 +14,11 @@ from hippo.anatomy.hippocampal_system import (
     NON_HIPPOCAMPAL_REGIONS,
     annotate_units_for_analysis,
     filter_unit_ids_for_analysis,
+    is_allowed_cell_type,
 )
+from realtime.pipeline_invariants import assert_times_in_seconds
 from realtime.spike_binner import _resolve_spike_columns
+from realtime.timing import extract_behavior_times
 
 
 def load_simulation_data(
@@ -23,6 +26,7 @@ def load_simulation_data(
     spike_source: str,
     *,
     include_non_hippocampal: bool = False,
+    include_regions: list[str] | tuple[str, ...] | None = None,
 ) -> dict:
     """Load behavior, units, spikes, and summary from a simulation output directory.
 
@@ -30,6 +34,11 @@ def load_simulation_data(
     (``include_in_decoder`` / allowlisted cell types) enter ``unit_ids`` used for
     decoding and manifold features. Non-hippocampal probe contaminants are
     dropped unless ``include_non_hippocampal=True``.
+
+    ``include_regions`` is an explicit raw-region allowlist (quadrant_n5).
+    When set, a unit enters if its ``region`` is in the list and its cell
+    type is allowlisted. Default pipeline behaviour is unchanged when this
+    argument is omitted.
     """
     input_dir = Path(input_dir)
     required = ["behavior.csv", "units.csv", "summary.json"]
@@ -63,6 +72,23 @@ def load_simulation_data(
     spikes_df = spikes_df.sort_values("time", kind="mergesort").reset_index(drop=True)
 
     session_duration = summary.get("session_duration_s")
+    # Gate before deriving session length from the times themselves — otherwise
+    # sample indices would set a huge session and pass their own check.
+    assert_times_in_seconds(
+        spikes_df["time"].to_numpy(),
+        session_length_s=session_duration,
+        context="spike times",
+    )
+    try:
+        behavior_times = extract_behavior_times(behavior_df)
+    except ValueError:
+        behavior_times = None
+    if behavior_times is not None:
+        assert_times_in_seconds(
+            behavior_times,
+            session_length_s=session_duration,
+            context="behavior times",
+        )
     if session_duration is None:
         session_duration = float(max(
             behavior_df.iloc[:, 0].max(),
@@ -70,10 +96,19 @@ def load_simulation_data(
         ))
 
     all_ids = sorted(units_df["unit_id"].unique().tolist())
-    unit_ids = filter_unit_ids_for_analysis(
-        units_df, all_ids, include_non_hippocampal=include_non_hippocampal,
-    )
-    if all_ids and unit_ids and len(unit_ids) < len(all_ids):
+    if include_regions is not None:
+        allowed_regions = {str(r) for r in include_regions}
+        unit_ids = sorted({
+            int(row["unit_id"])
+            for _, row in units_df.iterrows()
+            if str(row.get("region")) in allowed_regions
+            and is_allowed_cell_type(row.get("cell_type"))
+        })
+    else:
+        unit_ids = filter_unit_ids_for_analysis(
+            units_df, all_ids, include_non_hippocampal=include_non_hippocampal,
+        )
+    if include_regions is None and all_ids and unit_ids and len(unit_ids) < len(all_ids):
         # Partial exclusion is legitimate (visual cortex on the way in), but an
         # unrecognised label is not: it drops real units and looks identical to
         # a deliberate exclusion. Name the labels so the drop is a decision.

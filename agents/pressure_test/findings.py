@@ -149,7 +149,7 @@ class RunContext:
     experiment_dir: Any = None           # real dataset, if the operator gave one
     quick: bool = False                  # skip slow checks
     seed: int = 0
-    latency_budget_ms: float = 20.0      # per-decode-step budget
+    latency_budget_ms: float = 50.0      # per-decode-step budget (= update_dt)
     ui_timeout_s: float = 120.0
 
     def env(self) -> dict[str, Any]:
