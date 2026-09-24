@@ -77,6 +77,45 @@ def _write_json(path: Path, payload: dict[str, Any]) -> None:
     path.write_text(json.dumps(payload, indent=2, default=str) + "\n")
 
 
+_METHOD_ROW_KEYS = (
+    "method", "primary_d", "ridge_alpha", "knn_k", "ridge", "knn",
+    "n_train", "n_eval", "index_hashes", "elapsed_s", "a13",
+    "n_units", "n_units_by_cell_type", "n_units_by_region", "coverage",
+    "inner_cv_ridge_median", "inner_cv_knn_median", "n_folds",
+    "refit_representation",
+)
+
+
+def reusable_result_json(path: Path, cfg: dict[str, Any]) -> dict[str, Any] | None:
+    """Return payload if it exists and its config hash matches the frozen YAML."""
+    if not path.is_file():
+        return None
+    try:
+        rec = json.loads(path.read_text())
+    except Exception:
+        return None
+    if not isinstance(rec, dict):
+        return None
+    if rec.get("config_sha256") != cfg.get("config_sha256"):
+        return None
+    return rec
+
+
+def method_row_from_payload(rec: dict[str, Any]) -> dict[str, Any]:
+    return {k: rec[k] for k in _METHOD_ROW_KEYS if k in rec}
+
+
+def source_summary_reusable(out_dir: Path, cfg: dict[str, Any]) -> dict[str, Any] | None:
+    """Skip a whole source when every method JSON and the summary match the config hash."""
+    summary = reusable_result_json(out_dir / "source_summary.json", cfg)
+    if summary is None:
+        return None
+    for key in METHOD_KEYS:
+        if reusable_result_json(out_dir / f"{key}.json", cfg) is None:
+            return None
+    return summary
+
+
 def generate_seed_dataset(
     cfg: dict[str, Any],
     seed_index: int,
@@ -566,7 +605,7 @@ def _a13_null(
     pass_min = float(a13["pass_min_cm"])
     ridge_delta = float(np.median([r["ridge_minus_floor"] for r in rows]))
     knn_delta = float(np.median([r["knn_minus_floor"] for r in rows]))
-    return {
+    return record_a13({
         "shifts": rows,
         "ridge_median_minus_floor": ridge_delta,
         "knn_median_minus_floor": knn_delta,
@@ -575,7 +614,16 @@ def _a13_null(
         "pass_min_cm": pass_min,
         "n_shifts": n_shifts,
         "unshifted_n": {"n_train": int(len(ytr0)), "n_eval": int(len(yte0))},
-    }
+    })
+
+
+def record_a13(a13: dict[str, Any]) -> dict[str, Any]:
+    """Mark A13 PASS/FAIL. Never aborts the run (SPEC: unreliable, not hidden)."""
+    out = dict(a13)
+    failed = (not bool(out.get("ridge_pass"))) or (not bool(out.get("knn_pass")))
+    out["status"] = "FAIL" if failed else "PASS"
+    out["unreliable"] = bool(failed)
+    return out
 
 
 def analyze_source(
@@ -585,6 +633,16 @@ def analyze_source(
     streams: dict[str, int],
     seed_index: int,
 ) -> dict[str, Any]:
+    out_dir = OUTPUT_ROOT / f"seed_{seed_index}" / spike_source
+    cached_source = source_summary_reusable(out_dir, cfg)
+    if cached_source is not None:
+        print(
+            f"  [{spike_source}] skip source "
+            f"(JSON exists, config_sha256={cfg['config_sha256'][:12]}…)",
+            flush=True,
+        )
+        return cached_source
+
     feat = cfg["features"]
     split = cfg["split"]
     dec = cfg["decoders"]
@@ -624,7 +682,6 @@ def analyze_source(
         int(dec["ridge_alpha_n"]),
     )
     methods_seed = int(streams["methods"])
-    out_dir = OUTPUT_ROOT / f"seed_{seed_index}" / spike_source
     timings: dict[str, float] = {}
     results: list[dict[str, Any]] = []
     index_hashes = {
@@ -648,6 +705,18 @@ def analyze_source(
     a13_by_method: dict[str, Any] = {}
 
     for key in METHOD_KEYS:
+        cached = reusable_result_json(out_dir / f"{key}.json", cfg)
+        if cached is not None:
+            row = method_row_from_payload(cached)
+            results.append(row)
+            a13_by_method[key] = cached.get("a13") or {}
+            timings[key] = float(cached.get("elapsed_s") or 0.0)
+            print(
+                f"  [{spike_source}] {key} skip "
+                f"(JSON exists, config_sha256={cfg['config_sha256'][:12]}…)",
+                flush=True,
+            )
+            continue
         print(f"  [{spike_source}] {key} …", flush=True)
         t_method = time.perf_counter()
         reducing = key not in ("raw", "raw_lag")
@@ -678,12 +747,13 @@ def analyze_source(
             ridge_alpha=float(alpha), knn_k=int(knn_k),
         )
         a13_by_method[key] = a13
-        if not a13["ridge_pass"] or not a13["knn_pass"]:
-            raise RuntimeError(
-                f"A13 failed for {key} on {spike_source}: "
+        if a13.get("status") == "FAIL":
+            print(
+                f"  A13 FAIL {key} on {spike_source}: "
                 f"ridge Δ={a13['ridge_median_minus_floor']:.3f} "
                 f"knn Δ={a13['knn_median_minus_floor']:.3f} "
-                f"(pass ≥ {a13['pass_min_cm']})"
+                f"(pass ≥ {a13['pass_min_cm']}; marked unreliable, continuing)",
+                flush=True,
             )
         elapsed = time.perf_counter() - t_method
         timings[key] = elapsed
@@ -703,6 +773,8 @@ def analyze_source(
                 "knn_median_minus_floor": a13["knn_median_minus_floor"],
                 "ridge_pass": a13["ridge_pass"],
                 "knn_pass": a13["knn_pass"],
+                "status": a13.get("status"),
+                "unreliable": a13.get("unreliable"),
             },
             **unit_counts,
             "coverage": {
@@ -760,6 +832,9 @@ def analyze_source(
         "timings_s": timings,
         "floor": floor_err,
         "a13": a13_by_method,
+        "a13_failures": [
+            k for k, rec in a13_by_method.items() if rec.get("status") == "FAIL"
+        ],
         "n_train": int(train_ok.sum()),
         "n_eval": int(eval_mask.sum()),
         "index_hashes": index_hashes,
@@ -805,6 +880,11 @@ def run_seed_pilot(seed_index: int = 0) -> dict[str, Any]:
         ),
         "projected_5_seeds_s_corrected": sim_s * n_seeds + (total - sim_s) * n_seeds,
     }
+    a13_failures = [
+        f"{r['spike_source']}:{k}"
+        for r in source_rows
+        for k in (r.get("a13_failures") or [])
+    ]
     summary = _result_payload(cfg, {
         "stage": "pilot",
         "seed_index": seed_index,
@@ -813,8 +893,14 @@ def run_seed_pilot(seed_index: int = 0) -> dict[str, Any]:
         "elapsed_s": total,
         "sim_elapsed_s": sim_s,
         "projection": projection,
+        "a13_failures": a13_failures,
+        "exit_code": 0,
         "sources": [
-            {"spike_source": r["spike_source"], "timings_s": r.get("timings_s")}
+            {
+                "spike_source": r["spike_source"],
+                "timings_s": r.get("timings_s"),
+                "a13_failures": r.get("a13_failures") or [],
+            }
             for r in source_rows
         ],
     })
@@ -824,7 +910,18 @@ def run_seed_pilot(seed_index: int = 0) -> dict[str, Any]:
 
 if __name__ == "__main__":
     import sys
+    import traceback
+
     idx = int(sys.argv[1]) if len(sys.argv) > 1 else 0
-    out = run_seed_pilot(idx)
+    try:
+        out = run_seed_pilot(idx)
+    except Exception:
+        traceback.print_exc()
+        print(f"seed{idx} crashed", flush=True)
+        print("EXIT:1", flush=True)
+        raise SystemExit(1)
     print(json.dumps(out["projection"], indent=2))
-    print(f"seed0 total {out['elapsed_s']:.1f}s  sim {out['sim_elapsed_s']:.1f}s")
+    print(f"seed{idx} total {out['elapsed_s']:.1f}s  sim {out['sim_elapsed_s']:.1f}s")
+    code = int(out.get("exit_code", 0))
+    print(f"EXIT:{code}", flush=True)
+    raise SystemExit(code)

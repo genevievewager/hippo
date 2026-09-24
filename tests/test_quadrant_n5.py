@@ -176,6 +176,50 @@ def test_a13_null_passes_on_uncorrelated_latents():
     assert out["n_shifts"] == 20
 
 
+def test_skip_if_json_exists_requires_matching_config_hash(tmp_path):
+    import json
+
+    from realtime.quadrant_n5_run import (
+        METHOD_KEYS,
+        reusable_result_json,
+        source_summary_reusable,
+    )
+
+    cfg = load_quadrant_n5_yaml()
+    src = tmp_path / "sorted"
+    src.mkdir()
+    assert reusable_result_json(src / "raw.json", cfg) is None
+    (src / "raw.json").write_text(json.dumps({"config_sha256": "0" * 64, "method": "raw"}))
+    assert reusable_result_json(src / "raw.json", cfg) is None
+    good = {"config_sha256": cfg["config_sha256"], "method": "raw", "elapsed_s": 1.0}
+    (src / "raw.json").write_text(json.dumps(good))
+    rec = reusable_result_json(src / "raw.json", cfg)
+    assert rec is not None and rec["method"] == "raw"
+    (src / "source_summary.json").write_text(json.dumps({
+        "config_sha256": cfg["config_sha256"], "stage": "source",
+    }))
+    assert source_summary_reusable(src, cfg) is None
+    for key in METHOD_KEYS:
+        (src / f"{key}.json").write_text(json.dumps({
+            "config_sha256": cfg["config_sha256"], "method": key,
+        }))
+    assert source_summary_reusable(src, cfg) is not None
+
+
+def test_a13_failure_is_recorded_not_raised():
+    import inspect
+
+    from realtime.quadrant_n5_run import analyze_source, record_a13
+
+    src = inspect.getsource(analyze_source)
+    assert "raise RuntimeError" not in src
+    assert "marked unreliable, continuing" in src
+    fail = record_a13({"ridge_pass": False, "knn_pass": True})
+    assert fail["status"] == "FAIL" and fail["unreliable"] is True
+    ok = record_a13({"ridge_pass": True, "knn_pass": True})
+    assert ok["status"] == "PASS" and ok["unreliable"] is False
+
+
 def test_a13_fails_when_latents_are_the_labels():
     from realtime.quadrant_n5_run import _a13_null
 

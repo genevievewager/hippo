@@ -15,6 +15,11 @@ from realtime.train_decoder import purge_gap_s
 REPO_ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_CONFIG_PATH = REPO_ROOT / "configs" / "quadrant_n5.yaml"
 
+# Commit (a) on quadrant-n5: runner as of 01:56 plus the n5 numerical tree.
+# Provenance SHA for seeds 0–4. Later runner fixes (A13 continue, skip, EXIT)
+# are not this SHA.
+SEEDS_0_4_PROVENANCE_SHA = "775fa1c38063a1ecea07df28c64174beea8f122e"
+
 
 def config_sha256(path: Path | None = None) -> str:
     loc = Path(path) if path is not None else DEFAULT_CONFIG_PATH

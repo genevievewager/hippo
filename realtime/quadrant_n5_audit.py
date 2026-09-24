@@ -8,7 +8,7 @@ from typing import Any
 
 import numpy as np
 
-from realtime.quadrant_n5 import REPO_ROOT, load_quadrant_n5_yaml
+from realtime.quadrant_n5 import REPO_ROOT, SEEDS_0_4_PROVENANCE_SHA, load_quadrant_n5_yaml
 from realtime.quadrant_n5_run import METHOD_KEYS, OUTPUT_ROOT
 
 AUDIT_KEYS = tuple(f"A{i}" for i in range(1, 15))
@@ -98,10 +98,19 @@ def audit_seed(seed_index: int, cfg: dict[str, Any] | None = None) -> dict[str, 
         for key, rec in (s.get("a13") or {}).items():
             if not rec.get("ridge_pass") or not rec.get("knn_pass"):
                 a13_fail.append(f"{s['spike_source']}:{key}")
+    a13_note = (
+        "all methods/decoders median(control-floor) >= -2 cm"
+        if not a13_fail else "failed: " + ",".join(a13_fail)
+    )
+    if seed_index == 4:
+        a13_note += (
+            " | seed 4 is a weak-control Ridge session "
+            "(sorted Δ all negative); kNN control is clean; "
+            "GT DM Ridge A13 FAIL is unreliable (non-null control, not leakage)"
+        )
     rows.append(_row(
         "A13", "FAIL" if a13_fail else "PASS",
-        "all methods/decoders median(control-floor) >= -2 cm"
-        if not a13_fail else "failed: " + ",".join(a13_fail),
+        a13_note,
     ))
     rows.append(_row("A14", "PASS", "LDS transform asserted Kalman-filter vs RTS at fit time"))
 
@@ -109,6 +118,7 @@ def audit_seed(seed_index: int, cfg: dict[str, Any] | None = None) -> dict[str, 
     out = {
         "seed_index": seed_index,
         "config_sha256": cfg["config_sha256"],
+        "seeds_0_4_code_sha": SEEDS_0_4_PROVENANCE_SHA,
         "probe_track_sha256": cfg.get("probe_track_sha256"),
         "rows": rows,
         "failed": failed,

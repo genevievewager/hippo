@@ -10,7 +10,7 @@ import numpy as np
 from matplotlib.backends.backend_pdf import PdfPages
 import matplotlib.pyplot as plt
 
-from realtime.quadrant_n5 import load_quadrant_n5_yaml
+from realtime.quadrant_n5 import SEEDS_0_4_PROVENANCE_SHA, load_quadrant_n5_yaml
 from realtime.quadrant_n5_run import METHOD_KEYS, OUTPUT_ROOT
 
 POP_BLURB = (
@@ -25,6 +25,14 @@ QUADRANT = {
     "linear_dynamic": "lds",
     "nonlinear_dynamic": None,
 }
+
+SEED_4_RIDGE_WEAK_CONTROL = (
+    "Seed 4 is a weak-control session for Ridge across all methods "
+    "(sorted Ridge Δ range [−1.984, −0.837]; every method negative). "
+    "The kNN control is clean on seed 4 (all completed kNN Δ ≥ +1.16). "
+    "Ground-truth DM Ridge is A13 FAIL / unreliable "
+    "(non-null control / session residual, not leakage)."
+)
 
 
 def _load(path: Path) -> dict[str, Any]:
@@ -97,10 +105,12 @@ def write_seed_pdf(seed_index: int, cfg: dict[str, Any]) -> Path:
             f"probe_sha256   {cfg.get('probe_track_sha256')}",
             f"git_sha        {sorted_sum.get('git_sha')}",
             f"dirty_tree     {sorted_sum.get('dirty_tree')}",
+            f"seeds_0_4_code {SEEDS_0_4_PROVENANCE_SHA}",
             f"numpy          {(sorted_sum.get('versions') or {}).get('numpy')}",
             f"sklearn        {(sorted_sum.get('versions') or {}).get('sklearn')}",
             f"seed_streams   {sorted_sum.get('seed_streams')}",
             "",
+            *( [SEED_4_RIDGE_WEAK_CONTROL, ""] if seed_index == 4 else [] ),
             POP_BLURB,
         ])
         rows = audit.get("rows") or []
@@ -117,10 +127,18 @@ def write_seed_pdf(seed_index: int, cfg: dict[str, Any]) -> Path:
             )
         lines += ["", "ground_truth  (non-deployable)", ""]
         for m in gt_sum.get("methods") or []:
+            a13 = m.get("a13") or {}
+            flag = ""
+            if a13.get("status") == "FAIL" or a13.get("unreliable"):
+                flag = "  A13 FAIL / unreliable"
             lines.append(
                 f"{m['method']:8s} d={m.get('primary_d')}  "
-                f"ridge={m['ridge']['median']:.2f}  knn={m['knn']['median']:.2f}"
+                f"ridge={m['ridge']['median']:.2f}  knn={m['knn']['median']:.2f}  "
+                f"A13 Δr={a13.get('ridge_median_minus_floor')} "
+                f"Δk={a13.get('knn_median_minus_floor')}{flag}"
             )
+        if seed_index == 4:
+            lines += ["", SEED_4_RIDGE_WEAK_CONTROL]
         _text_page(pdf, f"Seed {seed_index} primary-d errors (cm, median)", lines)
     return dest
 
@@ -137,12 +155,15 @@ def write_aggregate_pdf(cfg: dict[str, Any]) -> Path:
     with PdfPages(dest) as pdf:
         _text_page(pdf, "quadrant_n5 aggregate", [
             f"config_sha256 {cfg['config_sha256']}",
+            f"seeds_0_4_code {SEEDS_0_4_PROVENANCE_SHA}",
             f"n_seeds with sorted results: {len(seeds)}",
             "",
             POP_BLURB,
             "",
             "Nonlinear-dynamic cell is empty (not implemented; GPFA is not that cell).",
             "No p-values. N=5 sign counts only.",
+            "",
+            SEED_4_RIDGE_WEAK_CONTROL,
         ])
         # Quadrant medians
         fig, axes = plt.subplots(2, 2, figsize=(8.5, 8.5))
