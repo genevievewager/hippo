@@ -47,6 +47,7 @@ from realtime.quadrant_n5_run import (  # noqa: E402
     fit_transform_representation,
     ridge_alpha_grid,
 )
+from realtime.quadrant_n5 import inner_cv_block_masks  # noqa: E402
 from realtime.train_decoder import (  # noqa: E402
     align_behavior_to_decoder_times,
 )
@@ -363,6 +364,36 @@ def _subset_columns(
     return cols, ",".join(spec)
 
 
+def _cv_score_alpha(Xtr, ytr, times_tr, alphas, n_blocks, gap_s) -> tuple[float, float]:
+    """Return (best_alpha, best_inner_cv_median)."""
+    folds = inner_cv_block_masks(times_tr, n_blocks=n_blocks, gap_s=gap_s)
+    best_a, best = float(alphas[0]), np.inf
+    for a in alphas:
+        meds = []
+        for tr, va in folds:
+            pred = _fit_predict_ridge(Xtr[tr], ytr[tr], Xtr[va], a)
+            meds.append(np.median(np.linalg.norm(pred - ytr[va], axis=1)))
+        med = float(np.median(meds))
+        if med < best or (med == best and a < best_a):
+            best, best_a = med, float(a)
+    return best_a, float(best)
+
+
+def _cv_score_k(Xtr, ytr, times_tr, ks, n_blocks, gap_s) -> tuple[int, float]:
+    """Return (best_k, best_inner_cv_median)."""
+    folds = inner_cv_block_masks(times_tr, n_blocks=n_blocks, gap_s=gap_s)
+    best_k, best = int(ks[0]), np.inf
+    for k in ks:
+        meds = []
+        for tr, va in folds:
+            pred = _fit_predict_knn(Xtr[tr], ytr[tr], Xtr[va], k)
+            meds.append(np.median(np.linalg.norm(pred - ytr[va], axis=1)))
+        med = float(np.median(meds))
+        if med < best or (med == best and k < best_k):
+            best, best_k = med, int(k)
+    return best_k, float(best)
+
+
 def _reduced_fit_decode(
     *,
     method: str,
@@ -410,6 +441,259 @@ def _reduced_fit_decode(
         "ridge_median": float(ridge_m["median"]),
         "knn_median": float(knn_m["median"]),
     }
+
+
+def _reduced_fit_cv_scores(
+    *,
+    method: str,
+    d: int,
+    cfg: dict[str, Any],
+    methods_seed: int,
+    X_sub: np.ndarray,
+    obs: dict[str, Any],
+    alphas: np.ndarray,
+    ks: list[int],
+    n_blocks: int,
+    gap_s: float,
+) -> dict[str, Any]:
+    """Fit representation at d; return decoder-only inner-CV scores (not test)."""
+    if X_sub.shape[1] < d:
+        raise ValueError(f"n_units={X_sub.shape[1]} < d={d} for {method}")
+    model = _make_rep(method, int(d), cfg, methods_seed, n_fit=int(obs["train_ok"].sum()))
+    Z = fit_transform_representation(method, model, X_sub, obs["train_ok"])
+    Ztr = Z[obs["train_ok"]]
+    ytr = obs["y"][obs["train_ok"]]
+    times_tr = np.asarray(obs["decode_times"])[obs["train_ok"]]
+    alpha, ridge_cv = _cv_score_alpha(Ztr, ytr, times_tr, alphas, n_blocks, gap_s)
+    knn_k, knn_cv = _cv_score_k(Ztr, ytr, times_tr, ks, n_blocks, gap_s)
+    return {
+        "d": int(d),
+        "ridge_alpha": float(alpha),
+        "knn_k": int(knn_k),
+        "ridge_cv_median": float(ridge_cv),
+        "knn_cv_median": float(knn_cv),
+    }
+
+
+def preregister_criterion_4prime(results: Path | None = None) -> dict[str, Any]:
+    """Write criterion 4′ as PENDING. Does not change criterion 4 (cell_type_grid_bvc)."""
+    results = Path(results or OUTPUT_ROOT)
+    crit_path = _pressure_root(results) / "criteria.json"
+    criteria = json.loads(crit_path.read_text()) if crit_path.exists() else {}
+    criteria["cell_type_grid_bvc_cv_d"] = {
+        "status": "PENDING",
+        "label": "4′",
+        "rule": (
+            "Secondary (post hoc, because (d) showed the fixed d=20 confounded "
+            "criterion 4): on grid+BVC, with d ∈ {5,10,20} chosen per method and "
+            "seed by the decoder-only inner-CV rule (never by test error), LDS kNN "
+            "< PCA kNN in ≥ 4/5 seeds."
+        ),
+        "d_grid": list(CONTROL_DIMS),
+        "d_selection": (
+            "For each method×seed×subset, choose d ∈ {5,10,20} minimizing the "
+            "kNN decoder-only inner-CV median (ties → smaller d). Test medians "
+            "taken from saved C2 control_d_sweep.csv at that d."
+        ),
+        "required": "≥ 4/5",
+        "note": "criterion 4 (cell_type_grid_bvc at saved primary_d) remains FAIL unchanged",
+    }
+    crit_path.write_text(json.dumps(criteria, indent=2) + "\n")
+    print(json.dumps({"wrote": str(crit_path), "criterion_4prime": "PENDING"}, indent=2), flush=True)
+    return criteria
+
+
+def evaluate_criterion_4prime(report_df: pd.DataFrame) -> dict[str, Any]:
+    """4′: LDS kNN < PCA kNN on grid+BVC at CV-selected d, ≥ 4/5."""
+    diffs: list[float] = []
+    for s in range(5):
+        row = report_df[(report_df.seed == s) & (report_df.subset == "grid_bvc")]
+        # one row per method; pivot
+        pca = float(row[row.method == "pca"].knn_median.iloc[0])
+        lds = float(row[row.method == "lds"].knn_median.iloc[0])
+        diffs.append(lds - pca)
+    n_lds = int(sum(d < 0 for d in diffs if np.isfinite(d)))
+    return {
+        "status": "PASS" if n_lds >= 4 else "FAIL",
+        "label": "4′",
+        "per_seed_lds_minus_pca_knn_cm": diffs,
+        "n_lds_better": n_lds,
+        "sign_count": {
+            "LDS_better": n_lds,
+            "PCA_better": int(sum(d > 0 for d in diffs if np.isfinite(d))),
+            "tie": int(sum(d == 0 for d in diffs if np.isfinite(d))),
+        },
+        "required": "≥ 4/5",
+    }
+
+
+def finish_criterion_4prime(
+    results: Path | None = None,
+    *,
+    seeds: range | list[int] | None = None,
+) -> dict[str, Any]:
+    """Select d by decoder-only CV; report test medians from saved C2 CSV (no new test fits).
+
+    Representation fits are re-run only to recover inner-CV scores for d selection
+    (those scores were not saved in control_d_sweep.csv). All reported test errors
+    come from the existing C2 file.
+    """
+    results = Path(results or OUTPUT_ROOT)
+    out_dir = _pressure_root(results)
+    log_dir = results / "logs"
+    log_dir.mkdir(parents=True, exist_ok=True)
+    preregister_criterion_4prime(results)
+
+    d_path = out_dir / "control_d_sweep.csv"
+    if not d_path.is_file():
+        raise FileNotFoundError(f"missing C2 fits: {d_path}")
+    d_sweep = pd.read_csv(d_path)
+
+    cfg = load_quadrant_n5_yaml()
+    seed_list = list(seeds if seeds is not None else range(5))
+    alphas = ridge_alpha_grid(cfg)
+    ks = [int(k) for k in cfg["decoders"]["knn_k"]]
+    n_blocks = int(cfg["split"]["inner_cv_blocks"])
+    gap_s = float(cfg["split"]["gap_s"])
+
+    cv_rows: list[dict[str, Any]] = []
+    t0 = time.time()
+    for seed_index in seed_list:
+        sim_dir = results / f"seed_{seed_index}" / "sim"
+        obs = build_observation(cfg, sim_dir, CELL_TYPE_SOURCE)
+        summary = json.loads(
+            (results / f"seed_{seed_index}" / CELL_TYPE_SOURCE / "source_summary.json").read_text()
+        )
+        methods_seed = int(summary["seed_streams"]["methods"])
+        n_all = obs["X"].shape[1]
+        print(f"[criterion_4prime] seed={seed_index} CV scores for d selection", flush=True)
+        for subset_name in ("grid_bvc", "all"):
+            cols, _ = _subset_columns(
+                results, seed_index, CELL_TYPE_SOURCE, cfg, subset_name, n_all,
+            )
+            X_sub = np.asarray(obs["X"][:, cols], dtype=float)
+            for method in CELL_TYPE_METHODS:
+                for d in CONTROL_DIMS:
+                    sc = _reduced_fit_cv_scores(
+                        method=method, d=int(d), cfg=cfg, methods_seed=methods_seed,
+                        X_sub=X_sub, obs=obs, alphas=alphas, ks=ks,
+                        n_blocks=n_blocks, gap_s=gap_s,
+                    )
+                    print(
+                        f"  {subset_name}/{method}/d={d}: "
+                        f"knn_cv={sc['knn_cv_median']:.2f} ridge_cv={sc['ridge_cv_median']:.2f}",
+                        flush=True,
+                    )
+                    cv_rows.append(dict(
+                        seed=seed_index, subset=subset_name, method=method, **sc,
+                    ))
+
+    cv_df = pd.DataFrame(cv_rows)
+    cv_df.to_csv(out_dir / "control_d_cv_scores.csv", index=False)
+
+    # Select d per seed×subset×method by min knn_cv (tie → smaller d).
+    report_rows: list[dict[str, Any]] = []
+    for seed_index in seed_list:
+        for subset_name in ("grid_bvc", "all"):
+            for method in CELL_TYPE_METHODS:
+                sub = cv_df[
+                    (cv_df.seed == seed_index) & (cv_df.subset == subset_name)
+                    & (cv_df.method == method)
+                ].sort_values(["knn_cv_median", "d"])
+                chosen = sub.iloc[0]
+                d_sel = int(chosen["d"])
+                # Test medians from saved C2 CSV (never from this CV recompute).
+                te = d_sweep[
+                    (d_sweep.seed == seed_index) & (d_sweep.subset == subset_name)
+                    & (d_sweep.method == method) & (d_sweep.d == d_sel)
+                ]
+                knn_med = float(te[te.decoder == "knn"].median_err.iloc[0])
+                ridge_med = float(te[te.decoder == "ridge"].median_err.iloc[0])
+                report_rows.append(dict(
+                    seed=seed_index,
+                    subset=subset_name,
+                    method=method,
+                    cv_selected_d=d_sel,
+                    knn_cv_median=float(chosen["knn_cv_median"]),
+                    ridge_cv_median=float(chosen["ridge_cv_median"]),
+                    knn_median=knn_med,
+                    ridge_median=ridge_med,
+                    ridge_alpha=float(chosen["ridge_alpha"]),
+                    knn_k=int(chosen["knn_k"]),
+                ))
+    report_df = pd.DataFrame(report_rows)
+    report_df.to_csv(out_dir / "criterion_4prime_report.csv", index=False)
+
+    # Gains at CV-selected d: error(all)−error(grid_bvc)
+    gain_rows: list[dict[str, Any]] = []
+    for seed_index in seed_list:
+        for method in CELL_TYPE_METHODS:
+            for dec, col in (("knn", "knn_median"), ("ridge", "ridge_median")):
+                gb = report_df[
+                    (report_df.seed == seed_index) & (report_df.subset == "grid_bvc")
+                    & (report_df.method == method)
+                ]
+                al = report_df[
+                    (report_df.seed == seed_index) & (report_df.subset == "all")
+                    & (report_df.method == method)
+                ]
+                e_gb = float(gb[col].iloc[0])
+                e_all = float(al[col].iloc[0])
+                gain_rows.append(dict(
+                    seed=seed_index, method=method, decoder=dec,
+                    d_grid_bvc=int(gb.cv_selected_d.iloc[0]),
+                    d_all=int(al.cv_selected_d.iloc[0]),
+                    err_grid_bvc=e_gb, err_all=e_all,
+                    gain_all_minus_grid_bvc=e_all - e_gb,
+                ))
+    gain_df = pd.DataFrame(gain_rows)
+    inter_rows: list[dict[str, Any]] = []
+    for seed_index in seed_list:
+        for dec in ("knn", "ridge"):
+            g_pca = float(gain_df[
+                (gain_df.seed == seed_index) & (gain_df.method == "pca") & (gain_df.decoder == dec)
+            ].gain_all_minus_grid_bvc.iloc[0])
+            g_lds = float(gain_df[
+                (gain_df.seed == seed_index) & (gain_df.method == "lds") & (gain_df.decoder == dec)
+            ].gain_all_minus_grid_bvc.iloc[0])
+            inter_rows.append(dict(
+                seed=seed_index, method="interaction", decoder=dec,
+                d_grid_bvc=float("nan"), d_all=float("nan"),
+                err_grid_bvc=float("nan"), err_all=float("nan"),
+                gain_all_minus_grid_bvc=g_lds - g_pca,
+            ))
+    gain_df = pd.concat([gain_df, pd.DataFrame(inter_rows)], ignore_index=True)
+    gain_df.to_csv(out_dir / "criterion_4prime_gains.csv", index=False)
+
+    crit_4p = evaluate_criterion_4prime(report_df)
+    # Preserve pre-registered rule text
+    crit_path = out_dir / "criteria.json"
+    criteria = json.loads(crit_path.read_text())
+    prev = dict(criteria.get("cell_type_grid_bvc_cv_d") or {})
+    keep = {k: prev[k] for k in prev if k in (
+        "label", "rule", "d_grid", "d_selection", "required", "note",
+    )}
+    criteria["cell_type_grid_bvc_cv_d"] = {**keep, **crit_4p}
+    if "rule" in keep:
+        criteria["cell_type_grid_bvc_cv_d"]["rule"] = keep["rule"]
+    # Explicitly leave criterion 4 unchanged (do not rewrite cell_type_grid_bvc).
+    crit_path.write_text(json.dumps(criteria, indent=2) + "\n")
+
+    summary = {
+        "wall_time_s": time.time() - t0,
+        "criterion_4": (criteria.get("cell_type_grid_bvc") or {}).get("status"),
+        "criterion_4prime": crit_4p["status"],
+        "n_lds_better_4prime": crit_4p["n_lds_better"],
+        "outputs": {
+            "control_d_cv_scores": str(out_dir / "control_d_cv_scores.csv"),
+            "criterion_4prime_report": str(out_dir / "criterion_4prime_report.csv"),
+            "criterion_4prime_gains": str(out_dir / "criterion_4prime_gains.csv"),
+            "criteria": str(crit_path),
+        },
+    }
+    (out_dir / "criterion_4prime_summary.json").write_text(json.dumps(summary, indent=2) + "\n")
+    print(json.dumps(summary, indent=2), flush=True)
+    return summary
 
 
 def preregister_path_integration_criteria(results: Path | None = None) -> dict[str, Any]:
@@ -1662,6 +1946,19 @@ def main(argv: list[str] | None = None) -> None:
         action="store_true",
         help="Preregister (c)/(d), then run noise-unit (C1) and dimension (C2) controls.",
     )
+    ap.add_argument(
+        "--preregister-criterion-4prime",
+        action="store_true",
+        help="Write criterion 4′ as PENDING (does not change criterion 4).",
+    )
+    ap.add_argument(
+        "--finish-criterion-4prime",
+        action="store_true",
+        help=(
+            "Select d by decoder-only CV; report test medians from saved C2 CSV; "
+            "evaluate criterion 4′."
+        ),
+    )
     args = ap.parse_args(argv)
     if "-" in args.seeds and "," not in args.seeds:
         a, b = args.seeds.split("-", 1)
@@ -1672,8 +1969,12 @@ def main(argv: list[str] | None = None) -> None:
         preregister_path_integration_criteria(args.results)
     elif args.preregister_controls_cd:
         preregister_control_criteria(args.results)
+    elif args.preregister_criterion_4prime:
+        preregister_criterion_4prime(args.results)
     elif args.finish_mechanism_from_csv:
         finish_mechanism_from_csv(args.results)
+    elif args.finish_criterion_4prime:
+        finish_criterion_4prime(args.results, seeds=seeds)
     elif args.controls_cd:
         run_controls_cd(args.results, seeds=seeds)
     elif args.mechanism_reduced or args.cell_type_reduced:

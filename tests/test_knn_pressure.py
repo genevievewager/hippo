@@ -11,6 +11,7 @@ from agents.quadrant_n5.knn_pressure import (
     evaluate_control_c,
     evaluate_control_d,
     evaluate_criteria,
+    evaluate_criterion_4prime,
     evaluate_path_integration,
     train_mask_excluding_delta,
 )
@@ -181,3 +182,18 @@ def test_evaluate_control_c_and_d():
     d = evaluate_control_d(pd.DataFrame(d_rows))
     assert d["n_pass"] == 4
     assert d["status"] == "PASS"
+
+
+def test_evaluate_criterion_4prime():
+    rows = []
+    for s in range(5):
+        pca_err = 20.0
+        lds_err = 10.0 if s < 4 else 25.0
+        for method, err in (("pca", pca_err), ("lds", lds_err)):
+            rows.append(dict(
+                seed=s, subset="grid_bvc", method=method,
+                cv_selected_d=10, knn_median=err, ridge_median=err + 5,
+            ))
+    out = evaluate_criterion_4prime(pd.DataFrame(rows))
+    assert out["status"] == "PASS"
+    assert out["n_lds_better"] == 4
