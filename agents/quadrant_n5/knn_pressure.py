@@ -357,6 +357,11 @@ def evaluate_criteria(exclusion: pd.DataFrame, neighbour: pd.DataFrame, strata: 
         )
         else "FAIL"
     )
+    # Story flag: full Phase 8 (incl. cell-type) must PASS before dropping the pending note.
+    out["phase8_passed"] = bool(
+        out["overall_1_to_3"] == "PASS"
+        and out["cell_type_grid_bvc"]["status"] == "PASS"
+    )
     return out
 
 

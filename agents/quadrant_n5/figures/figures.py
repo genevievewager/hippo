@@ -691,13 +691,13 @@ def fig7(D, out):
     seed = _fig7_seed(E)
     floor = float(F[(F.source == "sorted") & (F.seed == seed)].floor_median.iloc[0])
     methods = ("pca", "dm", "lds")
-    fig = plt.figure(figsize=(W_FULL, 205 * MM))
+    fig = plt.figure(figsize=(W_FULL, 210 * MM))
 
     # a — arena 2x3
     head_fig(fig, 0.0, 0.975, "a", "Arena view (first 60 s of test; sorted)")
     for ri, dec in enumerate(("ridge", "knn")):
         for ci, method in enumerate(methods):
-            ax = fig.add_axes([0.055 + ci * 0.31, 0.755 - ri * 0.245, 0.27, 0.175])
+            ax = fig.add_axes([0.055 + ci * 0.31, 0.820 - ri * 0.195, 0.27, 0.130])
             sub = W[(W.seed == seed) & (W.source == "sorted") & (W.method == method) & (W.decoder == dec)]
             ax.plot(sub.x_true, sub.y_true, color=INK, lw=0.8, zorder=2)
             ax.scatter(sub.x_pred, sub.y_pred, s=1.5, c=COL[method], alpha=0.35,
@@ -721,13 +721,13 @@ def fig7(D, out):
             ax.set_xticks([0, 50, 100]); ax.set_yticks([0, 50, 100])
             ax.tick_params(labelsize=5.5)
 
-    # b — x(t), y(t)
-    head_fig(fig, 0.0, 0.465, "b", "Coordinates over the same window (Ridge; kNN inset)")
+    # b — title well below panel-a x-labels; kNN legend as fig text (not over data)
+    head_fig(fig, 0.0, 0.440, "b", "Coordinates over the same window (Ridge; kNN inset)")
     t0 = float(W[(W.seed == seed) & (W.source == "sorted")].t_s.min())
     for yi, coord in enumerate(("x", "y")):
-        ax = fig.add_axes([0.08, 0.325 - yi * 0.090, 0.52, 0.075])
+        ax = fig.add_axes([0.08, 0.320 - yi * 0.085, 0.48, 0.070])
         true = W[(W.seed == seed) & (W.source == "sorted") & (W.method == "pca") & (W.decoder == "ridge")]
-        ax.plot(true.t_s - t0, true[f"{coord}_true"], color=INK, lw=1.0, zorder=2, label="true")
+        ax.plot(true.t_s - t0, true[f"{coord}_true"], color=INK, lw=1.0, zorder=2)
         for method in methods:
             sub = W[(W.seed == seed) & (W.source == "sorted") & (W.method == method) & (W.decoder == "ridge")]
             ax.plot(sub.t_s - t0, sub[f"{coord}_pred"], color=COL[method], lw=0.8, zorder=3)
@@ -737,24 +737,25 @@ def fig7(D, out):
         else:
             ax.set_xticklabels([])
         ax.tick_params(labelsize=5.5)
-    # kNN inset
-    ax = fig.add_axes([0.68, 0.285, 0.28, 0.140])
+    ax = fig.add_axes([0.64, 0.280, 0.20, 0.115])
     true = W[(W.seed == seed) & (W.source == "sorted") & (W.method == "pca") & (W.decoder == "knn")]
-    ax.plot(true.t_s - t0, true.x_true, color=INK, lw=0.9, zorder=2, label="true")
+    ax.plot(true.t_s - t0, true.x_true, color=INK, lw=0.9, zorder=2)
     for method in methods:
         sub = W[(W.seed == seed) & (W.source == "sorted") & (W.method == method) & (W.decoder == "knn")]
-        ax.plot(sub.t_s - t0, sub.x_pred, color=COL[method], lw=0.7, zorder=3, label=SHORT[method])
+        ax.plot(sub.t_s - t0, sub.x_pred, color=COL[method], lw=0.7, zorder=3)
     ax.set_title("kNN  x(t)", fontsize=6, pad=2)
     ax.set_xlim(0, 60); ax.set_ylim(0, 100)
     ax.set_xlabel("Time (s)", fontsize=5.5)
     ax.set_ylabel("x (cm)", fontsize=5.5)
     ax.tick_params(labelsize=5)
-    ax.legend(loc="upper right", fontsize=5, ncol=2, frameon=True, fancybox=False,
-              edgecolor="none", framealpha=0.9, handlelength=1.2, columnspacing=0.8)
+    yleg = 0.400
+    for lab, col, dy in (("true", INK, 0.0), ("PCA", COL["pca"], -0.018),
+                         ("DM", COL["dm"], -0.036), ("LDS", COL["lds"], -0.054)):
+        fig.text(0.86, yleg + dy, lab, fontsize=5.5, color=col, va="top", fontweight="bold")
 
     # c — rolling error
-    head_fig(fig, 0.0, 0.200, "c", "Euclidean error (2 s rolling median)")
-    ax = fig.add_axes([0.08, 0.050, 0.52, 0.120])
+    head_fig(fig, 0.0, 0.195, "c", "Euclidean error (2 s rolling median)")
+    ax = fig.add_axes([0.08, 0.045, 0.50, 0.115])
     win = int(round(2.0 / 0.05))  # 2 s at 50 ms
     for method in methods:
         sub = W[(W.seed == seed) & (W.source == "sorted") & (W.method == method) & (W.decoder == "ridge")].sort_values("t_s")
@@ -767,8 +768,8 @@ def fig7(D, out):
               edgecolor="none", framealpha=0.9)
 
     # d — per-seed strip
-    head_fig(fig, 0.66, 0.215, "d", "Window median, all seeds")
-    ax = fig.add_axes([0.70, 0.055, 0.26, 0.125])
+    head_fig(fig, 0.64, 0.195, "d", "Window median, all seeds")
+    ax = fig.add_axes([0.68, 0.045, 0.28, 0.115])
     for j, method in enumerate(methods):
         for s in range(5):
             sub = W[(W.seed == s) & (W.source == "sorted") & (W.method == method) & (W.decoder == "ridge")]

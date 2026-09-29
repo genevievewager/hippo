@@ -171,22 +171,33 @@ def centre_pull_summary(data):
     for src in ("sorted", "ground_truth"):
         for dec in ("ridge", "knn"):
             bits = []
+            means = []
             for m in ("pca", "dm", "lds"):
                 v = sl[(sl.source == src) & (sl.decoder == dec) & (sl.method == m)].slope.values
                 if len(v) == 0:
                     continue
-                bits.append(f"{SH[m]} {np.mean(v):.2f} ± {np.std(v, ddof=1):.2f}")
-                out[f"{src}_{dec}_{m}"] = (float(np.mean(v)), float(np.std(v, ddof=1)))
+                mu, sd = float(np.mean(v)), float(np.std(v, ddof=1))
+                bits.append(f"{SH[m]} {mu:.2f} ± {sd:.2f}")
+                means.append(mu)
+                out[f"{src}_{dec}_{m}"] = (mu, sd)
             out[f"{src}_{dec}_line"] = "; ".join(bits)
-    # Separates linear-readout centre-pull from recording/sorting contribution.
-    gt_r = out.get("ground_truth_ridge_line", "")
-    gt_k = out.get("ground_truth_knn_line", "")
-    so_k = out.get("sorted_knn_line", "")
+            if means:
+                out[f"{src}_{dec}_lo"] = float(min(means))
+                out[f"{src}_{dec}_hi"] = float(max(means))
+                out[f"{src}_{dec}_range"] = f"{min(means):.2f}–{max(means):.2f}"
+    gt_r = out.get("ground_truth_ridge_range")
+    gt_k = out.get("ground_truth_knn_range")
+    so_k = out.get("sorted_knn_range")
     if gt_r and gt_k and so_k:
+        out["cause_short_a"] = (
+            f"Ridge pulls toward the centre even on ground-truth spikes (slopes {gt_r} across PCA/DM/LDS)"
+        )
+        out["cause_short_b"] = (
+            f"with kNN, ground truth reaches {gt_k} but sorted falls to {so_k}, "
+            "so recording/sorting adds the rest"
+        )
         out["cause_sentence"] = (
-            f"Ridge slopes are below 1 even on ground-truth spikes ({gt_r}), so the linear "
-            f"readout itself pulls toward the centre; with kNN, ground truth reaches {gt_k} "
-            f"but sorted falls to {so_k}, so recording/sorting accounts for the rest."
+            f"{out['cause_short_a']}; {out['cause_short_b']}."
         )
     return out
 
@@ -212,11 +223,34 @@ def jump_rate_summary(data):
                 if len(v) == 0:
                     continue
                 parts.append(f"{SH[m]} {np.mean(v):.3f} ± {np.std(v, ddof=1):.3f}")
+                pct = 100.0 * v
+                out[f"{src}_{dec}_{m}_pct_mean"] = float(np.mean(pct))
+                out[f"{src}_{dec}_{m}_pct_sd"] = float(np.std(pct, ddof=1)) if len(pct) > 1 else 0.0
+                out[f"{src}_{dec}_{m}_pct_max"] = float(np.max(pct))
             label = f"{'Sorted' if src == 'sorted' else 'GT'} {'Ridge' if dec == 'ridge' else 'kNN'}"
             bits.append(f"{label}: " + "; ".join(parts))
             out[f"{src}_{dec}_line"] = "; ".join(parts)
     out["lines"] = bits
     return out
+
+
+def load_phase8_flag(data):
+    """True only when Phase 8 criteria report phase8_passed (full PASS incl. cell-type)."""
+    candidates = [
+        os.path.join(data, "data_knn_criteria.json"),
+        os.path.join(os.path.dirname(data), "knn_pressure", "criteria.json"),
+        os.path.join(os.path.dirname(os.path.dirname(data)), "knn_pressure", "criteria.json"),
+    ]
+    for path in candidates:
+        if not os.path.isfile(path):
+            continue
+        crit = json.load(open(path))
+        if "phase8_passed" in crit:
+            return bool(crit["phase8_passed"]), crit
+        ok_13 = crit.get("overall_1_to_3") == "PASS"
+        ok_ct = (crit.get("cell_type_grid_bvc") or {}).get("status") == "PASS"
+        return bool(ok_13 and ok_ct), crit
+    return False, {}
 
 
 def numbers(data):
@@ -247,6 +281,7 @@ def numbers(data):
     has_dsweep = os.path.isfile(os.path.join(data, "data_d_sweep.csv"))
     pull = centre_pull_summary(data)
     jump = jump_rate_summary(data)
+    phase8_passed, phase8_crit = load_phase8_flag(data)
     lds_d = d_detail.get("lds") or {}
     n_audit = int(A.check.nunique())
     n.update(
@@ -272,6 +307,9 @@ def numbers(data):
         d_detail=d_detail, d_story=d_story, d_detail_gt=d_detail_gt, d_story_gt=d_story_gt,
         knn_best_note=knn_best_note, pull=pull, jump=jump, n_audit=n_audit,
         lds_delta_mean=lds_d.get("mean"), lds_delta_sd=lds_d.get("sd"), lds_delta_k=lds_d.get("n_neg"),
+        lds_knn_median_mean=float(Xk.lds.mean()),
+        lds_knn_median_sd=float(Xk.lds.std(ddof=1)),
+        phase8_passed=phase8_passed, phase8_crit=phase8_crit,
         has_pred=has_pred, has_fail=has_fail, has_dsweep=has_dsweep,
         fs=fs, neg=neg, meta=json.load(open(os.path.join(data, "data_meta.json"))),
     )
@@ -324,10 +362,21 @@ def story(n):
         "Causal replay reproduced offline predictions to floating-point precision for every causal method; GPFA, whose "
         "smoother uses future spikes, is shown only as an offline reference.", BODY))
     P.append(Paragraph("The answer at N = 5", H2))
+    lds_bound = ""
+    if n.get("lds_delta_mean") is not None:
+        dm = float(n["lds_delta_mean"])
+        ds = float(n["lds_delta_sd"])
+        dk = int(n["lds_delta_k"])
+        sign = "−" if dm < 0 else ("+" if dm > 0 else "")
+        lds_bound = (
+            f"LDS error was still falling at d = 20 (Δ20−10 = {sign}{abs(dm):.1f} ± {ds:.1f} cm, "
+            f"{dk}/5), so this gap is likely a lower bound. "
+        )
     P.append(Paragraph(
         (f"<b>1. Dynamics is the axis that matters.</b> LDS had lower error than PCA in {n['r_lds_pca_k']}/5 seeds "
          f"(paired difference {n['r_lds_pca']}, Ridge; mean ± SD). "
-         f"Part of that is simply seeing the past: stacking 250 ms "
+         + lds_bound
+         + f"Part of that is simply seeing the past: stacking 250 ms "
          f"of history onto raw counts helped ({n['r_raw_lag_raw']}, {n['r_raw_lag_raw_k']}/5). But the Kalman state model "
          f"improved on history alone ({n['r_lds_raw_lag']}, {n['r_lds_raw_lag_k']}/5), and under the kNN readout that "
          f"increment grew to {n['k_lds_raw_lag']} ({n['k_lds_raw_lag_k']}/5)."
@@ -358,27 +407,32 @@ def story(n):
         f"update (p99), so latency does not separate the quadrant. The causal LDS filter paid {n['r_lds_gpfa']} relative to the "
         f"offline GPFA smoother. Only Isomap approached the budget (p99 up to {n['iso_p99']:.0f} ms; up to "
         f"{100*n['iso_ob']:.1f}% of steps over).", BODY))
-    if n.get("pull"):
-        cause = n["pull"].get("cause_sentence", "")
-        jump_bit = ""
-        if n.get("jump", {}).get("has"):
-            jl = n["jump"]
-            jump_bit = (
-                f" Jump rate (fraction of test steps with decoded step &gt; 20 cm; true path = 0): "
-                f"sorted Ridge {jl.get('sorted_ridge_line', '')}; sorted kNN {jl.get('sorted_knn_line', '')}; "
-                f"GT Ridge {jl.get('ground_truth_ridge_line', '')}; GT kNN {jl.get('ground_truth_knn_line', '')}."
-            )
+    if n.get("pull") and n["pull"].get("cause_short_a"):
         P.append(Paragraph(
-            f"<b>7. Failure mode: centre-pull.</b> OLS slopes of decoded versus true distance from arena centre "
-            f"(mean ± SD across seeds). Sorted — Ridge: {n['pull'].get('sorted_ridge_line', '')}; "
-            f"kNN: {n['pull'].get('sorted_knn_line', '')}. Ground truth — Ridge: "
-            f"{n['pull'].get('ground_truth_ridge_line', '')}; kNN: "
-            f"{n['pull'].get('ground_truth_knn_line', '')}. {cause}{jump_bit}", BODY))
+            f"<b>7. Failure mode: centre-pull.</b> {n['pull']['cause_short_a']}; "
+            f"{n['pull']['cause_short_b']}.", BODY))
+    if n.get("jump", {}).get("has") and n.get("pull"):
+        j, p = n["jump"], n["pull"]
+        knn_m = j.get("sorted_knn_lds_pct_mean", float("nan"))
+        knn_s = j.get("sorted_knn_lds_pct_sd", float("nan"))
+        knn_x = j.get("sorted_knn_lds_pct_max", float("nan"))
+        ridge_j = j.get("sorted_ridge_lds_pct_mean", 0.0)
+        lds_slope = p.get("sorted_ridge_lds", (float("nan"),))[0]
+        pca_j = j.get("sorted_knn_pca_pct_mean", float("nan"))
+        dm_j = j.get("sorted_knn_dm_pct_mean", float("nan"))
+        P.append(Paragraph(
+            f"<b>8. Accuracy vs continuity.</b> kNN on the LDS state is the most accurate readout "
+            f"({n['lds_knn_median_mean']:.1f} ± {n['lds_knn_median_sd']:.1f} cm) but jumps &gt; 20 cm in one step on "
+            f"{knn_m:.1f} ± {knn_s:.1f}% of steps ({knn_x:.1f}% in the worst seed); Ridge on LDS never jumps "
+            f"({ridge_j:.1f}%) but pulls toward the centre (slope {lds_slope:.2f}). kNN on static representations jumps on "
+            f"{pca_j:.1f}/{dm_j:.1f}% of steps (PCA/DM). For closed-loop use, continuity and accuracy trade off.", BODY))
     P.append(Paragraph("In one sentence", H2))
+    pending = "" if n.get("phase8_passed") else " (kNN result pending the Phase 8 pressure test)"
     P.append(Paragraph(
-        "<i>For this population, what must be preserved is the temporal continuity of the population state, read out "
-        "nonlinearly. Static nonlinear geometry adds nothing measurable. The benefit of dynamics comes from resisting "
-        "recording and sorting noise, and it costs well under 1 ms per update.</i>", BODY))
+        "<i>For this population, what must be preserved is the temporal continuity of the population state; "
+        "a nonlinear readout of that state gives the lowest error but discontinuous output, while a linear readout "
+        f"is continuous but centre-biased{pending}. Static nonlinear geometry adds nothing measurable. The benefit of "
+        "dynamics comes from resisting recording and sorting noise, and it costs well under 1 ms per update.</i>", BODY))
     P.append(Paragraph("What this does not show", H2))
     missing = []
     if not n["has_pred"]:
@@ -395,7 +449,7 @@ def story(n):
         "This is a simulation, not animals. The population on the lab probe track is entorhinal-dominated (grid, "
         "head-direction, speed and border cells) with no CA1/CA3 place cells, so a place-cell map may reward nonlinear "
         "static embeddings differently. N = 5 supports effect sizes and sign consistency, not significance (the smallest "
-        f"attainable two-sided sign-test p is 0.0625). On latent d, see point 5 ({n['d_story']}) "
+        "attainable two-sided sign-test p is 0.0625). On latent d, see point 5. "
         "Each seed's test segment covers only part of the arena, and seed-to-seed spread follows how much of it the test "
         f"path visits (r = {n['r_tb']['raw']:.2f} for raw). The nonlinear-dynamic cell was not tested, so the "
         f"linear×dynamic interaction is not estimable.{missing_txt}", BODY))
@@ -538,13 +592,15 @@ def build(figs, out, data):
     # story page(s)
     buf = io.BytesIO(); c = canvas.Canvas(buf, pagesize=A4)
     items = story(n)
+    n_story = 0
     while items:
         f = Frame(M, M, W - 2 * M, H - 2 * M, showBoundary=0, leftPadding=0, rightPadding=0, topPadding=0, bottomPadding=0)
-        rest = f.addFromList(items, c); c.showPage()
+        rest = f.addFromList(items, c); c.showPage(); n_story += 1
         if not items: break
     c.save(); buf.seek(0)
-    for p in PdfReader(buf).pages: writer.add_page(p)
-    # main figures then supplementary
+    for p in PdfReader(buf).pages:
+        writer.add_page(p)
+
     main = ["Fig1_design", "Fig2_validity", "Fig3_quadrant_answer", "Fig4_mechanism",
             "Fig5_deployability", "Fig6_answer"]
     if n["has_pred"] and os.path.isfile(os.path.join(figs, "Fig7_trajectories.pdf")):
@@ -561,17 +617,14 @@ def build(figs, out, data):
     if n["has_fail"] and os.path.isfile(os.path.join(figs, "FigS4_failure_modes.pdf")):
         supp.append("FigS4_failure_modes")
     L = legends(n)
-    order = [(name, False) for name in main]
-    if supp:
-        writer.add_page(_divider_page("Supplementary"))
-        order += [(name, True) for name in supp]
-    for name, _ in order:
-        if name not in L:
+
+    # Page order: story → Fig 1–7 → divider → S1–S4 (asserted below).
+    page_labels = [f"story:{i}" for i in range(n_story)]
+    for name in main:
+        if name not in L or not os.path.isfile(os.path.join(figs, f"{name}.pdf")):
             continue
         title, text = L[name]
         fig_path = os.path.join(figs, f"{name}.pdf")
-        if not os.path.isfile(fig_path):
-            continue
         fig = PdfReader(fig_path).pages[0]
         fw, fh = float(fig.mediabox.width), float(fig.mediabox.height)
         s = min((W - 2 * M) / fw, 1.0 * (H * 0.62) / fh)
@@ -587,9 +640,65 @@ def build(figs, out, data):
         page = PdfReader(buf).pages[0]
         page.merge_transformed_page(fig, Transformation().scale(s).translate((W - fw * s) / 2, fig_bottom))
         writer.add_page(page)
+        page_labels.append(name)
+
+    if supp:
+        writer.add_page(_divider_page("Supplementary"))
+        page_labels.append("divider:Supplementary")
+        for name in supp:
+            if name not in L or not os.path.isfile(os.path.join(figs, f"{name}.pdf")):
+                continue
+            title, text = L[name]
+            fig_path = os.path.join(figs, f"{name}.pdf")
+            fig = PdfReader(fig_path).pages[0]
+            fw, fh = float(fig.mediabox.width), float(fig.mediabox.height)
+            s = min((W - 2 * M) / fw, 1.0 * (H * 0.62) / fh)
+            buf = io.BytesIO(); c = canvas.Canvas(buf, pagesize=A4)
+            top = H - M
+            fig_bottom = top - fh * s
+            f = Frame(M, M, W - 2 * M, fig_bottom - M - 7 * mm, showBoundary=0, leftPadding=0, rightPadding=0,
+                      topPadding=0, bottomPadding=0)
+            f.addFromList([Paragraph(f"<b>{title}</b> {text}", LEG)], c)
+            c.setFont(FONT, 6.5); c.setFillColor(colors.HexColor("#8f8d87"))
+            c.drawRightString(W - M, 8 * mm, "Quadrant N = 5 · simulated data · internal draft")
+            c.save(); buf.seek(0)
+            page = PdfReader(buf).pages[0]
+            page.merge_transformed_page(fig, Transformation().scale(s).translate((W - fw * s) / 2, fig_bottom))
+            writer.add_page(page)
+            page_labels.append(name)
+
+    _assert_page_order(page_labels)
     with open(out, "wb") as fh_:
         writer.write(fh_)
-    print("wrote", out, len(writer.pages), "pages")
+    print("wrote", out, len(writer.pages), "pages; order:", " → ".join(page_labels))
+
+
+def _assert_page_order(labels):
+    """Require story → Fig 1–7 → divider → S1–S4."""
+    if not labels or not labels[0].startswith("story:"):
+        raise RuntimeError(f"page order: expected story first, got {labels}")
+    i = 0
+    while i < len(labels) and labels[i].startswith("story:"):
+        i += 1
+    main_expected = [
+        "Fig1_design", "Fig2_validity", "Fig3_quadrant_answer", "Fig4_mechanism",
+        "Fig5_deployability", "Fig6_answer", "Fig7_trajectories",
+    ]
+    for name in main_expected:
+        if i >= len(labels) or labels[i] != name:
+            # Fig7 may be absent if predictions missing
+            if name == "Fig7_trajectories" and (i >= len(labels) or labels[i].startswith("divider:")):
+                break
+            raise RuntimeError(f"page order: expected {name} at index {i}, got {labels}")
+        i += 1
+    if i < len(labels):
+        if labels[i] != "divider:Supplementary":
+            raise RuntimeError(f"page order: expected Supplementary divider after mains, got {labels[i:]}")
+        i += 1
+        while i < len(labels):
+            if not labels[i].startswith("FigS"):
+                raise RuntimeError(f"page order: expected FigS* after divider, got {labels[i:]}")
+            i += 1
 
 
 if __name__ == "__main__":

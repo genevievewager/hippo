@@ -65,3 +65,4 @@ def test_evaluate_criteria_shape():
     assert c["strata_lds_vs_pca_atypical"]["status"] == "PASS"
     assert c["cell_type_grid_bvc"]["status"] == "PENDING"
     assert c["overall_1_to_3"] == "PASS"
+    assert c["phase8_passed"] is False
