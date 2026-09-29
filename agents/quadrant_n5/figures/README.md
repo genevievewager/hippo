@@ -41,7 +41,11 @@ The story page's prose interprets this run: "dynamics is the axis that matters",
 
 Uses numpy, pandas and matplotlib, plus reportlab and pypdf for the figure-set PDF only.
 
-The fonts are Arial or Helvetica if installed, falling back to Liberation Sans and then DejaVu Sans. Fonts are embedded as TrueType (`pdf.fonttype 42`), so text stays editable in Illustrator.
+The fonts are Liberation Sans, vendored under `fonts/` (SIL OFL; see `fonts/LICENSE`),
+or system Arial / Liberation if present. Both `figures.py` and `build_story.py` register
+the TTFs at import and assert the resolved face is Liberation Sans or Arial (no DejaVu
+fallback). Fonts are embedded as TrueType (`pdf.fonttype 42`), so text stays editable in
+Illustrator.
 
 ## Encoding
 

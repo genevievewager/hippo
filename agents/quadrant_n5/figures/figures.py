@@ -13,14 +13,61 @@ import numpy as np
 import pandas as pd
 import matplotlib as mpl
 import matplotlib.pyplot as plt
+from matplotlib import font_manager
 from matplotlib.patches import FancyBboxPatch, Rectangle
 from matplotlib.lines import Line2D
 
 MM = 1 / 25.4
 W_FULL = 180 * MM
+_HERE = os.path.dirname(os.path.abspath(__file__))
+_FONT_DIR = os.path.join(_HERE, "fonts")
+
+
+def _register_publication_font():
+    """Prefer Liberation Sans / Arial; fail if only DejaVu would be used."""
+    candidates = [
+        (os.path.join(_FONT_DIR, "LiberationSans-Regular.ttf"),
+         os.path.join(_FONT_DIR, "LiberationSans-Bold.ttf")),
+        ("/usr/share/fonts/truetype/liberation/LiberationSans-Regular.ttf",
+         "/usr/share/fonts/truetype/liberation/LiberationSans-Bold.ttf"),
+        ("/Library/Fonts/Arial.ttf", "/Library/Fonts/Arial Bold.ttf"),
+        ("/System/Library/Fonts/Supplemental/Arial.ttf",
+         "/System/Library/Fonts/Supplemental/Arial Bold.ttf"),
+    ]
+    for reg, bold in candidates:
+        if os.path.isfile(reg) and os.path.isfile(bold):
+            font_manager.fontManager.addfont(reg)
+            font_manager.fontManager.addfont(bold)
+            prop = font_manager.FontProperties(fname=reg)
+            name = prop.get_name()
+            if name not in ("Liberation Sans", "Arial"):
+                raise RuntimeError(
+                    f"Publication font file {reg} resolved to {name!r}; "
+                    "need Liberation Sans or Arial."
+                )
+            mpl.rcParams["font.family"] = "sans-serif"
+            mpl.rcParams["font.sans-serif"] = [name, "Liberation Sans", "Arial"]
+            resolved = font_manager.findfont(
+                font_manager.FontProperties(family=name), fallback_to_default=False,
+            )
+            resolved_name = font_manager.FontProperties(fname=resolved).get_name()
+            if resolved_name not in ("Liberation Sans", "Arial"):
+                raise RuntimeError(
+                    f"Publication font resolved to {resolved_name!r} ({resolved}); "
+                    "need Liberation Sans or Arial. Vendor TTFs under "
+                    f"{_FONT_DIR} or install liberation-fonts."
+                )
+            return name
+    raise RuntimeError(
+        "Liberation Sans / Arial not found. Install liberation-fonts, or vendor "
+        f"LiberationSans-{{Regular,Bold}}.ttf (SIL OFL) into {_FONT_DIR}/."
+    )
+
+
+_PUB_FONT = _register_publication_font()
 mpl.rcParams.update({
     "font.family": "sans-serif",
-    "font.sans-serif": ["Arial", "Helvetica", "Liberation Sans", "DejaVu Sans"],
+    "font.sans-serif": [_PUB_FONT, "Liberation Sans", "Arial"],
     "font.size": 7, "axes.titlesize": 7, "axes.labelsize": 7,
     "xtick.labelsize": 6.5, "ytick.labelsize": 6.5, "legend.fontsize": 6.3,
     "axes.linewidth": 0.6, "xtick.major.width": 0.6, "ytick.major.width": 0.6,
@@ -85,7 +132,7 @@ def load(here):
     D = dict(E=rd("errors"), F=rd("floor"), SH=rd("a13_shifts"), LC=rd("learning_curves"),
              R=rd("replay"), A=pd.read_csv(os.path.join(here, "data_audit.csv"), keep_default_na=False), B=rd("behavior_5hz"),
              P=rd("population"))
-    for optional in ("predictions_window", "error_maps", "center_pull", "error_cdf", "d_sweep"):
+    for optional in ("predictions_window", "error_maps", "center_pull", "error_cdf", "d_sweep", "jump_rate"):
         path = os.path.join(here, f"data_{optional}.csv")
         if os.path.isfile(path):
             D[optional] = pd.read_csv(path)
@@ -217,15 +264,16 @@ AUD = [("A1", "Split identity"), ("A2", "Same preprocessing"), ("A3", "Same samp
        ("A4", "Same window / label time"), ("A5", "No future access"), ("A6", "Selection on train only"),
        ("A7", "GT marked non-deployable"), ("A8", "Save / reload"), ("A9", "Realtime check (empirical)"),
        ("A10", "Seed isolation"), ("A11", "Offline = replay"), ("A12", "UI = frozen config"),
-       ("A13", "Time-shift null control"), ("A14", "LDS readout on filtered latents")]
+       ("A13", "Time-shift null control"), ("A14", "LDS readout on filtered latents"),
+       ("A15", "Predictions + d-sweep")]
 
 
 def fig2(D, out):
     E, A, R = D["E"], D["A"], D["R"]
-    fig = plt.figure(figsize=(W_FULL, 104 * MM))
+    fig = plt.figure(figsize=(W_FULL, 112 * MM))
 
     # a — audit matrix
-    ax = fig.add_axes([0.205, 0.08, 0.14, 0.80])
+    ax = fig.add_axes([0.205, 0.07, 0.14, 0.82])
     st = A.pivot(index="check", columns="seed", values="status")
     n = len(AUD)
     for i, (k, _) in enumerate(AUD):
@@ -234,20 +282,21 @@ def fig2(D, out):
             fc = {"PASS": "#eeede9", "FAIL": FAILC, "N/A": "white"}[v]
             ax.add_patch(Rectangle((s, i), 0.9, 0.86, fc=fc, ec="#d0cec8" if v != "FAIL" else FAILC, lw=0.4))
             ax.text(s + 0.45, i + 0.45, {"PASS": "✓", "FAIL": "✗", "N/A": "–"}[v], ha="center", va="center",
-                    fontsize=6, color="white" if v == "FAIL" else INK2, family="DejaVu Sans",
-                    fontweight="bold" if v == "FAIL" else None)
+                    fontsize=6, color="white" if v == "FAIL" else INK2,
+                    fontweight="bold" if v == "FAIL" else None,
+                    fontfamily="DejaVu Sans")
     ax.set_xlim(0, 5); ax.set_ylim(n, 0)
     ax.set_yticks(np.arange(n) + 0.45, [f"{k}  {t}" for k, t in AUD], fontsize=5.9)
     ax.set_xticks(np.arange(5) + 0.45, [str(s) for s in range(5)])
     ax.xaxis.tick_top(); ax.tick_params(length=0)
     for sp in ax.spines.values(): sp.set_visible(False)
     ax.text(-0.25, -0.62, "seed", ha="right", fontsize=6.3, color=INK2)
-    head_fig(fig, 0.0, 0.935, "a", "Fairness audit, 14 checks × 5 seeds")
+    head_fig(fig, 0.0, 0.935, "a", "Fairness audit, 15 checks × 5 seeds")
     fl = E[~E.a13_ridge_pass.astype(bool) | ~E.a13_knn_pass.astype(bool)]
     ftxt = "; ".join(f"seed {s} {'GT' if src == 'ground_truth' else 'sorted'}: " + ", ".join(SHORT[r] for r in g.rep)
                      for (s, src), g in fl.groupby(["seed", "source"])) or "none"
     ax.text(2.5, n + 0.35, f"✗ A13 fails — {ftxt} (see b)" if len(fl) else "no failures", ha="center", va="top",
-            fontsize=5.6, color=FAILC, family=["DejaVu Sans"])
+            fontsize=5.6, color=FAILC, fontfamily="DejaVu Sans")
 
     # b — A13 per condition
     ax = fig.add_axes([0.44, 0.60, 0.55, 0.29])
@@ -642,16 +691,17 @@ def fig7(D, out):
     seed = _fig7_seed(E)
     floor = float(F[(F.source == "sorted") & (F.seed == seed)].floor_median.iloc[0])
     methods = ("pca", "dm", "lds")
-    fig = plt.figure(figsize=(W_FULL, 195 * MM))
+    fig = plt.figure(figsize=(W_FULL, 205 * MM))
 
     # a — arena 2x3
     head_fig(fig, 0.0, 0.975, "a", "Arena view (first 60 s of test; sorted)")
     for ri, dec in enumerate(("ridge", "knn")):
         for ci, method in enumerate(methods):
-            ax = fig.add_axes([0.055 + ci * 0.31, 0.745 - ri * 0.255, 0.27, 0.185])
+            ax = fig.add_axes([0.055 + ci * 0.31, 0.755 - ri * 0.245, 0.27, 0.175])
             sub = W[(W.seed == seed) & (W.source == "sorted") & (W.method == method) & (W.decoder == dec)]
             ax.plot(sub.x_true, sub.y_true, color=INK, lw=0.8, zorder=2)
-            ax.plot(sub.x_pred, sub.y_pred, color=COL[method], lw=0.7, zorder=3)
+            ax.scatter(sub.x_pred, sub.y_pred, s=1.5, c=COL[method], alpha=0.35,
+                       linewidths=0, zorder=3, rasterized=True)
             ax.plot(sub.x_true.iloc[0], sub.y_true.iloc[0], "o", mfc="none", mec=INK, ms=4, mew=0.7, zorder=4)
             med = float(sub.err_cm.median())
             ax.text(0.04, 0.96, f"{SHORT[method]}  {med:.1f} cm", transform=ax.transAxes,
@@ -672,10 +722,10 @@ def fig7(D, out):
             ax.tick_params(labelsize=5.5)
 
     # b — x(t), y(t)
-    head_fig(fig, 0.0, 0.455, "b", "Coordinates over the same window (Ridge; kNN inset)")
+    head_fig(fig, 0.0, 0.465, "b", "Coordinates over the same window (Ridge; kNN inset)")
     t0 = float(W[(W.seed == seed) & (W.source == "sorted")].t_s.min())
     for yi, coord in enumerate(("x", "y")):
-        ax = fig.add_axes([0.08, 0.305 - yi * 0.100, 0.55, 0.085])
+        ax = fig.add_axes([0.08, 0.325 - yi * 0.090, 0.52, 0.075])
         true = W[(W.seed == seed) & (W.source == "sorted") & (W.method == "pca") & (W.decoder == "ridge")]
         ax.plot(true.t_s - t0, true[f"{coord}_true"], color=INK, lw=1.0, zorder=2, label="true")
         for method in methods:
@@ -688,18 +738,23 @@ def fig7(D, out):
             ax.set_xticklabels([])
         ax.tick_params(labelsize=5.5)
     # kNN inset
-    ax = fig.add_axes([0.70, 0.30, 0.27, 0.14])
+    ax = fig.add_axes([0.68, 0.285, 0.28, 0.140])
+    true = W[(W.seed == seed) & (W.source == "sorted") & (W.method == "pca") & (W.decoder == "knn")]
+    ax.plot(true.t_s - t0, true.x_true, color=INK, lw=0.9, zorder=2, label="true")
     for method in methods:
         sub = W[(W.seed == seed) & (W.source == "sorted") & (W.method == method) & (W.decoder == "knn")]
-        ax.plot(sub.t_s - t0, sub.x_pred, color=COL[method], lw=0.7)
-    true = W[(W.seed == seed) & (W.source == "sorted") & (W.method == "pca") & (W.decoder == "knn")]
-    ax.plot(true.t_s - t0, true.x_true, color=INK, lw=0.9)
-    ax.set_title("kNN  x(t)", fontsize=6); ax.set_xlim(0, 60); ax.set_ylim(0, 100)
-    ax.tick_params(labelsize=5); ax.set_xlabel("s", fontsize=5.5)
+        ax.plot(sub.t_s - t0, sub.x_pred, color=COL[method], lw=0.7, zorder=3, label=SHORT[method])
+    ax.set_title("kNN  x(t)", fontsize=6, pad=2)
+    ax.set_xlim(0, 60); ax.set_ylim(0, 100)
+    ax.set_xlabel("Time (s)", fontsize=5.5)
+    ax.set_ylabel("x (cm)", fontsize=5.5)
+    ax.tick_params(labelsize=5)
+    ax.legend(loc="upper right", fontsize=5, ncol=2, frameon=True, fancybox=False,
+              edgecolor="none", framealpha=0.9, handlelength=1.2, columnspacing=0.8)
 
     # c — rolling error
-    head_fig(fig, 0.0, 0.22, "c", "Euclidean error (2 s rolling median)")
-    ax = fig.add_axes([0.08, 0.06, 0.55, 0.13])
+    head_fig(fig, 0.0, 0.200, "c", "Euclidean error (2 s rolling median)")
+    ax = fig.add_axes([0.08, 0.050, 0.52, 0.120])
     win = int(round(2.0 / 0.05))  # 2 s at 50 ms
     for method in methods:
         sub = W[(W.seed == seed) & (W.source == "sorted") & (W.method == method) & (W.decoder == "ridge")].sort_values("t_s")
@@ -712,8 +767,8 @@ def fig7(D, out):
               edgecolor="none", framealpha=0.9)
 
     # d — per-seed strip
-    head_fig(fig, 0.68, 0.22, "d", "Window median, all seeds")
-    ax = fig.add_axes([0.72, 0.06, 0.25, 0.13])
+    head_fig(fig, 0.66, 0.215, "d", "Window median, all seeds")
+    ax = fig.add_axes([0.70, 0.055, 0.26, 0.125])
     for j, method in enumerate(methods):
         for s in range(5):
             sub = W[(W.seed == s) & (W.source == "sorted") & (W.method == method) & (W.decoder == "ridge")]
@@ -725,7 +780,7 @@ def fig7(D, out):
     for t, m in zip(ax.get_xticklabels(), methods):
         t.set_color(EDGE[m]); t.set_fontweight("bold")
     ax.set_ylabel("Median error (cm)"); ax.set_xlim(-0.5, 2.5)
-    ax.text(0.5, 1.05, f"seed {seed} filled (closest LDS−PCA to median)",
+    ax.text(0.5, 1.08, f"seed {seed} filled (closest LDS−PCA to median)",
             transform=ax.transAxes, fontsize=5.2, color=INK2, ha="center")
     save(fig, out, "Fig7_trajectories")
 
@@ -830,8 +885,9 @@ def figS3(D, out):
             for ci, method in enumerate(methods):
                 ax = fig.add_axes([0.06 + ci * 0.32, 0.78 - s * 0.155, 0.28, 0.13])
                 sub = W[(W.seed == s) & (W.source == "sorted") & (W.method == method) & (W.decoder == dec)]
-                ax.plot(sub.x_true, sub.y_true, color=INK, lw=0.7, zorder=2)
-                ax.plot(sub.x_pred, sub.y_pred, color=COL[method], lw=0.6, zorder=3)
+                ax.plot(sub.x_true, sub.y_true, color=INK, lw=0.8, zorder=2)
+                ax.scatter(sub.x_pred, sub.y_pred, s=1.5, c=COL[method], alpha=0.35,
+                           linewidths=0, zorder=3, rasterized=True)
                 ax.plot(sub.x_true.iloc[0], sub.y_true.iloc[0], "o", mfc="none", mec=INK, ms=3, mew=0.6)
                 med = float(sub.err_cm.median())
                 ax.text(0.04, 0.95, f"s{s} {SHORT[method]}  {med:.1f}", transform=ax.transAxes,
@@ -855,11 +911,12 @@ def figS4(D, out):
         print("FigS4 skipped (missing failure-mode tables)")
         return
     EM, CP, CDF = D["error_maps"], D["center_pull"], D["error_cdf"]
+    JR = D.get("jump_rate")
     methods = ("pca", "dm", "lds")
-    fig = plt.figure(figsize=(W_FULL, 200 * MM))
+    fig = plt.figure(figsize=(W_FULL, 230 * MM))
 
     # a — spatial error maps
-    head_fig(fig, 0.0, 0.965, "a", "Spatial error maps (median across seeds; sorted)")
+    head_fig(fig, 0.0, 0.975, "a", "Spatial error maps (median across seeds; sorted)")
     vals = []
     grids = {}
     for dec in ("ridge", "knn"):
@@ -881,7 +938,7 @@ def figS4(D, out):
     im = None
     for ri, dec in enumerate(("ridge", "knn")):
         for ci, method in enumerate(methods):
-            ax = fig.add_axes([0.06 + ci * 0.22, 0.70 - ri * 0.22, 0.18, 0.16])
+            ax = fig.add_axes([0.06 + ci * 0.22, 0.74 - ri * 0.20, 0.18, 0.145])
             g, nmat = grids[(dec, method)]
             show = np.ma.array(g, mask=(nmat < 10) | np.isnan(g))
             im = ax.imshow(show, origin="lower", extent=[0, 100, 0, 100],
@@ -897,13 +954,13 @@ def figS4(D, out):
                          fontsize=6, color=EDGE[method])
             for sp in ax.spines.values():
                 sp.set_visible(True); sp.set_linewidth(0.4)
-    cax = fig.add_axes([0.72, 0.55, 0.015, 0.28])
+    cax = fig.add_axes([0.72, 0.60, 0.015, 0.26])
     cb = fig.colorbar(im, cax=cax); cb.set_label("Median error (cm)", fontsize=6)
     cb.ax.tick_params(labelsize=5.5)
 
     # b — centre-pull slopes
-    head_fig(fig, 0.0, 0.48, "b", "Centre-pull slope (sorted)")
-    ax = fig.add_axes([0.08, 0.28, 0.40, 0.16])
+    head_fig(fig, 0.0, 0.52, "b", "Centre-pull slope (sorted)")
+    ax = fig.add_axes([0.08, 0.365, 0.40, 0.12])
     slopes = CP[(CP.kind == "slope") & (CP.source == "sorted")]
     for di, dec in enumerate(("ridge", "knn")):
         for j, method in enumerate(methods):
@@ -918,14 +975,19 @@ def figS4(D, out):
                   [SHORT[m] for m in methods] + [SHORT[m] for m in methods])
     for i, t in enumerate(ax.get_xticklabels()):
         m = methods[i % 3]; t.set_color(EDGE[m])
-    ax.text(1.0, -0.28, "Ridge", ha="center", fontsize=6.5, color=INK2, fontweight="bold")
-    ax.text(5.0, -0.28, "kNN", ha="center", fontsize=6.5, color=INK2, fontweight="bold")
+    # Group labels inside the axes (avoid bleeding into panel d)
+    ax.text(1.0, 0.02, "Ridge", ha="center", va="bottom", fontsize=6.5, color=INK2,
+            fontweight="bold", transform=ax.get_xaxis_transform(),
+            bbox=dict(fc="white", ec="none", alpha=0.85, pad=0.5))
+    ax.text(5.0, 0.02, "kNN", ha="center", va="bottom", fontsize=6.5, color=INK2,
+            fontweight="bold", transform=ax.get_xaxis_transform(),
+            bbox=dict(fc="white", ec="none", alpha=0.85, pad=0.5))
     ax.set_ylabel("OLS slope"); ax.set_ylim(0.15, 1.2)
     ax.set_xlim(-0.6, 6.8)
 
     # c — pooled CDFs
-    head_fig(fig, 0.52, 0.48, "c", "Pooled error CDF (sorted)")
-    ax = fig.add_axes([0.58, 0.28, 0.38, 0.16])
+    head_fig(fig, 0.52, 0.52, "c", "Pooled error CDF (sorted)")
+    ax = fig.add_axes([0.58, 0.365, 0.38, 0.12])
     for method in methods:
         for dec, ls in (("ridge", "-"), ("knn", "--")):
             sub = CDF[(CDF.source == "sorted") & (CDF.method == method) & (CDF.decoder == dec)]
@@ -939,16 +1001,48 @@ def figS4(D, out):
         Line2D([0], [0], color=INK, lw=0.9, ls="-", label="Ridge"),
         Line2D([0], [0], color=INK, lw=0.9, ls="--", label="kNN"),
     ], fontsize=5.5, loc="lower right", ncol=2)
-    # note panel for center-pull numbers
-    ax2 = fig.add_axes([0.08, 0.05, 0.88, 0.18]); ax2.axis("off")
-    lines = ["Centre-pull slopes (mean ± SD across seeds, sorted):"]
-    for dec in ("ridge", "knn"):
-        bits = []
-        for method in methods:
-            v = slopes[(slopes.decoder == dec) & (slopes.method == method)].slope.values
-            bits.append(f"{SHORT[method]} {v.mean():.2f}±{v.std(ddof=1):.2f}")
-        lines.append(f"  {'Ridge' if dec == 'ridge' else 'kNN'}: " + "; ".join(bits))
-    ax2.text(0, 0.9, "\n".join(lines), fontsize=6.5, va="top", family="monospace", color=INK2)
+
+    # d — jump rate
+    head_fig(fig, 0.0, 0.30, "d", "Jump rate (> 20 cm / 50 ms step)")
+    ax = fig.add_axes([0.08, 0.07, 0.88, 0.18])
+    if JR is None or JR.empty:
+        ax.text(0.5, 0.5, "jump-rate table absent", transform=ax.transAxes,
+                ha="center", va="center", color=MUTED)
+        ax.axis("off")
+    else:
+        groups = [("sorted", "ridge"), ("sorted", "knn"),
+                  ("ground_truth", "ridge"), ("ground_truth", "knn")]
+        xticks, xlabels = [], []
+        for gi, (src, dec) in enumerate(groups):
+            for j, method in enumerate(methods):
+                v = JR[(JR.source == src) & (JR.decoder == dec) & (JR.method == method)].jump_rate.values
+                x = gi * 4 + j
+                xticks.append(x)
+                xlabels.append(SHORT[method])
+                if len(v) == 0:
+                    continue
+                ax.scatter(np.full(len(v), x), v, s=14,
+                           facecolor=COL[method] if dec == "ridge" else "white",
+                           edgecolor=EDGE[method], lw=0.7, zorder=3)
+                ax.plot([x - 0.28, x + 0.28], [v.mean(), v.mean()], color=EDGE[method], lw=1.3)
+            true_v = JR[(JR.source == src) & (JR.method == "true")].jump_rate.values
+            if len(true_v):
+                cx = gi * 4 + 1
+                ax.plot([cx - 1.4, cx + 1.4], [true_v.mean(), true_v.mean()],
+                        color=MUTED, lw=0.7, ls=(0, (2, 2)), zorder=1)
+        ax.set_xticks(xticks, xlabels)
+        for i, t in enumerate(ax.get_xticklabels()):
+            t.set_color(EDGE[methods[i % 3]])
+        for gi, (src, dec) in enumerate(groups):
+            lab = f"{'Sorted' if src == 'sorted' else 'GT'} · {'Ridge' if dec == 'ridge' else 'kNN'}"
+            ax.text(gi * 4 + 1, -0.12, lab, transform=ax.get_xaxis_transform(),
+                    ha="center", va="top", fontsize=6.2, color=INK2, fontweight="bold")
+        ax.axhline(0.0, color=MUTED, lw=0.5)
+        ax.set_ylabel("Jump fraction")
+        ax.set_ylim(-0.02, max(0.55, float(JR[JR.method != "true"].jump_rate.max()) * 1.15))
+        ax.set_xlim(-0.7, 15.5)
+        ax.text(0.99, 0.95, "dashed = true path (0)", transform=ax.transAxes,
+                ha="right", va="top", fontsize=5.5, color=INK2)
     save(fig, out, "FigS4_failure_modes")
 
 

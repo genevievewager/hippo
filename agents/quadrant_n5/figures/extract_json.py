@@ -89,8 +89,9 @@ def _bin_ix(xy):
     return np.clip((np.asarray(xy) / ARENA * N_BINS).astype(int), 0, N_BINS - 1)
 
 
-win_rows, map_rows, pull_rows, cdf_rows, dsweep_rows = [], [], [], [], []
+win_rows, map_rows, pull_rows, cdf_rows, dsweep_rows, jump_rows = [], [], [], [], [], []
 cdf_pool = {}
+JUMP_CM = 20.0
 for s in range(5):
     for src in ("sorted", "ground_truth"):
         npz_path = f"{ROOT}/seed_{s}/{src}/predictions.npz"
@@ -101,6 +102,12 @@ for s in range(5):
         y = np.asarray(blob["y_true"], dtype=float)
         t0 = float(t[0])
         win = (t >= t0) & (t < t0 + WINDOW_S)
+        true_step = np.linalg.norm(np.diff(y, axis=0), axis=1)
+        true_jump = float((true_step > JUMP_CM).mean()) if len(true_step) else 0.0
+        jump_rows.append(dict(
+            seed=s, source=src, method="true", decoder="true",
+            jump_rate=true_jump, jump_thresh_cm=JUMP_CM, n_steps=int(len(true_step)),
+        ))
         for method in REPS:
             for dec in ALL_DEC:
                 key = f"pred_{method}_{dec}"
@@ -108,6 +115,13 @@ for s in range(5):
                     continue
                 pred = np.asarray(blob[key], dtype=float)
                 err = np.linalg.norm(pred - y, axis=1)
+                step = np.linalg.norm(np.diff(pred, axis=0), axis=1)
+                jump_rows.append(dict(
+                    seed=s, source=src, method=method, decoder=dec,
+                    jump_rate=float((step > JUMP_CM).mean()) if len(step) else 0.0,
+                    jump_thresh_cm=JUMP_CM, n_steps=int(len(step)),
+                    true_jump_rate=true_jump,
+                ))
                 # window traces (PCA/DM/LDS/raw only — Fig 7)
                 if method in PRED_METHODS:
                     for i in np.where(win)[0]:
@@ -181,6 +195,7 @@ for name, rows in [
     ("center_pull", pull_rows),
     ("error_cdf", cdf_rows),
     ("d_sweep", dsweep_rows),
+    ("jump_rate", jump_rows),
 ]:
     if rows:
         pd.DataFrame(rows).to_csv(os.path.join(OUT, f"data_{name}.csv"), index=False)

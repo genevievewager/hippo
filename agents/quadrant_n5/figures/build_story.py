@@ -19,15 +19,38 @@ from reportlab.lib import colors
 
 SH = {"raw": "raw", "raw_lag": "raw + history", "pca": "PCA", "dm": "DM", "lds": "LDS", "isomap": "Isomap", "gpfa": "GPFA"}
 HERE = os.path.dirname(os.path.abspath(__file__))
-FONT, BOLD = "Helvetica", "Helvetica-Bold"
-for reg, bold in [("/Library/Fonts/Arial.ttf", "/Library/Fonts/Arial Bold.ttf"),
-                  ("/System/Library/Fonts/Supplemental/Arial.ttf", "/System/Library/Fonts/Supplemental/Arial Bold.ttf"),
-                  ("/usr/share/fonts/truetype/liberation/LiberationSans-Regular.ttf",
-                   "/usr/share/fonts/truetype/liberation/LiberationSans-Bold.ttf")]:
-    if os.path.exists(reg) and os.path.exists(bold):
-        pdfmetrics.registerFont(TTFont("Sans", reg)); pdfmetrics.registerFont(TTFont("Sans-Bold", bold))
-        pdfmetrics.registerFontFamily("Sans", normal="Sans", bold="Sans-Bold", italic="Sans", boldItalic="Sans-Bold")
-        FONT, BOLD = "Sans", "Sans-Bold"; break
+_FONT_DIR = os.path.join(HERE, "fonts")
+
+
+def _register_story_font():
+    candidates = [
+        (os.path.join(_FONT_DIR, "LiberationSans-Regular.ttf"),
+         os.path.join(_FONT_DIR, "LiberationSans-Bold.ttf")),
+        ("/usr/share/fonts/truetype/liberation/LiberationSans-Regular.ttf",
+         "/usr/share/fonts/truetype/liberation/LiberationSans-Bold.ttf"),
+        ("/Library/Fonts/Arial.ttf", "/Library/Fonts/Arial Bold.ttf"),
+        ("/System/Library/Fonts/Supplemental/Arial.ttf",
+         "/System/Library/Fonts/Supplemental/Arial Bold.ttf"),
+    ]
+    for reg, bold in candidates:
+        if os.path.isfile(reg) and os.path.isfile(bold):
+            pdfmetrics.registerFont(TTFont("Sans", reg))
+            pdfmetrics.registerFont(TTFont("Sans-Bold", bold))
+            pdfmetrics.registerFontFamily(
+                "Sans", normal="Sans", bold="Sans-Bold", italic="Sans", boldItalic="Sans-Bold",
+            )
+            # ReportLab family name is "Sans"; TTFs are Liberation Sans or Arial.
+            name = "Liberation Sans" if "Liberation" in os.path.basename(reg) else "Arial"
+            if name not in ("Liberation Sans", "Arial"):
+                raise RuntimeError(f"Story font resolved to {name!r}; need Liberation Sans or Arial.")
+            return "Sans", "Sans-Bold", name
+    raise RuntimeError(
+        "Liberation Sans / Arial not found for story PDF. Vendor "
+        f"LiberationSans-{{Regular,Bold}}.ttf into {_FONT_DIR}/."
+    )
+
+
+FONT, BOLD, _STORY_FONT_NAME = _register_story_font()
 
 BODY = ParagraphStyle("b", fontName=FONT, fontSize=8.6, leading=11.6, spaceAfter=4.5)
 LEG = ParagraphStyle("l", fontName=FONT, fontSize=7.8, leading=10.4, spaceAfter=3)
@@ -44,10 +67,6 @@ def latent_d_sentences(data, source="sorted"):
     if not os.path.isfile(path):
         return {}, "The d sweep was not available for this build."
     DS = pd.read_csv(path)
-    flat = ("Error is flat between d = 10 and 20; selecting d = 20 reflects "
-            "near-ties, not unexhausted dimensionality.")
-    falling = "Error was still falling at d = 20; the sweep should be extended."
-    rising = "Error rises beyond d = 10."
     out = {}
     for method in ("pca", "dm", "isomap", "lds", "gpfa"):
         sub = DS[(DS.source == source) & (DS.method == method)]
@@ -62,19 +81,39 @@ def latent_d_sentences(data, source="sorted"):
         n_neg = int((delta < 0).sum())
         n_pos = int((delta > 0).sum())
         if abs(mean_d) < sd_d or (n_neg < 4 and n_pos < 4):
-            sent = flat
+            kind = "flat"
         elif n_neg >= 4:
-            sent = falling
+            kind = "falling"
         elif n_pos >= 4:
-            sent = rising
+            kind = "rising"
         else:
-            sent = flat
+            kind = "flat"
         out[method] = dict(
-            sentence=sent, mean=mean_d, sd=sd_d, n_neg=n_neg, n_pos=n_pos, n=len(delta),
+            kind=kind, mean=mean_d, sd=sd_d, n_neg=n_neg, n_pos=n_pos, n=len(delta),
         )
-    story_line = " ".join(
-        f"{SH[m]} — {out[m]['sentence']}" for m in ("pca", "dm", "lds") if m in out
-    )
+    flat = [m for m in ("pca", "dm", "isomap", "lds", "gpfa") if out.get(m, {}).get("kind") == "flat"]
+    falling = [m for m in ("pca", "dm", "isomap", "lds", "gpfa") if out.get(m, {}).get("kind") == "falling"]
+    rising = [m for m in ("pca", "dm", "isomap", "lds", "gpfa") if out.get(m, {}).get("kind") == "rising"]
+    parts = []
+    if flat:
+        parts.append(
+            f"flat for {' and '.join(SH[m] for m in flat) if len(flat) <= 2 else ', '.join(SH[m] for m in flat[:-1]) + ' and ' + SH[flat[-1]]} (near-ties)"
+        )
+    if falling:
+        ks = " and ".join(f"{out[m]['n_neg']}/5" for m in falling)
+        parts.append(
+            f"still falling for {' and '.join(SH[m] for m in falling)} ({ks})"
+        )
+    if rising:
+        parts.append(f"rising for {' and '.join(SH[m] for m in rising)}")
+    joined = " but ".join(parts) if len(parts) == 2 and flat and falling else "; ".join(parts)
+    if falling:
+        story_line = (
+            f"Between d = 10 and 20 error was {joined}, so the sweep should be "
+            "extended for the dynamic methods."
+        )
+    else:
+        story_line = f"Between d = 10 and 20 error was {joined}."
     return out, story_line
 
 
@@ -105,35 +144,20 @@ def knn_at_best_d_note(data):
     dm_pca = np.array([by["dm"][i]["knn"] - by["pca"][i]["knn"] for i in range(5)])
     gain_lds = np.array([by["lds"][i]["ridge"] - by["lds"][i]["knn"] for i in range(5)])
     gain_pca = np.array([by["pca"][i]["ridge"] - by["pca"][i]["knn"] for i in range(5)])
-    n_dm_better = int((dm_pca < 0).sum())
+    n_dm_worse = int((dm_pca > 0).sum())
     n_gain = int((gain_lds > gain_pca).sum())
-    # Primary claims: no DM advantage over PCA under kNN; LDS readout gain > PCA.
-    if n_dm_better <= 2 and float(np.mean(dm_pca)) > -1.0:
-        dm_txt = (
-            f"the DM−PCA conclusion (no DM advantage) still holds "
-            f"(DM − PCA = {np.mean(dm_pca):+.1f} ± {np.std(dm_pca, ddof=1):.1f} cm, "
-            f"{n_dm_better}/5 favouring DM)"
-        ).replace("+-", "−")
-    else:
-        dm_txt = (
-            f"the DM−PCA conclusion does not hold at kNN-best d "
-            f"(DM − PCA = {np.mean(dm_pca):+.1f} ± {np.std(dm_pca, ddof=1):.1f} cm, "
-            f"{n_dm_better}/5 favouring DM)"
-        ).replace("+-", "−")
+    dm_mean = float(np.mean(dm_pca))
+    dm_sd = float(np.std(dm_pca, ddof=1))
+    sign = "−" if dm_mean < 0 else ("+" if dm_mean > 0 else "")
+    dm_txt = f"DM − PCA = {sign}{abs(dm_mean):.1f} ± {dm_sd:.1f} cm, DM worse in {n_dm_worse}/5"
     if n_gain >= 4:
-        gain_txt = (
-            f"the LDS-vs-PCA readout-gain conclusion still holds "
-            f"(LDS gain larger in {n_gain}/5)"
-        )
+        gain_txt = f"LDS readout gain larger than PCA in {n_gain}/5"
     else:
-        gain_txt = (
-            f"the LDS-vs-PCA readout-gain conclusion does not hold "
-            f"(LDS gain larger in only {n_gain}/5)"
-        )
+        gain_txt = f"LDS readout gain larger than PCA in only {n_gain}/5"
     return (
         "kNN is evaluated at the Ridge-selected d (pre-registered). At each method's "
         f"kNN-best d, errors are: {vals['pca']}; {vals['dm']}; {vals['lds']}; "
-        f"{dm_txt}, and {gain_txt}."
+        f"{dm_txt}; {gain_txt}."
     )
 
 
@@ -154,6 +178,44 @@ def centre_pull_summary(data):
                 bits.append(f"{SH[m]} {np.mean(v):.2f} ± {np.std(v, ddof=1):.2f}")
                 out[f"{src}_{dec}_{m}"] = (float(np.mean(v)), float(np.std(v, ddof=1)))
             out[f"{src}_{dec}_line"] = "; ".join(bits)
+    # Separates linear-readout centre-pull from recording/sorting contribution.
+    gt_r = out.get("ground_truth_ridge_line", "")
+    gt_k = out.get("ground_truth_knn_line", "")
+    so_k = out.get("sorted_knn_line", "")
+    if gt_r and gt_k and so_k:
+        out["cause_sentence"] = (
+            f"Ridge slopes are below 1 even on ground-truth spikes ({gt_r}), so the linear "
+            f"readout itself pulls toward the centre; with kNN, ground truth reaches {gt_k} "
+            f"but sorted falls to {so_k}, so recording/sorting accounts for the rest."
+        )
+    return out
+
+
+def jump_rate_summary(data):
+    path = os.path.join(data, "data_jump_rate.csv")
+    if not os.path.isfile(path):
+        return {}
+    J = pd.read_csv(path)
+    out = {"has": True}
+    true = J[J.method == "true"]
+    out["true_line"] = "; ".join(
+        f"{'sorted' if src == 'sorted' else 'GT'} {float(g.jump_rate.mean()):.3f}"
+        for src, g in true.groupby("source")
+    )
+    bits = []
+    for src in ("sorted", "ground_truth"):
+        for dec in ("ridge", "knn"):
+            sub = J[(J.source == src) & (J.decoder == dec) & (J.method != "true")]
+            parts = []
+            for m in ("pca", "dm", "lds"):
+                v = sub[sub.method == m].jump_rate.values
+                if len(v) == 0:
+                    continue
+                parts.append(f"{SH[m]} {np.mean(v):.3f} ± {np.std(v, ddof=1):.3f}")
+            label = f"{'Sorted' if src == 'sorted' else 'GT'} {'Ridge' if dec == 'ridge' else 'kNN'}"
+            bits.append(f"{label}: " + "; ".join(parts))
+            out[f"{src}_{dec}_line"] = "; ".join(parts)
+    out["lines"] = bits
     return out
 
 
@@ -184,7 +246,9 @@ def numbers(data):
                    for k in ("error_maps", "center_pull", "error_cdf"))
     has_dsweep = os.path.isfile(os.path.join(data, "data_d_sweep.csv"))
     pull = centre_pull_summary(data)
+    jump = jump_rate_summary(data)
     lds_d = d_detail.get("lds") or {}
+    n_audit = int(A.check.nunique())
     n.update(
         floor_lo=F[F.source == "sorted"].floor_median.min(), floor_hi=F[F.source == "sorted"].floor_median.max(),
         mean_r={k: v for k, v in Xr.mean().items()}, mean_k={k: v for k, v in Xk.mean().items()},
@@ -206,7 +270,7 @@ def numbers(data):
         a13_fail_rows=[(int(r.seed), r.source, r.rep, dec, float(getattr(r, f"a13_{dec}")))
                        for r in E.itertuples() for dec in ("ridge", "knn") if not bool(getattr(r, f"a13_{dec}_pass"))],
         d_detail=d_detail, d_story=d_story, d_detail_gt=d_detail_gt, d_story_gt=d_story_gt,
-        knn_best_note=knn_best_note, pull=pull,
+        knn_best_note=knn_best_note, pull=pull, jump=jump, n_audit=n_audit,
         lds_delta_mean=lds_d.get("mean"), lds_delta_sd=lds_d.get("sd"), lds_delta_k=lds_d.get("n_neg"),
         has_pred=has_pred, has_fail=has_fail, has_dsweep=has_dsweep,
         fs=fs, neg=neg, meta=json.load(open(os.path.join(data, "data_meta.json"))),
@@ -246,14 +310,15 @@ def story(n):
         "neural activity, recording noise and sorting errors all re-drawn) were analysed as paired replicates.", BODY))
     P.append(Paragraph("How we got to the answer", H2))
     fails = n["a13_fail_rows"]
+    n_aud = n.get("n_audit", 15)
+    aud_word = {14: "Fourteen", 15: "Fifteen"}.get(n_aud, str(n_aud))
     if fails:
         ftxt = "; ".join(f"seed {s}, {'ground truth' if src == 'ground_truth' else 'sorted'}, {SH[rep]} "
                          f"({dec}, {v:+.2f} cm)".replace("-", "−") for s, src, rep, dec, v in fails)
-        seeds_f = sorted({x[0] for x in fails})
-        ftxt = (f"Fourteen audit checks passed in every seed except the time-shift null control in {len(fails)} cell(s): "
+        ftxt = (f"{aud_word} audit checks passed in every seed except the time-shift null control in {len(fails)} cell(s): "
                 f"{ftxt}, against its pre-registered −2 cm line. " + n["a13_note"])
     else:
-        ftxt = "All fourteen audit checks passed in every seed. "
+        ftxt = f"All {aud_word.lower()} audit checks passed in every seed. "
     P.append(Paragraph(
         "Before interpreting any difference we tested whether the comparison was fair (Fig. 2). " + ftxt +
         "Causal replay reproduced offline predictions to floating-point precision for every causal method; GPFA, whose "
@@ -262,10 +327,7 @@ def story(n):
     P.append(Paragraph(
         (f"<b>1. Dynamics is the axis that matters.</b> LDS had lower error than PCA in {n['r_lds_pca_k']}/5 seeds "
          f"(paired difference {n['r_lds_pca']}, Ridge; mean ± SD). "
-         + (f"LDS error was still falling at d = 20 (Δ20−10 = {n['lds_delta_mean']:+.1f} ± {n['lds_delta_sd']:.1f} cm, "
-            f"{n['lds_delta_k']}/5), so this gap is likely a lower bound. "
-            if n.get("lds_delta_mean") is not None else "")
-         + f"Part of that is simply seeing the past: stacking 250 ms "
+         f"Part of that is simply seeing the past: stacking 250 ms "
          f"of history onto raw counts helped ({n['r_raw_lag_raw']}, {n['r_raw_lag_raw_k']}/5). But the Kalman state model "
          f"improved on history alone ({n['r_lds_raw_lag']}, {n['r_lds_raw_lag_k']}/5), and under the kNN readout that "
          f"increment grew to {n['k_lds_raw_lag']} ({n['k_lds_raw_lag_k']}/5)."
@@ -297,13 +359,21 @@ def story(n):
         f"offline GPFA smoother. Only Isomap approached the budget (p99 up to {n['iso_p99']:.0f} ms; up to "
         f"{100*n['iso_ob']:.1f}% of steps over).", BODY))
     if n.get("pull"):
+        cause = n["pull"].get("cause_sentence", "")
+        jump_bit = ""
+        if n.get("jump", {}).get("has"):
+            jl = n["jump"]
+            jump_bit = (
+                f" Jump rate (fraction of test steps with decoded step &gt; 20 cm; true path = 0): "
+                f"sorted Ridge {jl.get('sorted_ridge_line', '')}; sorted kNN {jl.get('sorted_knn_line', '')}; "
+                f"GT Ridge {jl.get('ground_truth_ridge_line', '')}; GT kNN {jl.get('ground_truth_knn_line', '')}."
+            )
         P.append(Paragraph(
             f"<b>7. Failure mode: centre-pull.</b> OLS slopes of decoded versus true distance from arena centre "
             f"(mean ± SD across seeds). Sorted — Ridge: {n['pull'].get('sorted_ridge_line', '')}; "
             f"kNN: {n['pull'].get('sorted_knn_line', '')}. Ground truth — Ridge: "
-            f"{n['pull'].get('ground_truth_ridge_line', '')}; kNN: {n['pull'].get('ground_truth_knn_line', '')}. "
-            "Slopes below 1 partly reflect regression to the mean in any noisy decoder; the sorted − ground-truth "
-            "difference isolates the contribution of recording.", BODY))
+            f"{n['pull'].get('ground_truth_ridge_line', '')}; kNN: "
+            f"{n['pull'].get('ground_truth_knn_line', '')}. {cause}{jump_bit}", BODY))
     P.append(Paragraph("In one sentence", H2))
     P.append(Paragraph(
         "<i>For this population, what must be preserved is the temporal continuity of the population state, read out "
@@ -325,7 +395,7 @@ def story(n):
         "This is a simulation, not animals. The population on the lab probe track is entorhinal-dominated (grid, "
         "head-direction, speed and border cells) with no CA1/CA3 place cells, so a place-cell map may reward nonlinear "
         "static embeddings differently. N = 5 supports effect sizes and sign consistency, not significance (the smallest "
-        f"attainable two-sided sign-test p is 0.0625). {n['d_story']} "
+        f"attainable two-sided sign-test p is 0.0625). On latent d, see point 5 ({n['d_story']}) "
         "Each seed's test segment covers only part of the arena, and seed-to-seed spread follows how much of it the test "
         f"path visits (r = {n['r_tb']['raw']:.2f} for raw). The nonlinear-dynamic cell was not tested, so the "
         f"linear×dynamic interaction is not estimable.{missing_txt}", BODY))
@@ -354,7 +424,7 @@ def legends(n):
             "Grey, training segment; black, test segment. The test path covers a different part of the arena in each seed "
             f"({', '.join(str(t) for t in n['tb'])} of 100 bins)."),
         "Fig2_validity": ("Figure 2 | The comparison is fair.",
-            "<b>a</b>, Fourteen audit checks per seed (tick, pass; cross, fail; dash, not applicable, because the frozen configuration is "
+            f"<b>a</b>, {n.get('n_audit', 15)} audit checks per seed (tick, pass; cross, fail; dash, not applicable, because the frozen configuration is "
             "CLI-built, not UI-built). <b>b</b>, Time-shift null control. Labels were circularly shifted by 20 offsets "
             "(0.25–0.75 of the session) and decoded through the full pipeline. Each point is one seed's median over shifts "
             "of (shifted-label error − chance floor), where chance is predicting the training-mean position. Values near or "
@@ -389,7 +459,7 @@ def legends(n):
             "filter for reference only. <b>b</b>, Cost of causality: the causal LDS filter against the offline GPFA smoother "
             f"(Ridge {n['r_lds_gpfa']}, kNN {n['k_lds_gpfa']}). <b>c</b>, Selected latent d by inner CV "
             f"(filled, sorted; open, ground truth). d = 20 was chosen in {n['d20']}/{n['dn']} cases. "
-            f"{n['d_story']} "
+            f"See point 5: {n['d_story']} "
             "<b>d</b>, Learning curves (Ridge, sorted): training on the most recent 25%, 50% or 100% of the training block, "
             "same test set. Mean ± s.e.m. across seeds. Every method improves with data and the mean ordering holds at each "
             "size, although LDS beat raw + history in only "
@@ -407,16 +477,16 @@ def legends(n):
         L["Fig7_trajectories"] = ("Figure 7 | Decoded trajectories.",
             "Sorted spikes. The seed is the one whose LDS − PCA Ridge difference is closest to the across-seed median; "
             "the window is the first 60 s of the test segment (both rules fixed, no picking). <b>a</b>, Arena view "
-            "(rows = Ridge, kNN; columns = PCA, DM, LDS): true path in black, decoded path in quadrant colour; open circle "
-            "marks the start; each panel shows that window's median error. <b>b</b>, x(t) and y(t) with PCA, DM and LDS "
-            "overlaid (Ridge; kNN inset). <b>c</b>, Euclidean error with a 2 s rolling median; dashed grey is chance. "
-            "<b>d</b>, Window median for PCA, DM and LDS in all five seeds (filled = the seed shown), so the example is "
-            "typical rather than the best case.")
+            "(rows = Ridge, kNN; columns = PCA, DM, LDS): true path as a black 0.8 pt line; decoded positions as "
+            "quadrant-coloured dots (size 1.5, α = 0.35); open circle marks the start; each panel shows that window's "
+            "median error. <b>b</b>, x(t) and y(t) with PCA, DM and LDS overlaid (Ridge; kNN inset). <b>c</b>, Euclidean "
+            "error with a 2 s rolling median; dashed grey is chance. <b>d</b>, Window median for PCA, DM and LDS in all "
+            "five seeds (filled = the seed shown), so the example is typical rather than the best case.")
     if n["has_dsweep"]:
         L["FigS1_latent_d"] = ("Figure S1 | Latent dimensionality.",
             "Median test error versus latent d (log-x ticks at 2, 3, 5, 10, 20), mean ± s.e.m. across seeds, for each "
             "decoder × source. Methods were refit with Phase 3's per-fold representation rule. Open rings mark the d "
-            f"selected for each seed. Sorted: {n['d_story']} Ground truth: {n['d_story_gt']}")
+            f"selected for each seed. See point 5: {n['d_story']}")
     L["FigS2_a13_full"] = ("Figure S2 | Full time-shift null.",
         "For each method, the 20 per-shift (shifted − floor) values from every seed. Strip plot with the pre-registered "
         f"−2 cm line. Sorted and ground-truth side by side. {n['a13_r']}/{n['a13_n']} Ridge and "
@@ -429,19 +499,25 @@ def legends(n):
             "Same layout as the kNN page, Ridge readout.")
     if n["has_fail"] and n.get("pull"):
         pull = n["pull"]
-        pull_txt = (
-            f"Sorted Ridge: {pull.get('sorted_ridge_line', '')}. Sorted kNN: {pull.get('sorted_knn_line', '')}. "
-            f"Ground-truth Ridge: {pull.get('ground_truth_ridge_line', '')}. "
-            f"Ground-truth kNN: {pull.get('ground_truth_knn_line', '')}."
-        )
+        cause = pull.get("cause_sentence", "")
+        jump = n.get("jump") or {}
+        jump_txt = ""
+        if jump.get("has"):
+            jump_txt = (
+                f"<b>d</b>, Jump rate: fraction of test steps where the decoded position moves &gt; 20 cm in one "
+                f"50 ms step (true path ≈ 0; true speeds ≤ ~2.5 cm/step). Dots = seeds; bar = mean; Ridge and kNN "
+                f"for PCA, DM, LDS on sorted and ground-truth spikes. Sorted Ridge: {jump.get('sorted_ridge_line', '')}. "
+                f"Sorted kNN: {jump.get('sorted_knn_line', '')}. GT Ridge: {jump.get('ground_truth_ridge_line', '')}. "
+                f"GT kNN: {jump.get('ground_truth_knn_line', '')}."
+            )
         L["FigS4_failure_modes"] = ("Figure S4 | Failure modes.",
             "<b>a</b>, Spatial error maps: median across seeds of per-bin median Euclidean error (10×10 bins); bins with "
             "mean occupancy &lt; 10 are grey-hatched. Shared white→dark sequential scale. <b>b</b>, Centre-pull: OLS slope "
             f"of decoded versus true distance from arena centre (dots = seeds; bar = mean); reference line at 1 "
-            f"(no shrinkage). {pull_txt} "
-            "Slopes below 1 partly reflect regression to the mean in any noisy decoder; the sorted − ground-truth "
-            "difference isolates the contribution of recording. "
-            "<b>c</b>, Pooled error CDFs (Ridge solid, kNN dashed).")
+            f"(no shrinkage). Sorted Ridge: {pull.get('sorted_ridge_line', '')}. Sorted kNN: {pull.get('sorted_knn_line', '')}. "
+            f"Ground-truth Ridge: {pull.get('ground_truth_ridge_line', '')}. "
+            f"Ground-truth kNN: {pull.get('ground_truth_knn_line', '')}. {cause} "
+            f"<b>c</b>, Pooled error CDFs (Ridge solid, kNN dashed). {jump_txt}")
     return L
 
 
