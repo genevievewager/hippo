@@ -4,9 +4,12 @@ import numpy as np
 from agents.quadrant_n5.knn_pressure import (
     _circular_distance,
     _circular_mean,
+    _gain_table,
+    _shuffle_gain_table,
     build_strata_masks,
     evaluate_cell_type_criterion,
     evaluate_criteria,
+    evaluate_path_integration,
     train_mask_excluding_delta,
 )
 import pandas as pd
@@ -98,3 +101,61 @@ def test_evaluate_cell_type_criterion_pass_fail():
         cell_type=pd.DataFrame(rows),
     )
     assert c["cell_type_grid_bvc"]["status"] == "PASS"
+
+
+def test_gain_table_and_shuffle_gain_table_accept_int_seeds():
+    """Regression: sorted(int(int(s) for s in ...)) raised TypeError on unique()."""
+    rows = []
+    for s in range(2):
+        for subset, pca_e, lds_e in (("grid_bvc", 30.0, 25.0), ("all", 20.0, 10.0)):
+            for method, err in (("pca", pca_e), ("lds", lds_e)):
+                for dec in ("ridge", "knn"):
+                    rows.append(dict(
+                        seed=s, subset=subset, method=method, decoder=dec,
+                        median_err=err, shuffle_offset_s=None,
+                    ))
+    mech = pd.DataFrame(rows)
+    gains = _gain_table(mech)
+    assert set(gains.seed.tolist()) == {0, 1}
+    assert "interaction" in set(gains.method)
+    # seed column as int64 from CSV round-trip
+    import io
+    mech2 = pd.read_csv(io.StringIO(mech.to_csv(index=False)))
+    gains2 = _gain_table(mech2)
+    assert len(gains2) == len(gains)
+
+    shuf_rows = []
+    for s in range(2):
+        for offset in (60.0, 120.0):
+            for method, err in (("pca", 22.0), ("lds", 18.0)):
+                for dec in ("ridge", "knn"):
+                    shuf_rows.append(dict(
+                        seed=s, method=method, decoder=dec,
+                        shuffle_offset_s=offset, median_err=err,
+                    ))
+    shuf = pd.DataFrame(shuf_rows)
+    sg = _shuffle_gain_table(shuf, mech)
+    assert set(sg.seed.tolist()) == {0, 1}
+    assert len(sg) == 8  # 2 seeds × 2 methods × 2 decoders (mean over offsets)
+
+
+def test_evaluate_path_integration_pass():
+    rows = []
+    for s in range(5):
+        for subset, err_pca, err_lds in (
+            ("grid_bvc", 30.0, 25.0),
+            ("all", 20.0 if s < 4 else 28.0, 15.0 if s < 4 else 24.0),
+        ):
+            for method, err in (("pca", err_pca), ("lds", err_lds)):
+                for dec in ("ridge", "knn"):
+                    rows.append(dict(
+                        seed=s, source="sorted", subset=subset, method=method,
+                        decoder=dec, median_err=err, shuffle_offset_s=None,
+                    ))
+    mech = pd.DataFrame(rows)
+    gains = _gain_table(mech)
+    shuf = gains[(gains.decoder == "knn") & (gains.method == "lds")].copy()
+    shuf["gain_all_minus_grid_bvc"] = shuf["gain_all_minus_grid_bvc"] * 0.2
+    a, b = evaluate_path_integration(mech, shuf)
+    assert a["n_lds_gain_negative"] >= 4
+    assert b["status"] == "PASS"

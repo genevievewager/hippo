@@ -66,6 +66,273 @@ CELL_TYPE_SUBSETS = {
     "hd_speed": ("MEC_hd", "MEC_speed"),
 }
 
+MECHANISM_SUBSETS: dict[str, tuple[str, ...] | None] = {
+    **CELL_TYPE_SUBSETS,
+    "all": None,
+    "grid_bvc_hd": ("MEC_grid", "Sub_bvc", "MEC_hd"),
+    "grid_bvc_speed": ("MEC_grid", "Sub_bvc", "MEC_speed"),
+}
+
+SHUFFLE_N_OFFSETS = 5
+SHUFFLE_MIN_OFFSET_S = 60.0
+
+
+def _hd_speed_column_indices(
+    results: Path,
+    seed_index: int,
+    spike_source: str,
+    cfg: dict[str, Any],
+) -> list[int]:
+    cols, _ = _unit_column_indices(
+        results, seed_index, spike_source, cfg, ("MEC_hd", "MEC_speed"),
+    )
+    return cols
+
+
+def _shuffle_offsets_s(decode_times: np.ndarray) -> list[float]:
+    t = np.asarray(decode_times, dtype=float)
+    t0, t1 = float(t.min()), float(t.max())
+    span = t1 - t0
+    if span <= SHUFFLE_MIN_OFFSET_S:
+        return [SHUFFLE_MIN_OFFSET_S] * SHUFFLE_N_OFFSETS
+    lo = SHUFFLE_MIN_OFFSET_S
+    hi = max(lo, span - SHUFFLE_MIN_OFFSET_S)
+    return [float(x) for x in np.linspace(lo, hi, SHUFFLE_N_OFFSETS)]
+
+
+def _apply_hd_speed_circular_shift(
+    X: np.ndarray,
+    hd_speed_cols: list[int],
+    decode_times: np.ndarray,
+    offset_s: float,
+) -> np.ndarray:
+    dt = float(np.median(np.diff(np.asarray(decode_times, dtype=float))))
+    if dt <= 0:
+        raise ValueError("decode_times must be strictly increasing")
+    steps = int(round(float(offset_s) / dt))
+    out = np.array(X, copy=True)
+    for c in hd_speed_cols:
+        out[:, c] = np.roll(out[:, c], steps)
+    return out
+
+
+def _subset_columns(
+    results: Path,
+    seed_index: int,
+    spike_source: str,
+    cfg: dict[str, Any],
+    subset_name: str,
+    n_all: int,
+) -> tuple[list[int], str]:
+    spec = MECHANISM_SUBSETS[subset_name]
+    if spec is None:
+        return list(range(n_all)), "all_decoder_units"
+    cols, _ = _unit_column_indices(results, seed_index, spike_source, cfg, spec)
+    return cols, ",".join(spec)
+
+
+def _reduced_fit_decode(
+    *,
+    method: str,
+    primary_d: int,
+    cfg: dict[str, Any],
+    methods_seed: int,
+    X_sub: np.ndarray,
+    obs: dict[str, Any],
+    alphas: np.ndarray,
+    ks: list[int],
+    n_blocks: int,
+    gap_s: float,
+) -> dict[str, Any]:
+    if X_sub.shape[1] < primary_d:
+        raise ValueError(
+            f"n_units={X_sub.shape[1]} < primary_d={primary_d} for {method}"
+        )
+    t0 = time.time()
+    model = _make_rep(
+        method, int(primary_d), cfg, methods_seed,
+        n_fit=int(obs["train_ok"].sum()),
+    )
+    Z = fit_transform_representation(method, model, X_sub, obs["train_ok"])
+    t_fit = time.time() - t0
+    Ztr = Z[obs["train_ok"]]
+    ytr = obs["y"][obs["train_ok"]]
+    times_tr = np.asarray(obs["decode_times"])[obs["train_ok"]]
+    t1 = time.time()
+    alpha = _choose_alpha(Ztr, ytr, times_tr, alphas, n_blocks, gap_s)
+    knn_k = _choose_k(Ztr, ytr, times_tr, ks, n_blocks, gap_s)
+    t_cv = time.time() - t1
+    Zte = Z[obs["eval_mask"]]
+    yte = obs["y"][obs["eval_mask"]]
+    pred_r = _fit_predict_ridge(Ztr, ytr, Zte, alpha)
+    pred_k = _fit_predict_knn(Ztr, ytr, Zte, knn_k)
+    ridge_m = _euclid(pred_r, yte)
+    knn_m = _euclid(pred_k, yte)
+    return {
+        "primary_d": int(primary_d),
+        "ridge_alpha": float(alpha),
+        "knn_k": int(knn_k),
+        "fit_s": float(t_fit),
+        "decoder_cv_s": float(t_cv),
+        "wall_s": float(time.time() - t0),
+        "ridge_median": float(ridge_m["median"]),
+        "knn_median": float(knn_m["median"]),
+    }
+
+
+def preregister_path_integration_criteria(results: Path | None = None) -> dict[str, Any]:
+    """Write path-integration (a)/(b) rules into criteria.json before mechanism runs."""
+    results = Path(results or OUTPUT_ROOT)
+    crit_path = _pressure_root(results) / "criteria.json"
+    crit_path.parent.mkdir(parents=True, exist_ok=True)
+    criteria = json.loads(crit_path.read_text()) if crit_path.exists() else {}
+    criteria["path_integration_a"] = {
+        "status": "PENDING",
+        "rule": (
+            "Path-integration interpretation supported only if (a1) LDS kNN gain "
+            "from adding HD+speed (error(all)−error(grid+BVC)) is negative in ≥ 4/5 "
+            "seeds AND (a2) LDS gain is more negative than PCA's gain in ≥ 4/5 seeds"
+        ),
+        "gain_definition": "error(all) − error(grid+BVC); negative = adding HD+speed helps",
+        "required_each": "≥ 4/5",
+        "reduction": {
+            "methods": list(CELL_TYPE_METHODS),
+            "source": CELL_TYPE_SOURCE,
+            "protocol": "single fit at saved primary_d; decoder-only inner CV",
+        },
+    }
+    criteria["path_integration_b"] = {
+        "status": "PENDING",
+        "rule": (
+            "Shuffle control: circular time shift (≥ 60 s) on HD+speed units only; "
+            "≥ 50% of the intact LDS kNN gain removed in ≥ 4/5 seeds"
+        ),
+        "removal_definition": (
+            "|gain_intact − gain_shuffled| / |gain_intact| ≥ 0.5 when gain_intact ≠ 0; "
+            "gain_shuffled = mean over 5 session-spread offsets (same offsets all seeds)"
+        ),
+        "required": "≥ 4/5",
+    }
+    crit_path.write_text(json.dumps(criteria, indent=2) + "\n")
+    print(json.dumps({"wrote": str(crit_path), "path_integration": "PENDING"}, indent=2), flush=True)
+    return criteria
+
+
+def _gain_table(df: pd.DataFrame) -> pd.DataFrame:
+    """Per-seed gains error(all)−error(grid+BVC) and LDS−PCA interaction on gain."""
+    if "shuffle_offset_s" not in df.columns:
+        intact = df
+    else:
+        intact = df[df["shuffle_offset_s"].isna() | (df["shuffle_offset_s"] == 0)]
+    rows: list[dict[str, Any]] = []
+    for seed in sorted(int(s) for s in intact["seed"].unique()):
+        base = intact[(intact.seed == seed) & (intact.subset == "grid_bvc")]
+        all_u = intact[(intact.seed == seed) & (intact.subset == "all")]
+        for dec in ("ridge", "knn"):
+            for method in CELL_TYPE_METHODS:
+                e_gb = float(base[(base.method == method) & (base.decoder == dec)].median_err.iloc[0])
+                e_all = float(all_u[(all_u.method == method) & (all_u.decoder == dec)].median_err.iloc[0])
+                rows.append(dict(
+                    seed=int(seed), decoder=dec, method=method,
+                    err_grid_bvc=e_gb, err_all=e_all,
+                    gain_all_minus_grid_bvc=e_all - e_gb,
+                ))
+            g_pca = float(rows[-2]["gain_all_minus_grid_bvc"])
+            g_lds = float(rows[-1]["gain_all_minus_grid_bvc"])
+            rows.append(dict(
+                seed=int(seed), decoder=dec, method="interaction",
+                err_grid_bvc=float("nan"), err_all=float("nan"),
+                gain_all_minus_grid_bvc=g_lds - g_pca,
+            ))
+    return pd.DataFrame(rows)
+
+
+def _shuffle_gain_table(
+    shuffle_rows: pd.DataFrame,
+    grid_bvc_df: pd.DataFrame,
+) -> pd.DataFrame:
+    """Gain for shuffled-all vs intact grid+BVC (grid_bvc errors unchanged)."""
+    rows: list[dict[str, Any]] = []
+    for seed in sorted(int(s) for s in shuffle_rows["seed"].unique()):
+        base = grid_bvc_df[(grid_bvc_df.seed == seed) & (grid_bvc_df.subset == "grid_bvc")]
+        for offset in sorted(shuffle_rows[shuffle_rows.seed == seed].shuffle_offset_s.unique()):
+            all_u = shuffle_rows[
+                (shuffle_rows.seed == seed) & (shuffle_rows.shuffle_offset_s == offset)
+            ]
+            for dec in ("ridge", "knn"):
+                for method in CELL_TYPE_METHODS:
+                    e_gb = float(base[(base.method == method) & (base.decoder == dec)].median_err.iloc[0])
+                    e_all = float(all_u[(all_u.method == method) & (all_u.decoder == dec)].median_err.iloc[0])
+                    rows.append(dict(
+                        seed=int(seed), decoder=dec, method=method,
+                        shuffle_offset_s=float(offset),
+                        gain_all_minus_grid_bvc=e_all - e_gb,
+                    ))
+    out = pd.DataFrame(rows)
+    if len(out) == 0:
+        return out
+    return out.groupby(["seed", "decoder", "method"], as_index=False).agg(
+        gain_all_minus_grid_bvc=("gain_all_minus_grid_bvc", "mean"),
+    )
+
+
+def evaluate_path_integration(
+    mechanism_df: pd.DataFrame,
+    shuffle_df: pd.DataFrame,
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    gains = _gain_table(mechanism_df)
+    g_knn = gains[(gains.decoder == "knn") & (gains.method.isin(("pca", "lds", "interaction")))]
+    lds_g: list[float] = []
+    inter: list[float] = []
+    for s in range(5):
+        lds = g_knn[(g_knn.seed == s) & (g_knn.method == "lds")].gain_all_minus_grid_bvc
+        intr = g_knn[(g_knn.seed == s) & (g_knn.method == "interaction")].gain_all_minus_grid_bvc
+        lds_g.append(float(lds.iloc[0]) if len(lds) else float("nan"))
+        inter.append(float(intr.iloc[0]) if len(intr) else float("nan"))
+    n_a1 = int(sum(g < 0 for g in lds_g if np.isfinite(g)))
+    n_a2 = int(sum(g < 0 for g in inter if np.isfinite(g)))
+    crit_a = {
+        "status": "PASS" if (n_a1 >= 4 and n_a2 >= 4) else "FAIL",
+        "per_seed_lds_knn_gain_cm": lds_g,
+        "per_seed_lds_minus_pca_gain_cm": inter,
+        "n_lds_gain_negative": n_a1,
+        "n_lds_gain_more_negative_than_pca": n_a2,
+        "required_each": "≥ 4/5",
+        "rule": (
+            "Path-integration (a): LDS kNN gain negative in ≥ 4/5 AND "
+            "LDS gain more negative than PCA in ≥ 4/5"
+        ),
+    }
+
+    intact_lds = {
+        int(r.seed): float(r.gain_all_minus_grid_bvc)
+        for r in gains[(gains.decoder == "knn") & (gains.method == "lds")].itertuples()
+    }
+    shuffled: list[float] = []
+    frac_removed: list[float] = []
+    for s in range(5):
+        sub = shuffle_df[
+            (shuffle_df.seed == s) & (shuffle_df.decoder == "knn") & (shuffle_df.method == "lds")
+        ]
+        gi = intact_lds.get(s, float("nan"))
+        gs = float(sub.gain_all_minus_grid_bvc.iloc[0]) if len(sub) else float("nan")
+        shuffled.append(gs)
+        if np.isfinite(gi) and abs(gi) > 1e-9 and np.isfinite(gs):
+            frac_removed.append(abs(gi - gs) / abs(gi))
+        else:
+            frac_removed.append(float("nan"))
+    n_b = int(sum(f >= 0.5 for f in frac_removed if np.isfinite(f)))
+    crit_b = {
+        "status": "PASS" if n_b >= 4 else "FAIL",
+        "per_seed_intact_lds_knn_gain_cm": [intact_lds.get(s, float("nan")) for s in range(5)],
+        "per_seed_mean_shuffled_lds_knn_gain_cm": shuffled,
+        "per_seed_fraction_gain_removed": frac_removed,
+        "n_pass": n_b,
+        "required": "≥ 4/5",
+        "rule": "Shuffle removes ≥ 50% of intact LDS kNN gain in ≥ 4/5 seeds",
+    }
+    return crit_a, crit_b
+
 
 def _pressure_root(results: Path) -> Path:
     return results / "knn_pressure"
@@ -446,29 +713,83 @@ def _unit_column_indices(
     return cols, kept
 
 
-def run_cell_type_covariate_reduced(
+def _append_mechanism_rows(
+    rows: list[dict[str, Any]],
+    *,
+    seed_index: int,
+    subset_name: str,
+    cell_types_label: str,
+    n_units: int,
+    method: str,
+    fit: dict[str, Any],
+    shuffle_offset_s: float | None = None,
+) -> None:
+    base: dict[str, Any] = dict(
+        seed=seed_index,
+        source=CELL_TYPE_SOURCE,
+        subset=subset_name,
+        cell_types=cell_types_label,
+        n_units=n_units,
+        method=method,
+        primary_d=fit["primary_d"],
+        ridge_alpha=fit["ridge_alpha"],
+        knn_k=fit["knn_k"],
+        fit_s=fit["fit_s"],
+        decoder_cv_s=fit["decoder_cv_s"],
+        wall_s=fit["wall_s"],
+        shuffle_offset_s=shuffle_offset_s,
+    )
+    rows.append({**base, "decoder": "ridge", "median_err": fit["ridge_median"], "mean_err": float("nan")})
+    rows.append({**base, "decoder": "knn", "median_err": fit["knn_median"], "mean_err": float("nan")})
+
+
+def _write_cell_type_compat(mech_df: pd.DataFrame, out_dir: Path, seed_list: list[int]) -> None:
+    ct_df = mech_df[mech_df.subset.isin(CELL_TYPE_SUBSETS.keys())].copy()
+    ct_path = out_dir / "cell_type_reduced.csv"
+    ct_df.to_csv(ct_path, index=False)
+    report_rows: list[dict[str, Any]] = []
+    for seed_index in seed_list:
+        for subset_name in CELL_TYPE_SUBSETS:
+            sub = ct_df[(ct_df.seed == seed_index) & (ct_df.subset == subset_name)]
+            report_rows.append({
+                "seed": seed_index,
+                "subset": subset_name,
+                "pca_knn_median": float(sub[(sub.method == "pca") & (sub.decoder == "knn")].median_err.iloc[0]),
+                "lds_knn_median": float(sub[(sub.method == "lds") & (sub.decoder == "knn")].median_err.iloc[0]),
+                "pca_ridge_median": float(sub[(sub.method == "pca") & (sub.decoder == "ridge")].median_err.iloc[0]),
+                "lds_ridge_median": float(sub[(sub.method == "lds") & (sub.decoder == "ridge")].median_err.iloc[0]),
+                "lds_minus_pca_knn": float(
+                    sub[(sub.method == "lds") & (sub.decoder == "knn")].median_err.iloc[0]
+                    - sub[(sub.method == "pca") & (sub.decoder == "knn")].median_err.iloc[0]
+                ),
+            })
+    pd.DataFrame(report_rows).to_csv(out_dir / "cell_type_reduced_report.csv", index=False)
+
+
+def run_mechanism_reduced(
     results: Path | None = None,
     *,
     seeds: range | list[int] | None = None,
+    skip_preregister: bool = False,
 ) -> dict[str, Any]:
-    """Reduced analysis 4: pca/lds × sorted × grid_bvc & hd_speed.
-
-    Representation fit once on the subset at the saved primary_d (no per-fold
-    refit, no d re-selection). Ridge α / kNN k re-selected by decoder-only
-    inner CV with the same block folds and purge gaps as Phase 3.
-    """
+    """Reduced protocol: all units, mechanism subsets, HD+speed shuffle control."""
     results = Path(results or OUTPUT_ROOT)
     out_dir = _pressure_root(results)
     out_dir.mkdir(parents=True, exist_ok=True)
+    if not skip_preregister:
+        preregister_path_integration_criteria(results)
     cfg = load_quadrant_n5_yaml()
     seed_list = list(seeds if seeds is not None else range(5))
     alphas = ridge_alpha_grid(cfg)
     ks = [int(k) for k in cfg["decoders"]["knn_k"]]
     n_blocks = int(cfg["split"]["inner_cv_blocks"])
     gap_s = float(cfg["split"]["gap_s"])
+    offsets: list[float] | None = None
 
     rows: list[dict[str, Any]] = []
+    shuffle_only: list[dict[str, Any]] = []
     t_wall0 = time.time()
+
     for seed_index in seed_list:
         sim_dir = results / f"seed_{seed_index}" / "sim"
         obs = build_observation(cfg, sim_dir, CELL_TYPE_SOURCE)
@@ -476,157 +797,219 @@ def run_cell_type_covariate_reduced(
             (results / f"seed_{seed_index}" / CELL_TYPE_SOURCE / "source_summary.json").read_text()
         )
         methods_seed = int(summary["seed_streams"]["methods"])
-        print(f"[cell_type_reduced] seed={seed_index} source={CELL_TYPE_SOURCE}", flush=True)
+        n_all = obs["X"].shape[1]
+        hd_cols = _hd_speed_column_indices(results, seed_index, CELL_TYPE_SOURCE, cfg)
+        if offsets is None:
+            offsets = _shuffle_offsets_s(obs["decode_times"])
+        print(f"[mechanism_reduced] seed={seed_index}", flush=True)
 
-        for subset_name, cell_types in CELL_TYPE_SUBSETS.items():
-            cols, kept_ids = _unit_column_indices(
-                results, seed_index, CELL_TYPE_SOURCE, cfg, cell_types,
+        for subset_name in MECHANISM_SUBSETS:
+            cols, ct_label = _subset_columns(
+                results, seed_index, CELL_TYPE_SOURCE, cfg, subset_name, n_all,
             )
             X_sub = np.asarray(obs["X"][:, cols], dtype=float)
             for method in CELL_TYPE_METHODS:
                 rec = json.loads(
                     (results / f"seed_{seed_index}" / CELL_TYPE_SOURCE / f"{method}.json").read_text()
                 )
-                primary_d = int(rec["primary_d"])
-                if X_sub.shape[1] < primary_d:
-                    raise ValueError(
-                        f"subset {subset_name} has {X_sub.shape[1]} units < primary_d={primary_d}"
-                    )
-                t0 = time.time()
-                model = _make_rep(
-                    method, primary_d, cfg, methods_seed,
-                    n_fit=int(obs["train_ok"].sum()),
+                fit = _reduced_fit_decode(
+                    method=method,
+                    primary_d=int(rec["primary_d"]),
+                    cfg=cfg,
+                    methods_seed=methods_seed,
+                    X_sub=X_sub,
+                    obs=obs,
+                    alphas=alphas,
+                    ks=ks,
+                    n_blocks=n_blocks,
+                    gap_s=gap_s,
                 )
-                Z = fit_transform_representation(method, model, X_sub, obs["train_ok"])
-                t_fit = time.time() - t0
-                Ztr = Z[obs["train_ok"]]
-                ytr = obs["y"][obs["train_ok"]]
-                times_tr = np.asarray(obs["decode_times"])[obs["train_ok"]]
-                t1 = time.time()
-                alpha = _choose_alpha(Ztr, ytr, times_tr, alphas, n_blocks, gap_s)
-                knn_k = _choose_k(Ztr, ytr, times_tr, ks, n_blocks, gap_s)
-                t_cv = time.time() - t1
-                Zte = Z[obs["eval_mask"]]
-                yte = obs["y"][obs["eval_mask"]]
-                pred_r = _fit_predict_ridge(Ztr, ytr, Zte, alpha)
-                pred_k = _fit_predict_knn(Ztr, ytr, Zte, knn_k)
-                ridge_m = _euclid(pred_r, yte)
-                knn_m = _euclid(pred_k, yte)
-                tot = time.time() - t0
                 print(
-                    f"  {subset_name}/{method}: d={primary_d} n_units={len(cols)} "
-                    f"ridge={ridge_m['median']:.2f} knn={knn_m['median']:.2f} "
-                    f"fit={t_fit:.1f}s cv={t_cv:.1f}s tot={tot:.1f}s",
+                    f"  {subset_name}/{method}: ridge={fit['ridge_median']:.2f} "
+                    f"knn={fit['knn_median']:.2f}",
                     flush=True,
                 )
-                base = dict(
-                    seed=seed_index,
-                    source=CELL_TYPE_SOURCE,
-                    subset=subset_name,
-                    cell_types=",".join(cell_types),
-                    n_units=len(cols),
-                    method=method,
-                    primary_d=primary_d,
-                    ridge_alpha=float(alpha),
-                    knn_k=int(knn_k),
-                    fit_s=float(t_fit),
-                    decoder_cv_s=float(t_cv),
-                    wall_s=float(tot),
+                _append_mechanism_rows(
+                    rows, seed_index=seed_index, subset_name=subset_name,
+                    cell_types_label=ct_label, n_units=len(cols), method=method, fit=fit,
                 )
-                rows.append({
-                    **base,
-                    "decoder": "ridge",
-                    "median_err": float(ridge_m["median"]),
-                    "mean_err": float(ridge_m["mean"]),
-                })
-                rows.append({
-                    **base,
-                    "decoder": "knn",
-                    "median_err": float(knn_m["median"]),
-                    "mean_err": float(knn_m["mean"]),
-                })
 
-    ct_df = pd.DataFrame(rows)
-    ct_path = out_dir / "cell_type_reduced.csv"
-    ct_df.to_csv(ct_path, index=False)
+        X_full = np.asarray(obs["X"], dtype=float)
+        for offset_s in offsets:
+            X_sh = _apply_hd_speed_circular_shift(X_full, hd_cols, obs["decode_times"], offset_s)
+            for method in CELL_TYPE_METHODS:
+                rec = json.loads(
+                    (results / f"seed_{seed_index}" / CELL_TYPE_SOURCE / f"{method}.json").read_text()
+                )
+                fit = _reduced_fit_decode(
+                    method=method,
+                    primary_d=int(rec["primary_d"]),
+                    cfg=cfg,
+                    methods_seed=methods_seed,
+                    X_sub=X_sh,
+                    obs=obs,
+                    alphas=alphas,
+                    ks=ks,
+                    n_blocks=n_blocks,
+                    gap_s=gap_s,
+                )
+                for dec, med in (("ridge", fit["ridge_median"]), ("knn", fit["knn_median"])):
+                    shuffle_only.append(dict(
+                        seed=seed_index, source=CELL_TYPE_SOURCE, subset="all_shuffled",
+                        cell_types="all_decoder_units; HD+speed time-shifted",
+                        n_units=n_all, method=method, shuffle_offset_s=float(offset_s),
+                        primary_d=fit["primary_d"], decoder=dec, median_err=med,
+                    ))
 
-    # Merge criterion 4 into criteria.json (preserve 1–3 from prior run).
+    mech_df = pd.DataFrame(rows)
+    mech_path = out_dir / "mechanism_reduced.csv"
+    mech_df.to_csv(mech_path, index=False)
+    shuf_df = pd.DataFrame(shuffle_only)
+    shuf_df.to_csv(out_dir / "mechanism_shuffle.csv", index=False)
+    gains = _gain_table(mech_df)
+    gains.to_csv(out_dir / "mechanism_gains.csv", index=False)
+    shuf_gains = _shuffle_gain_table(shuf_df, mech_df)
+    shuf_gains.to_csv(out_dir / "mechanism_shuffle_gains.csv", index=False)
+    _write_cell_type_compat(mech_df, out_dir, seed_list)
+
+    crit_a, crit_b = evaluate_path_integration(mech_df, shuf_gains)
     crit_path = out_dir / "criteria.json"
-    if crit_path.exists():
-        criteria = json.loads(crit_path.read_text())
-        criteria["cell_type_grid_bvc"] = evaluate_cell_type_criterion(ct_df)
-        criteria["phase8_passed"] = bool(
-            criteria.get("overall_1_to_3") == "PASS"
-            and criteria["cell_type_grid_bvc"]["status"] == "PASS"
-        )
-    else:
-        # Minimal criteria object if analyses 1–3 not present.
-        criteria = {
-            "source": "sorted",
-            "method": "lds",
-            "decoder": "knn",
-            "cell_type_grid_bvc": evaluate_cell_type_criterion(ct_df),
-            "overall_1_to_3": "PENDING",
-            "phase8_passed": False,
-        }
+    criteria = json.loads(crit_path.read_text()) if crit_path.exists() else {}
+    criteria["path_integration_a"] = crit_a
+    criteria["path_integration_b"] = crit_b
+    criteria["cell_type_grid_bvc"] = evaluate_cell_type_criterion(mech_df)
+    criteria["phase8_passed"] = bool(
+        criteria.get("overall_1_to_3") == "PASS"
+        and criteria["cell_type_grid_bvc"]["status"] == "PASS"
+    )
     crit_path.write_text(json.dumps(criteria, indent=2) + "\n")
 
-    # Per-seed report table (kNN + Ridge medians; LDS−PCA kNN Δ).
-    report_rows: list[dict[str, Any]] = []
-    for seed_index in seed_list:
-        for subset_name in CELL_TYPE_SUBSETS:
-            sub = ct_df[(ct_df.seed == seed_index) & (ct_df.subset == subset_name)]
-            knn_pca = float(sub[(sub.method == "pca") & (sub.decoder == "knn")].median_err.iloc[0])
-            knn_lds = float(sub[(sub.method == "lds") & (sub.decoder == "knn")].median_err.iloc[0])
-            ridge_pca = float(sub[(sub.method == "pca") & (sub.decoder == "ridge")].median_err.iloc[0])
-            ridge_lds = float(sub[(sub.method == "lds") & (sub.decoder == "ridge")].median_err.iloc[0])
-            report_rows.append({
-                "seed": seed_index,
-                "subset": subset_name,
-                "pca_knn_median": knn_pca,
-                "lds_knn_median": knn_lds,
-                "pca_ridge_median": ridge_pca,
-                "lds_ridge_median": ridge_lds,
-                "lds_minus_pca_knn": knn_lds - knn_pca,
-            })
-    report_df = pd.DataFrame(report_rows)
-    report_path = out_dir / "cell_type_reduced_report.csv"
-    report_df.to_csv(report_path, index=False)
-
-    ct_crit = criteria["cell_type_grid_bvc"]
     summary = {
-        "status": "COMPLETE",
-        "reduction": ct_crit.get("reduction"),
-        "est_wall_time_h_seed0_microbench": 0.084,
         "wall_time_s": time.time() - t_wall0,
-        "seeds": seed_list,
-        "methods": list(CELL_TYPE_METHODS),
-        "source": CELL_TYPE_SOURCE,
-        "subsets": list(CELL_TYPE_SUBSETS.keys()),
-        "criterion_4": {
-            "status": ct_crit["status"],
-            "n_lds_better": ct_crit["n_lds_better"],
-            "sign_count": ct_crit["sign_count"],
-            "per_seed_lds_minus_pca_knn_cm": ct_crit["per_seed_lds_minus_pca_knn_cm"],
-            "rule": ct_crit["rule"],
-        },
-        "phase8_passed": criteria.get("phase8_passed"),
+        "shuffle_offsets_s": offsets,
+        "path_integration_a": crit_a["status"],
+        "path_integration_b": crit_b["status"],
+        "cell_type_grid_bvc": criteria["cell_type_grid_bvc"]["status"],
         "outputs": {
-            "cell_type_reduced": str(ct_path),
-            "cell_type_reduced_report": str(report_path),
+            "mechanism_reduced": str(mech_path),
+            "mechanism_gains": str(out_dir / "mechanism_gains.csv"),
             "criteria": str(crit_path),
         },
     }
-    (out_dir / "cell_type_reduced_summary.json").write_text(
-        json.dumps(summary, indent=2) + "\n"
+    (out_dir / "mechanism_reduced_summary.json").write_text(json.dumps(summary, indent=2) + "\n")
+    print(json.dumps(summary, indent=2), flush=True)
+    return summary
+
+
+def run_cell_type_covariate_reduced(
+    results: Path | None = None,
+    *,
+    seeds: range | list[int] | None = None,
+) -> dict[str, Any]:
+    """Reduced analysis 4 (grid_bvc + hd_speed); runs full mechanism study."""
+    return run_mechanism_reduced(results, seeds=seeds, skip_preregister=True)
+
+
+def finish_mechanism_from_csv(results: Path | None = None) -> dict[str, Any]:
+    """Post-process saved intact + shuffle CSVs (no representation refits).
+
+    Preserves pre-registered path_integration rule text in criteria.json;
+    only fills status / per-seed numbers.
+    """
+    results = Path(results or OUTPUT_ROOT)
+    out_dir = _pressure_root(results)
+    log_dir = results / "logs"
+    log_dir.mkdir(parents=True, exist_ok=True)
+    mech_path = out_dir / "mechanism_reduced.csv"
+    shuf_path = out_dir / "mechanism_shuffle.csv"
+    if not mech_path.is_file():
+        raise FileNotFoundError(f"missing intact fits: {mech_path}")
+    if not shuf_path.is_file():
+        raise FileNotFoundError(f"missing shuffle fits: {shuf_path}")
+    mech_df = pd.read_csv(mech_path)
+    shuf_df = pd.read_csv(shuf_path)
+    seed_list = sorted(int(s) for s in mech_df["seed"].unique())
+
+    gains = _gain_table(mech_df)
+    gains.to_csv(out_dir / "mechanism_gains.csv", index=False)
+    shuf_gains = _shuffle_gain_table(shuf_df, mech_df)
+    shuf_gains.to_csv(out_dir / "mechanism_shuffle_gains.csv", index=False)
+    _write_cell_type_compat(mech_df, out_dir, seed_list)
+
+    crit_a, crit_b = evaluate_path_integration(mech_df, shuf_gains)
+    crit_path = out_dir / "criteria.json"
+    criteria = json.loads(crit_path.read_text()) if crit_path.exists() else {}
+    # Keep pre-registered rule text; only update status + measured fields.
+    for key, measured in (("path_integration_a", crit_a), ("path_integration_b", crit_b)):
+        prev = dict(criteria.get(key) or {})
+        keep = {k: prev[k] for k in prev if k in (
+            "rule", "gain_definition", "removal_definition", "required", "required_each", "reduction",
+        )}
+        criteria[key] = {**keep, **measured}
+        # Prefer pre-registered wording over evaluate_*'s shorter rule.
+        if "rule" in keep:
+            criteria[key]["rule"] = keep["rule"]
+    criteria["cell_type_grid_bvc"] = evaluate_cell_type_criterion(mech_df)
+    criteria["phase8_passed"] = bool(
+        criteria.get("overall_1_to_3") == "PASS"
+        and criteria["cell_type_grid_bvc"]["status"] == "PASS"
     )
-    print(json.dumps({
-        "wall_time_s": summary["wall_time_s"],
-        "criterion_4": summary["criterion_4"]["status"],
-        "n_lds_better": summary["criterion_4"]["n_lds_better"],
-        "sign_count": summary["criterion_4"]["sign_count"],
-        "phase8_passed": summary["phase8_passed"],
-    }, indent=2), flush=True)
+    crit_path.write_text(json.dumps(criteria, indent=2) + "\n")
+
+    # Per-seed report with remaining-gain fraction for LDS kNN.
+    report_rows: list[dict[str, Any]] = []
+    for seed in seed_list:
+        row: dict[str, Any] = {"seed": seed}
+        for dec in ("ridge", "knn"):
+            for method in CELL_TYPE_METHODS:
+                g = gains[(gains.seed == seed) & (gains.decoder == dec) & (gains.method == method)]
+                row[f"{method}_{dec}_gain"] = float(g.gain_all_minus_grid_bvc.iloc[0])
+            inter = gains[
+                (gains.seed == seed) & (gains.decoder == dec) & (gains.method == "interaction")
+            ]
+            row[f"interaction_{dec}"] = float(inter.gain_all_minus_grid_bvc.iloc[0])
+        gi = float(gains[
+            (gains.seed == seed) & (gains.decoder == "knn") & (gains.method == "lds")
+        ].gain_all_minus_grid_bvc.iloc[0])
+        gs = float(shuf_gains[
+            (shuf_gains.seed == seed) & (shuf_gains.decoder == "knn") & (shuf_gains.method == "lds")
+        ].gain_all_minus_grid_bvc.iloc[0])
+        row["lds_knn_gain_intact"] = gi
+        row["lds_knn_gain_shuffled"] = gs
+        row["lds_knn_gain_remaining_frac"] = (
+            float(gs / gi) if abs(gi) > 1e-9 else float("nan")
+        )
+        row["lds_knn_gain_removed_frac"] = (
+            abs(gi - gs) / abs(gi) if abs(gi) > 1e-9 else float("nan")
+        )
+        for subset in ("grid_bvc", "grid_bvc_hd", "grid_bvc_speed", "all"):
+            for method in CELL_TYPE_METHODS:
+                for dec in ("ridge", "knn"):
+                    e = float(mech_df[
+                        (mech_df.seed == seed) & (mech_df.subset == subset)
+                        & (mech_df.method == method) & (mech_df.decoder == dec)
+                    ].median_err.iloc[0])
+                    row[f"{subset}_{method}_{dec}"] = e
+        report_rows.append(row)
+    report_df = pd.DataFrame(report_rows)
+    report_path = out_dir / "mechanism_report.csv"
+    report_df.to_csv(report_path, index=False)
+
+    summary = {
+        "status": "COMPLETE_FROM_CSV",
+        "path_integration_a": criteria["path_integration_a"]["status"],
+        "path_integration_b": criteria["path_integration_b"]["status"],
+        "cell_type_grid_bvc": criteria["cell_type_grid_bvc"]["status"],
+        "shuffle_offsets_s": sorted(float(x) for x in shuf_df.shuffle_offset_s.unique()),
+        "outputs": {
+            "mechanism_gains": str(out_dir / "mechanism_gains.csv"),
+            "mechanism_shuffle_gains": str(out_dir / "mechanism_shuffle_gains.csv"),
+            "mechanism_report": str(report_path),
+            "criteria": str(crit_path),
+        },
+    }
+    (out_dir / "mechanism_reduced_summary.json").write_text(json.dumps(summary, indent=2) + "\n")
+    print(json.dumps(summary, indent=2), flush=True)
     return summary
 
 
@@ -861,9 +1244,27 @@ def main(argv: list[str] | None = None) -> None:
     ap.add_argument(
         "--cell-type-reduced",
         action="store_true",
+        help="Run reduced mechanism study (same as --mechanism-reduced).",
+    )
+    ap.add_argument(
+        "--mechanism-reduced",
+        action="store_true",
         help=(
-            "Run reduced analysis 4 only (pca/lds, sorted, grid_bvc+hd_speed; "
-            "single fit at primary_d + decoder-only inner CV). Does not re-run 1–3."
+            "Pre-register path-integration criteria, then run reduced pca/lds on "
+            "all + cell-type subsets + HD+speed shuffle control."
+        ),
+    )
+    ap.add_argument(
+        "--preregister-path-integration",
+        action="store_true",
+        help="Write path-integration (a)/(b) rules to criteria.json only.",
+    )
+    ap.add_argument(
+        "--finish-mechanism-from-csv",
+        action="store_true",
+        help=(
+            "Compute gains and path-integration PASS/FAIL from saved "
+            "mechanism_reduced.csv + mechanism_shuffle.csv (no refits)."
         ),
     )
     args = ap.parse_args(argv)
@@ -872,8 +1273,12 @@ def main(argv: list[str] | None = None) -> None:
         seeds = list(range(int(a), int(b) + 1))
     else:
         seeds = [int(x) for x in args.seeds.split(",") if x.strip() != ""]
-    if args.cell_type_reduced:
-        run_cell_type_covariate_reduced(args.results, seeds=seeds)
+    if args.preregister_path_integration:
+        preregister_path_integration_criteria(args.results)
+    elif args.finish_mechanism_from_csv:
+        finish_mechanism_from_csv(args.results)
+    elif args.mechanism_reduced or args.cell_type_reduced:
+        run_mechanism_reduced(args.results, seeds=seeds)
     else:
         run_all(args.results, seeds=seeds)
 
