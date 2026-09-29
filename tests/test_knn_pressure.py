@@ -8,6 +8,8 @@ from agents.quadrant_n5.knn_pressure import (
     _shuffle_gain_table,
     build_strata_masks,
     evaluate_cell_type_criterion,
+    evaluate_control_c,
+    evaluate_control_d,
     evaluate_criteria,
     evaluate_path_integration,
     train_mask_excluding_delta,
@@ -159,3 +161,23 @@ def test_evaluate_path_integration_pass():
     a, b = evaluate_path_integration(mech, shuf)
     assert a["n_lds_gain_negative"] >= 4
     assert b["status"] == "PASS"
+
+
+def test_evaluate_control_c_and_d():
+    mech_rows, noise_rows, d_rows = [], [], []
+    for s in range(5):
+        # intact gain = 10-25 = -15; noise gain = 12-25 = -13 → ratio 13/15 ≥ 0.5
+        mech_rows.append(dict(seed=s, subset="grid_bvc", method="lds", decoder="knn", median_err=25.0))
+        mech_rows.append(dict(seed=s, subset="all", method="lds", decoder="knn", median_err=10.0))
+        noise_rows.append(dict(seed=s, method="lds", decoder="knn", median_err=12.0 if s < 4 else 24.0))
+        # d=5 better than d=20 by 3 cm for seeds 0-3; seed 4 fails (best low d worse)
+        for d, err in ((5, 15.0 if s < 4 else 22.0), (10, 18.0 if s < 4 else 21.0), (20, 20.0)):
+            d_rows.append(dict(
+                seed=s, subset="grid_bvc", method="lds", decoder="knn", d=d, median_err=err,
+            ))
+    c = evaluate_control_c(pd.DataFrame(noise_rows), pd.DataFrame(mech_rows))
+    assert c["n_pass"] == 4
+    assert c["status"] == "PASS"
+    d = evaluate_control_d(pd.DataFrame(d_rows))
+    assert d["n_pass"] == 4
+    assert d["status"] == "PASS"

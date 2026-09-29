@@ -43,6 +43,7 @@ from realtime.quadrant_n5_run import (  # noqa: E402
     _fit_predict_knn,
     _fit_predict_ridge,
     _make_rep,
+    _sqrt_zscore_train,
     fit_transform_representation,
     ridge_alpha_grid,
 )
@@ -75,6 +76,237 @@ MECHANISM_SUBSETS: dict[str, tuple[str, ...] | None] = {
 
 SHUFFLE_N_OFFSETS = 5
 SHUFFLE_MIN_OFFSET_S = 60.0
+CONTROL_DIMS = (5, 10, 20)
+NOISE_N_UNITS = 45  # match HD+speed population size from N=5 sorted decoder pool
+
+
+def preregister_control_criteria(results: Path | None = None) -> dict[str, Any]:
+    """Write criteria (c) and (d) as PENDING before C1/C2 runs. Does not touch (a)/(b)."""
+    results = Path(results or OUTPUT_ROOT)
+    crit_path = _pressure_root(results) / "criteria.json"
+    crit_path.parent.mkdir(parents=True, exist_ok=True)
+    criteria = json.loads(crit_path.read_text()) if crit_path.exists() else {}
+    criteria["control_c_channel_count"] = {
+        "status": "PENDING",
+        "rule": (
+            "Channel-count effect supported if the LDS kNN gain from adding noise "
+            "units (error(grid+BVC+noise)−error(grid+BVC)) is ≥ 50% of the intact "
+            "HD+speed gain (error(all)−error(grid+BVC)) in ≥ 4/5 seeds"
+        ),
+        "noise_definition": (
+            f"{NOISE_N_UNITS} synthetic units, Poisson with rates matched "
+            "unit-for-unit to HD+speed mean train rates; fixed seed from methods "
+            "stream; no temporal structure; joint sqrt-zscore with grid+BVC"
+        ),
+        "gain_ratio_definition": (
+            "noise_gain / intact_gain ≥ 0.5 when intact_gain ≠ 0 "
+            "(both typically negative when adding units helps)"
+        ),
+        "required": "≥ 4/5",
+    }
+    criteria["control_d_fixed_d"] = {
+        "status": "PENDING",
+        "rule": (
+            "Fixed-d artifact supported if LDS kNN on grid+BVC at its best of "
+            "d ∈ {5, 10} beats d = 20 by ≥ 2 cm in ≥ 4/5 seeds"
+        ),
+        "dims": list(CONTROL_DIMS),
+        "required": "≥ 4/5",
+        "threshold_cm": 2.0,
+    }
+    crit_path.write_text(json.dumps(criteria, indent=2) + "\n")
+    print(json.dumps({"wrote": str(crit_path), "control_c_d": "PENDING"}, indent=2), flush=True)
+    return criteria
+
+
+def _observation_with_counts(
+    cfg: dict[str, Any],
+    sim_dir: Path,
+    spike_source: str,
+) -> dict[str, Any]:
+    """Like build_observation, but also returns X_counts (pre sqrt-zscore)."""
+    from realtime.data_loading import load_simulation_data, make_decode_times
+    from realtime.spike_binner import build_causal_spike_matrix
+    from realtime.timing import extract_behavior_times
+    from realtime.train_decoder import causal_train_test_split
+    from realtime.quadrant_n5_run import METHOD_KEYS, _position, _valid_mask
+    from realtime.pipeline_artifacts import hash_train_indices
+
+    feat = cfg["features"]
+    split = cfg["split"]
+    data = load_simulation_data(
+        sim_dir, spike_source,
+        include_regions=list(cfg["unit_inclusion"]["regions"]),
+    )
+    behavior_times = extract_behavior_times(data["behavior_df"])
+    update_dt = float(feat["update_dt"])
+    W = float(feat["window_s"])
+    decode_times = make_decode_times(
+        data["session_duration"], W, update_dt, behavior_times=behavior_times,
+    )
+    X_counts = build_causal_spike_matrix(
+        data["spikes_df"], data["unit_ids"], decode_times, W,
+    )
+    beh = align_behavior_to_decoder_times(data["behavior_df"], decode_times)
+    y = _position(beh)
+    train_mask, test_mask = causal_train_test_split(
+        decode_times, float(split["train_frac"]), gap_s=float(split["gap_s"]),
+    )
+    X, _ = _sqrt_zscore_train(X_counts, train_mask)
+    n = len(decode_times)
+    valid = {m: _valid_mask(m, n, cfg) for m in METHOD_KEYS}
+    eval_mask = test_mask.copy()
+    train_ok = train_mask.copy()
+    for m in METHOD_KEYS:
+        eval_mask &= valid[m]
+        train_ok &= valid[m]
+    return {
+        "X": X,
+        "X_counts": np.asarray(X_counts, dtype=float),
+        "y": y,
+        "decode_times": decode_times,
+        "train_ok": train_ok,
+        "eval_mask": eval_mask,
+        "train_mask": train_mask,
+        "unit_ids": list(data["unit_ids"]),
+    }
+
+
+def _build_grid_bvc_plus_noise(
+    obs: dict[str, Any],
+    results: Path,
+    seed_index: int,
+    cfg: dict[str, Any],
+    methods_seed: int,
+) -> tuple[np.ndarray, dict[str, Any]]:
+    """grid+BVC counts + Poisson noise matched to HD+speed train mean rates."""
+    gb_cols, _ = _unit_column_indices(
+        results, seed_index, CELL_TYPE_SOURCE, cfg, ("MEC_grid", "Sub_bvc"),
+    )
+    hd_cols, _ = _unit_column_indices(
+        results, seed_index, CELL_TYPE_SOURCE, cfg, ("MEC_hd", "MEC_speed"),
+    )
+    Xc = obs["X_counts"]
+    train = obs["train_ok"]
+    rates = Xc[train][:, hd_cols].mean(axis=0)
+    if len(rates) != NOISE_N_UNITS:
+        # Pad/truncate to fixed 45 if population size differs across seeds (should not).
+        if len(rates) >= NOISE_N_UNITS:
+            rates = rates[:NOISE_N_UNITS]
+        else:
+            rates = np.concatenate([rates, np.full(NOISE_N_UNITS - len(rates), rates.mean())])
+    rng = np.random.default_rng(int(methods_seed))
+    noise = rng.poisson(lam=rates, size=(Xc.shape[0], NOISE_N_UNITS)).astype(float)
+    X_joint = np.concatenate([Xc[:, gb_cols], noise], axis=1)
+    X_z, _ = _sqrt_zscore_train(X_joint, obs["train_mask"])
+    meta = {
+        "n_grid_bvc": len(gb_cols),
+        "n_noise": NOISE_N_UNITS,
+        "hd_speed_rates_mean": float(np.mean(rates)),
+        "hd_speed_rates_n": int(len(hd_cols)),
+    }
+    return X_z, meta
+
+
+def evaluate_control_c(
+    noise_df: pd.DataFrame,
+    mechanism_df: pd.DataFrame,
+) -> dict[str, Any]:
+    """(c) channel-count: noise_gain / intact_gain ≥ 0.5 in ≥ 4/5 (LDS kNN)."""
+    ratios: list[float] = []
+    noise_gains: list[float] = []
+    intact_gains: list[float] = []
+    for s in range(5):
+        gb = mechanism_df[
+            (mechanism_df.seed == s) & (mechanism_df.subset == "grid_bvc")
+            & (mechanism_df.method == "lds") & (mechanism_df.decoder == "knn")
+        ]
+        all_u = mechanism_df[
+            (mechanism_df.seed == s) & (mechanism_df.subset == "all")
+            & (mechanism_df.method == "lds") & (mechanism_df.decoder == "knn")
+        ]
+        nz = noise_df[
+            (noise_df.seed == s) & (noise_df.method == "lds") & (noise_df.decoder == "knn")
+        ]
+        e_gb = float(gb.median_err.iloc[0])
+        e_all = float(all_u.median_err.iloc[0])
+        e_nz = float(nz.median_err.iloc[0])
+        g_intact = e_all - e_gb
+        g_noise = e_nz - e_gb
+        intact_gains.append(g_intact)
+        noise_gains.append(g_noise)
+        if abs(g_intact) > 1e-9:
+            ratios.append(g_noise / g_intact)
+        else:
+            ratios.append(float("nan"))
+    n_pass = int(sum(r >= 0.5 for r in ratios if np.isfinite(r)))
+    return {
+        "status": "PASS" if n_pass >= 4 else "FAIL",
+        "per_seed_intact_lds_knn_gain_cm": intact_gains,
+        "per_seed_noise_lds_knn_gain_cm": noise_gains,
+        "per_seed_noise_over_intact_ratio": ratios,
+        "n_pass": n_pass,
+        "required": "≥ 4/5",
+        "threshold_ratio": 0.5,
+    }
+
+
+def evaluate_control_d(d_sweep_df: pd.DataFrame) -> dict[str, Any]:
+    """(d) fixed-d: best(d=5,10) beats d=20 by ≥ 2 cm on LDS kNN grid_bvc."""
+    deltas: list[float] = []
+    best_ds: list[int] = []
+    for s in range(5):
+        sub = d_sweep_df[
+            (d_sweep_df.seed == s) & (d_sweep_df.subset == "grid_bvc")
+            & (d_sweep_df.method == "lds") & (d_sweep_df.decoder == "knn")
+        ]
+        e20 = float(sub[sub.d == 20].median_err.iloc[0])
+        e5 = float(sub[sub.d == 5].median_err.iloc[0])
+        e10 = float(sub[sub.d == 10].median_err.iloc[0])
+        best_d = 5 if e5 <= e10 else 10
+        best_e = min(e5, e10)
+        # positive delta = best of {5,10} better (lower error) than d=20
+        deltas.append(e20 - best_e)
+        best_ds.append(best_d)
+    n_pass = int(sum(d >= 2.0 for d in deltas if np.isfinite(d)))
+    return {
+        "status": "PASS" if n_pass >= 4 else "FAIL",
+        "per_seed_err20_minus_best_low_d_cm": deltas,
+        "per_seed_best_low_d": best_ds,
+        "n_pass": n_pass,
+        "required": "≥ 4/5",
+        "threshold_cm": 2.0,
+    }
+
+
+def ridge_shuffle_remaining_report(
+    mechanism_df: pd.DataFrame,
+    shuffle_df: pd.DataFrame,
+) -> dict[str, Any]:
+    """Fraction of LDS Ridge gain remaining after HD+speed shuffle (report only)."""
+    gains = _gain_table(mechanism_df)
+    shuf = _shuffle_gain_table(shuffle_df, mechanism_df)
+    intact: list[float] = []
+    shuffled: list[float] = []
+    remaining: list[float] = []
+    for s in range(5):
+        gi = float(gains[
+            (gains.seed == s) & (gains.decoder == "ridge") & (gains.method == "lds")
+        ].gain_all_minus_grid_bvc.iloc[0])
+        gs = float(shuf[
+            (shuf.seed == s) & (shuf.decoder == "ridge") & (shuf.method == "lds")
+        ].gain_all_minus_grid_bvc.iloc[0])
+        intact.append(gi)
+        shuffled.append(gs)
+        remaining.append(float(gs / gi) if abs(gi) > 1e-9 else float("nan"))
+    return {
+        "decoder": "ridge",
+        "method": "lds",
+        "per_seed_intact_gain_cm": intact,
+        "per_seed_mean_shuffled_gain_cm": shuffled,
+        "per_seed_remaining_frac": remaining,
+        "note": "Report-only; not a pre-registered PASS/FAIL criterion",
+    }
 
 
 def _hd_speed_column_indices(
@@ -901,6 +1133,159 @@ def run_mechanism_reduced(
     return summary
 
 
+def run_controls_cd(
+    results: Path | None = None,
+    *,
+    seeds: range | list[int] | None = None,
+) -> dict[str, Any]:
+    """C1 noise-unit + C2 dimension controls (reduced protocol). Preregisters (c)/(d) first."""
+    results = Path(results or OUTPUT_ROOT)
+    out_dir = _pressure_root(results)
+    out_dir.mkdir(parents=True, exist_ok=True)
+    log_dir = results / "logs"
+    log_dir.mkdir(parents=True, exist_ok=True)
+    preregister_control_criteria(results)
+
+    cfg = load_quadrant_n5_yaml()
+    seed_list = list(seeds if seeds is not None else range(5))
+    alphas = ridge_alpha_grid(cfg)
+    ks = [int(k) for k in cfg["decoders"]["knn_k"]]
+    n_blocks = int(cfg["split"]["inner_cv_blocks"])
+    gap_s = float(cfg["split"]["gap_s"])
+
+    noise_rows: list[dict[str, Any]] = []
+    d_rows: list[dict[str, Any]] = []
+    t0 = time.time()
+
+    for seed_index in seed_list:
+        sim_dir = results / f"seed_{seed_index}" / "sim"
+        obs = _observation_with_counts(cfg, sim_dir, CELL_TYPE_SOURCE)
+        summary = json.loads(
+            (results / f"seed_{seed_index}" / CELL_TYPE_SOURCE / "source_summary.json").read_text()
+        )
+        methods_seed = int(summary["seed_streams"]["methods"])
+        print(f"[controls_cd] seed={seed_index}", flush=True)
+
+        # C1: grid+BVC + noise
+        X_noise, meta = _build_grid_bvc_plus_noise(
+            obs, results, seed_index, cfg, methods_seed,
+        )
+        for method in CELL_TYPE_METHODS:
+            rec = json.loads(
+                (results / f"seed_{seed_index}" / CELL_TYPE_SOURCE / f"{method}.json").read_text()
+            )
+            fit = _reduced_fit_decode(
+                method=method,
+                primary_d=int(rec["primary_d"]),
+                cfg=cfg,
+                methods_seed=methods_seed,
+                X_sub=X_noise,
+                obs=obs,
+                alphas=alphas,
+                ks=ks,
+                n_blocks=n_blocks,
+                gap_s=gap_s,
+            )
+            print(
+                f"  noise/{method} d={fit['primary_d']}: "
+                f"ridge={fit['ridge_median']:.2f} knn={fit['knn_median']:.2f}",
+                flush=True,
+            )
+            for dec, med in (("ridge", fit["ridge_median"]), ("knn", fit["knn_median"])):
+                noise_rows.append(dict(
+                    seed=seed_index, source=CELL_TYPE_SOURCE, subset="grid_bvc_noise",
+                    method=method, decoder=dec, primary_d=fit["primary_d"],
+                    ridge_alpha=fit["ridge_alpha"], knn_k=fit["knn_k"],
+                    median_err=med, n_units=meta["n_grid_bvc"] + meta["n_noise"],
+                    **{k: meta[k] for k in ("n_grid_bvc", "n_noise", "hd_speed_rates_mean")},
+                ))
+
+        # C2: d ∈ {5,10,20} on grid_bvc and all
+        n_all = obs["X"].shape[1]
+        for subset_name in ("grid_bvc", "all"):
+            cols, _ = _subset_columns(
+                results, seed_index, CELL_TYPE_SOURCE, cfg, subset_name, n_all,
+            )
+            X_sub = np.asarray(obs["X"][:, cols], dtype=float)
+            for method in CELL_TYPE_METHODS:
+                for d in CONTROL_DIMS:
+                    if X_sub.shape[1] < d:
+                        raise ValueError(f"{subset_name} n={X_sub.shape[1]} < d={d}")
+                    fit = _reduced_fit_decode(
+                        method=method,
+                        primary_d=int(d),
+                        cfg=cfg,
+                        methods_seed=methods_seed,
+                        X_sub=X_sub,
+                        obs=obs,
+                        alphas=alphas,
+                        ks=ks,
+                        n_blocks=n_blocks,
+                        gap_s=gap_s,
+                    )
+                    print(
+                        f"  d_sweep/{subset_name}/{method}/d={d}: "
+                        f"ridge={fit['ridge_median']:.2f} knn={fit['knn_median']:.2f}",
+                        flush=True,
+                    )
+                    for dec, med in (("ridge", fit["ridge_median"]), ("knn", fit["knn_median"])):
+                        d_rows.append(dict(
+                            seed=seed_index, source=CELL_TYPE_SOURCE,
+                            subset=subset_name, method=method, decoder=dec,
+                            d=int(d), ridge_alpha=fit["ridge_alpha"], knn_k=fit["knn_k"],
+                            median_err=med, n_units=len(cols),
+                        ))
+
+    noise_df = pd.DataFrame(noise_rows)
+    d_df = pd.DataFrame(d_rows)
+    noise_path = out_dir / "control_noise.csv"
+    d_path = out_dir / "control_d_sweep.csv"
+    noise_df.to_csv(noise_path, index=False)
+    d_df.to_csv(d_path, index=False)
+
+    mech_df = pd.read_csv(out_dir / "mechanism_reduced.csv")
+    shuf_df = pd.read_csv(out_dir / "mechanism_shuffle.csv")
+    crit_c = evaluate_control_c(noise_df, mech_df)
+    crit_d = evaluate_control_d(d_df)
+    ridge_shuf = ridge_shuffle_remaining_report(mech_df, shuf_df)
+
+    crit_path = out_dir / "criteria.json"
+    criteria = json.loads(crit_path.read_text())
+    for key, measured in (("control_c_channel_count", crit_c), ("control_d_fixed_d", crit_d)):
+        prev = dict(criteria.get(key) or {})
+        keep = {k: prev[k] for k in prev if k in (
+            "rule", "noise_definition", "gain_ratio_definition", "required",
+            "dims", "threshold_cm", "threshold_ratio",
+        )}
+        criteria[key] = {**keep, **measured}
+        if "rule" in keep:
+            criteria[key]["rule"] = keep["rule"]
+    criteria["ridge_shuffle_remaining"] = ridge_shuf
+    crit_path.write_text(json.dumps(criteria, indent=2) + "\n")
+
+    summary = {
+        "wall_time_s": time.time() - t0,
+        "control_c_channel_count": crit_c["status"],
+        "control_d_fixed_d": crit_d["status"],
+        "ridge_shuffle_remaining": ridge_shuf,
+        "outputs": {
+            "control_noise": str(noise_path),
+            "control_d_sweep": str(d_path),
+            "criteria": str(crit_path),
+        },
+    }
+    (out_dir / "controls_cd_summary.json").write_text(json.dumps(summary, indent=2) + "\n")
+    print(json.dumps({
+        "wall_time_s": summary["wall_time_s"],
+        "control_c": crit_c["status"],
+        "control_d": crit_d["status"],
+        "n_pass_c": crit_c["n_pass"],
+        "n_pass_d": crit_d["n_pass"],
+        "ridge_remaining": ridge_shuf["per_seed_remaining_frac"],
+    }, indent=2), flush=True)
+    return summary
+
+
 def run_cell_type_covariate_reduced(
     results: Path | None = None,
     *,
@@ -1267,6 +1652,16 @@ def main(argv: list[str] | None = None) -> None:
             "mechanism_reduced.csv + mechanism_shuffle.csv (no refits)."
         ),
     )
+    ap.add_argument(
+        "--preregister-controls-cd",
+        action="store_true",
+        help="Write criteria (c)/(d) as PENDING without running C1/C2.",
+    )
+    ap.add_argument(
+        "--controls-cd",
+        action="store_true",
+        help="Preregister (c)/(d), then run noise-unit (C1) and dimension (C2) controls.",
+    )
     args = ap.parse_args(argv)
     if "-" in args.seeds and "," not in args.seeds:
         a, b = args.seeds.split("-", 1)
@@ -1275,8 +1670,12 @@ def main(argv: list[str] | None = None) -> None:
         seeds = [int(x) for x in args.seeds.split(",") if x.strip() != ""]
     if args.preregister_path_integration:
         preregister_path_integration_criteria(args.results)
+    elif args.preregister_controls_cd:
+        preregister_control_criteria(args.results)
     elif args.finish_mechanism_from_csv:
         finish_mechanism_from_csv(args.results)
+    elif args.controls_cd:
+        run_controls_cd(args.results, seeds=seeds)
     elif args.mechanism_reduced or args.cell_type_reduced:
         run_mechanism_reduced(args.results, seeds=seeds)
     else:
