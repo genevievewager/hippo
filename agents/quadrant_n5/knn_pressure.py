@@ -7,8 +7,9 @@ Writes under outputs/quadrant_n5/knn_pressure/:
   exclusion.csv, neighbour_diag.csv, neighbour_hist.npz,
   strata.csv, criteria.json, summary.json
 
-Cell-type covariate (analysis 4) and blocked outer CV (analysis 6) are
-planned only; see plan_cell_type_covariate() / plan_blocked_outer_cv().
+Reduced analysis 4 (cell-type covariate): see
+run_cell_type_covariate_reduced(). Blocked outer CV (analysis 6) remains
+plan-only; see plan_blocked_outer_cv().
 """
 from __future__ import annotations
 
@@ -36,9 +37,14 @@ from agents.quadrant_n5.export_predictions import (  # noqa: E402
 from realtime.quadrant_n5 import load_quadrant_n5_yaml  # noqa: E402
 from realtime.quadrant_n5_run import (  # noqa: E402
     OUTPUT_ROOT,
+    _choose_alpha,
+    _choose_k,
     _euclid,
     _fit_predict_knn,
     _fit_predict_ridge,
+    _make_rep,
+    fit_transform_representation,
+    ridge_alpha_grid,
 )
 from realtime.train_decoder import (  # noqa: E402
     align_behavior_to_decoder_times,
@@ -51,6 +57,14 @@ ARENA_CM = 100.0
 N_BINS = 10
 LAST_TRAIN_S = 30.0  # neighbour diagnostic: last 30 s of training
 HEADING_ATYPICAL_RAD = np.pi / 2.0  # > 90°
+
+# Reduced analysis 4 — pre-registered criterion uses grid_bvc only.
+CELL_TYPE_METHODS = ("pca", "lds")
+CELL_TYPE_SOURCE = "sorted"
+CELL_TYPE_SUBSETS = {
+    "grid_bvc": ("MEC_grid", "Sub_bvc"),
+    "hd_speed": ("MEC_hd", "MEC_speed"),
+}
 
 
 def _pressure_root(results: Path) -> Path:
@@ -278,7 +292,48 @@ def run_cell(
     }
 
 
-def evaluate_criteria(exclusion: pd.DataFrame, neighbour: pd.DataFrame, strata: pd.DataFrame) -> dict[str, Any]:
+def evaluate_cell_type_criterion(cell_type_df: pd.DataFrame) -> dict[str, Any]:
+    """Criterion 4 on grid+BVC: LDS kNN < PCA kNN in ≥ 4/5 seeds."""
+    ct = cell_type_df[
+        (cell_type_df.source == CELL_TYPE_SOURCE)
+        & (cell_type_df.subset == "grid_bvc")
+        & (cell_type_df.decoder == "knn")
+    ]
+    diffs: list[float] = []
+    for s in range(5):
+        lds = ct[(ct.seed == s) & (ct.method == "lds")].median_err
+        pca = ct[(ct.seed == s) & (ct.method == "pca")].median_err
+        if len(lds) and len(pca) and np.isfinite(lds.iloc[0]) and np.isfinite(pca.iloc[0]):
+            diffs.append(float(lds.iloc[0]) - float(pca.iloc[0]))
+        else:
+            diffs.append(float("nan"))
+    n_lds_better = int(sum(d < 0 for d in diffs if np.isfinite(d)))
+    n_neg = n_lds_better
+    n_pos = int(sum(d > 0 for d in diffs if np.isfinite(d)))
+    n_zero = int(sum(d == 0 for d in diffs if np.isfinite(d)))
+    return {
+        "status": "PASS" if n_lds_better >= 4 else "FAIL",
+        "rule": "LDS kNN < PCA kNN in the grid+BVC-only decode in ≥ 4/5 seeds",
+        "per_seed_lds_minus_pca_knn_cm": diffs,
+        "n_lds_better": n_lds_better,
+        "sign_count": {"LDS_better": n_neg, "PCA_better": n_pos, "tie": n_zero},
+        "required": "≥ 4/5",
+        "reduction": {
+            "methods": list(CELL_TYPE_METHODS),
+            "source": CELL_TYPE_SOURCE,
+            "subsets": list(CELL_TYPE_SUBSETS.keys()),
+            "fit": "single representation fit at saved primary_d; no per-fold refit; no d re-selection",
+            "decoder_hparams": "ridge alpha / knn k re-selected by decoder-only inner CV (same folds and purge gaps)",
+        },
+    }
+
+
+def evaluate_criteria(
+    exclusion: pd.DataFrame,
+    neighbour: pd.DataFrame,
+    strata: pd.DataFrame,
+    cell_type: pd.DataFrame | None = None,
+) -> dict[str, Any]:
     """Pre-registered PASS/FAIL for LDS+kNN on sorted spikes."""
     out: dict[str, Any] = {"source": "sorted", "method": "lds", "decoder": "knn"}
 
@@ -343,12 +398,15 @@ def evaluate_criteria(exclusion: pd.DataFrame, neighbour: pd.DataFrame, strata: 
         "rule": "LDS kNN < PCA kNN on atypical samples in ≥ 4/5 seeds",
     }
 
-    # 4) cell-type — not run; mark PENDING
-    out["cell_type_grid_bvc"] = {
-        "status": "PENDING",
-        "rule": "LDS kNN < PCA kNN in the grid+BVC-only decode in ≥ 4/5 seeds",
-        "note": "Requires representation refits on unit subsets; see plan_cell_type_covariate.",
-    }
+    # 4) cell-type grid+BVC
+    if cell_type is not None and len(cell_type):
+        out["cell_type_grid_bvc"] = evaluate_cell_type_criterion(cell_type)
+    else:
+        out["cell_type_grid_bvc"] = {
+            "status": "PENDING",
+            "rule": "LDS kNN < PCA kNN in the grid+BVC-only decode in ≥ 4/5 seeds",
+            "note": "Requires representation refits on unit subsets; see plan_cell_type_covariate / run_cell_type_covariate_reduced.",
+        }
     out["overall_1_to_3"] = (
         "PASS"
         if all(
@@ -363,6 +421,213 @@ def evaluate_criteria(exclusion: pd.DataFrame, neighbour: pd.DataFrame, strata: 
         and out["cell_type_grid_bvc"]["status"] == "PASS"
     )
     return out
+
+
+def _unit_column_indices(
+    results: Path,
+    seed_index: int,
+    spike_source: str,
+    cfg: dict[str, Any],
+    cell_types: tuple[str, ...],
+) -> tuple[list[int], list[str]]:
+    from realtime.data_loading import load_simulation_data
+
+    sim_dir = results / f"seed_{seed_index}" / "sim"
+    data = load_simulation_data(
+        sim_dir, spike_source,
+        include_regions=list(cfg["unit_inclusion"]["regions"]),
+    )
+    units = data["units_df"]
+    uid_order = list(data["unit_ids"])
+    units = units[units.unit_id.isin(uid_order)].copy()
+    keep_ids = set(units[units.cell_type.isin(cell_types)].unit_id.tolist())
+    cols = [i for i, u in enumerate(uid_order) if u in keep_ids]
+    kept = [uid_order[i] for i in cols]
+    return cols, kept
+
+
+def run_cell_type_covariate_reduced(
+    results: Path | None = None,
+    *,
+    seeds: range | list[int] | None = None,
+) -> dict[str, Any]:
+    """Reduced analysis 4: pca/lds × sorted × grid_bvc & hd_speed.
+
+    Representation fit once on the subset at the saved primary_d (no per-fold
+    refit, no d re-selection). Ridge α / kNN k re-selected by decoder-only
+    inner CV with the same block folds and purge gaps as Phase 3.
+    """
+    results = Path(results or OUTPUT_ROOT)
+    out_dir = _pressure_root(results)
+    out_dir.mkdir(parents=True, exist_ok=True)
+    cfg = load_quadrant_n5_yaml()
+    seed_list = list(seeds if seeds is not None else range(5))
+    alphas = ridge_alpha_grid(cfg)
+    ks = [int(k) for k in cfg["decoders"]["knn_k"]]
+    n_blocks = int(cfg["split"]["inner_cv_blocks"])
+    gap_s = float(cfg["split"]["gap_s"])
+
+    rows: list[dict[str, Any]] = []
+    t_wall0 = time.time()
+    for seed_index in seed_list:
+        sim_dir = results / f"seed_{seed_index}" / "sim"
+        obs = build_observation(cfg, sim_dir, CELL_TYPE_SOURCE)
+        summary = json.loads(
+            (results / f"seed_{seed_index}" / CELL_TYPE_SOURCE / "source_summary.json").read_text()
+        )
+        methods_seed = int(summary["seed_streams"]["methods"])
+        print(f"[cell_type_reduced] seed={seed_index} source={CELL_TYPE_SOURCE}", flush=True)
+
+        for subset_name, cell_types in CELL_TYPE_SUBSETS.items():
+            cols, kept_ids = _unit_column_indices(
+                results, seed_index, CELL_TYPE_SOURCE, cfg, cell_types,
+            )
+            X_sub = np.asarray(obs["X"][:, cols], dtype=float)
+            for method in CELL_TYPE_METHODS:
+                rec = json.loads(
+                    (results / f"seed_{seed_index}" / CELL_TYPE_SOURCE / f"{method}.json").read_text()
+                )
+                primary_d = int(rec["primary_d"])
+                if X_sub.shape[1] < primary_d:
+                    raise ValueError(
+                        f"subset {subset_name} has {X_sub.shape[1]} units < primary_d={primary_d}"
+                    )
+                t0 = time.time()
+                model = _make_rep(
+                    method, primary_d, cfg, methods_seed,
+                    n_fit=int(obs["train_ok"].sum()),
+                )
+                Z = fit_transform_representation(method, model, X_sub, obs["train_ok"])
+                t_fit = time.time() - t0
+                Ztr = Z[obs["train_ok"]]
+                ytr = obs["y"][obs["train_ok"]]
+                times_tr = np.asarray(obs["decode_times"])[obs["train_ok"]]
+                t1 = time.time()
+                alpha = _choose_alpha(Ztr, ytr, times_tr, alphas, n_blocks, gap_s)
+                knn_k = _choose_k(Ztr, ytr, times_tr, ks, n_blocks, gap_s)
+                t_cv = time.time() - t1
+                Zte = Z[obs["eval_mask"]]
+                yte = obs["y"][obs["eval_mask"]]
+                pred_r = _fit_predict_ridge(Ztr, ytr, Zte, alpha)
+                pred_k = _fit_predict_knn(Ztr, ytr, Zte, knn_k)
+                ridge_m = _euclid(pred_r, yte)
+                knn_m = _euclid(pred_k, yte)
+                tot = time.time() - t0
+                print(
+                    f"  {subset_name}/{method}: d={primary_d} n_units={len(cols)} "
+                    f"ridge={ridge_m['median']:.2f} knn={knn_m['median']:.2f} "
+                    f"fit={t_fit:.1f}s cv={t_cv:.1f}s tot={tot:.1f}s",
+                    flush=True,
+                )
+                base = dict(
+                    seed=seed_index,
+                    source=CELL_TYPE_SOURCE,
+                    subset=subset_name,
+                    cell_types=",".join(cell_types),
+                    n_units=len(cols),
+                    method=method,
+                    primary_d=primary_d,
+                    ridge_alpha=float(alpha),
+                    knn_k=int(knn_k),
+                    fit_s=float(t_fit),
+                    decoder_cv_s=float(t_cv),
+                    wall_s=float(tot),
+                )
+                rows.append({
+                    **base,
+                    "decoder": "ridge",
+                    "median_err": float(ridge_m["median"]),
+                    "mean_err": float(ridge_m["mean"]),
+                })
+                rows.append({
+                    **base,
+                    "decoder": "knn",
+                    "median_err": float(knn_m["median"]),
+                    "mean_err": float(knn_m["mean"]),
+                })
+
+    ct_df = pd.DataFrame(rows)
+    ct_path = out_dir / "cell_type_reduced.csv"
+    ct_df.to_csv(ct_path, index=False)
+
+    # Merge criterion 4 into criteria.json (preserve 1–3 from prior run).
+    crit_path = out_dir / "criteria.json"
+    if crit_path.exists():
+        criteria = json.loads(crit_path.read_text())
+        criteria["cell_type_grid_bvc"] = evaluate_cell_type_criterion(ct_df)
+        criteria["phase8_passed"] = bool(
+            criteria.get("overall_1_to_3") == "PASS"
+            and criteria["cell_type_grid_bvc"]["status"] == "PASS"
+        )
+    else:
+        # Minimal criteria object if analyses 1–3 not present.
+        criteria = {
+            "source": "sorted",
+            "method": "lds",
+            "decoder": "knn",
+            "cell_type_grid_bvc": evaluate_cell_type_criterion(ct_df),
+            "overall_1_to_3": "PENDING",
+            "phase8_passed": False,
+        }
+    crit_path.write_text(json.dumps(criteria, indent=2) + "\n")
+
+    # Per-seed report table (kNN + Ridge medians; LDS−PCA kNN Δ).
+    report_rows: list[dict[str, Any]] = []
+    for seed_index in seed_list:
+        for subset_name in CELL_TYPE_SUBSETS:
+            sub = ct_df[(ct_df.seed == seed_index) & (ct_df.subset == subset_name)]
+            knn_pca = float(sub[(sub.method == "pca") & (sub.decoder == "knn")].median_err.iloc[0])
+            knn_lds = float(sub[(sub.method == "lds") & (sub.decoder == "knn")].median_err.iloc[0])
+            ridge_pca = float(sub[(sub.method == "pca") & (sub.decoder == "ridge")].median_err.iloc[0])
+            ridge_lds = float(sub[(sub.method == "lds") & (sub.decoder == "ridge")].median_err.iloc[0])
+            report_rows.append({
+                "seed": seed_index,
+                "subset": subset_name,
+                "pca_knn_median": knn_pca,
+                "lds_knn_median": knn_lds,
+                "pca_ridge_median": ridge_pca,
+                "lds_ridge_median": ridge_lds,
+                "lds_minus_pca_knn": knn_lds - knn_pca,
+            })
+    report_df = pd.DataFrame(report_rows)
+    report_path = out_dir / "cell_type_reduced_report.csv"
+    report_df.to_csv(report_path, index=False)
+
+    ct_crit = criteria["cell_type_grid_bvc"]
+    summary = {
+        "status": "COMPLETE",
+        "reduction": ct_crit.get("reduction"),
+        "est_wall_time_h_seed0_microbench": 0.084,
+        "wall_time_s": time.time() - t_wall0,
+        "seeds": seed_list,
+        "methods": list(CELL_TYPE_METHODS),
+        "source": CELL_TYPE_SOURCE,
+        "subsets": list(CELL_TYPE_SUBSETS.keys()),
+        "criterion_4": {
+            "status": ct_crit["status"],
+            "n_lds_better": ct_crit["n_lds_better"],
+            "sign_count": ct_crit["sign_count"],
+            "per_seed_lds_minus_pca_knn_cm": ct_crit["per_seed_lds_minus_pca_knn_cm"],
+            "rule": ct_crit["rule"],
+        },
+        "phase8_passed": criteria.get("phase8_passed"),
+        "outputs": {
+            "cell_type_reduced": str(ct_path),
+            "cell_type_reduced_report": str(report_path),
+            "criteria": str(crit_path),
+        },
+    }
+    (out_dir / "cell_type_reduced_summary.json").write_text(
+        json.dumps(summary, indent=2) + "\n"
+    )
+    print(json.dumps({
+        "wall_time_s": summary["wall_time_s"],
+        "criterion_4": summary["criterion_4"]["status"],
+        "n_lds_better": summary["criterion_4"]["n_lds_better"],
+        "sign_count": summary["criterion_4"]["sign_count"],
+        "phase8_passed": summary["phase8_passed"],
+    }, indent=2), flush=True)
+    return summary
 
 
 def plan_cell_type_covariate(results: Path) -> dict[str, Any]:
@@ -593,13 +858,24 @@ def main(argv: list[str] | None = None) -> None:
     ap.add_argument("--results", type=Path, default=OUTPUT_ROOT)
     ap.add_argument("--seeds", type=str, default="0-4",
                     help="e.g. 0-4 or 0,1,2")
+    ap.add_argument(
+        "--cell-type-reduced",
+        action="store_true",
+        help=(
+            "Run reduced analysis 4 only (pca/lds, sorted, grid_bvc+hd_speed; "
+            "single fit at primary_d + decoder-only inner CV). Does not re-run 1–3."
+        ),
+    )
     args = ap.parse_args(argv)
     if "-" in args.seeds and "," not in args.seeds:
         a, b = args.seeds.split("-", 1)
         seeds = list(range(int(a), int(b) + 1))
     else:
         seeds = [int(x) for x in args.seeds.split(",") if x.strip() != ""]
-    run_all(args.results, seeds=seeds)
+    if args.cell_type_reduced:
+        run_cell_type_covariate_reduced(args.results, seeds=seeds)
+    else:
+        run_all(args.results, seeds=seeds)
 
 
 if __name__ == "__main__":

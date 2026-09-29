@@ -5,6 +5,7 @@ from agents.quadrant_n5.knn_pressure import (
     _circular_distance,
     _circular_mean,
     build_strata_masks,
+    evaluate_cell_type_criterion,
     evaluate_criteria,
     train_mask_excluding_delta,
 )
@@ -66,3 +67,34 @@ def test_evaluate_criteria_shape():
     assert c["cell_type_grid_bvc"]["status"] == "PENDING"
     assert c["overall_1_to_3"] == "PASS"
     assert c["phase8_passed"] is False
+
+
+def test_evaluate_cell_type_criterion_pass_fail():
+    rows = []
+    for s in range(5):
+        # LDS better on seeds 0–3; PCA better on seed 4 → 4/5 PASS
+        pca_err = 20.0
+        lds_err = 10.0 if s < 4 else 25.0
+        for method, err in (("pca", pca_err), ("lds", lds_err)):
+            rows.append(dict(
+                seed=s, source="sorted", subset="grid_bvc", method=method,
+                decoder="knn", median_err=err,
+            ))
+            rows.append(dict(
+                seed=s, source="sorted", subset="hd_speed", method=method,
+                decoder="knn", median_err=err + 5,
+            ))
+    ct = evaluate_cell_type_criterion(pd.DataFrame(rows))
+    assert ct["status"] == "PASS"
+    assert ct["n_lds_better"] == 4
+    assert ct["sign_count"]["LDS_better"] == 4
+    assert ct["sign_count"]["PCA_better"] == 1
+    c = evaluate_criteria(
+        pd.DataFrame([dict(seed=0, source="sorted", method="lds", decoder="knn",
+                           delta_s=0.0, median_err=1.0)]),
+        pd.DataFrame([dict(seed=0, source="sorted", method="lds", median_abs_dt_s=1.0)]),
+        pd.DataFrame([dict(seed=0, source="sorted", method="lds", decoder="knn",
+                           stratum="atypical", median_err=1.0)]),
+        cell_type=pd.DataFrame(rows),
+    )
+    assert c["cell_type_grid_bvc"]["status"] == "PASS"
