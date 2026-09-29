@@ -202,3 +202,24 @@ for name, rows in [
         print(name, len(rows))
     else:
         print(name, "skipped (absent)")
+
+# ---- Phase 8: knn_pressure (skip if absent) ----
+PRESS = os.path.join(ROOT, "knn_pressure")
+if os.path.isdir(PRESS):
+    for src_name, dest_name in (
+        ("exclusion.csv", "knn_exclusion"),
+        ("neighbour_diag.csv", "knn_neighbour"),
+        ("strata.csv", "knn_strata"),
+    ):
+        path = os.path.join(PRESS, src_name)
+        if os.path.isfile(path):
+            df = pd.read_csv(path)
+            df.to_csv(os.path.join(OUT, f"data_{dest_name}.csv"), index=False)
+            print(dest_name, len(df))
+    crit_path = os.path.join(PRESS, "criteria.json")
+    if os.path.isfile(crit_path):
+        import shutil
+        shutil.copy(crit_path, os.path.join(OUT, "data_knn_criteria.json"))
+        print("knn_criteria copied")
+else:
+    print("knn_pressure skipped (absent)")
