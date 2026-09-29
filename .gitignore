@@ -5,6 +5,8 @@ __pycache__/
 outputs/
 # Experiment outputs (explicit so they cannot be tracked the way .hippo/ was)
 outputs/quadrant_n5/
+# Corrupted desktop download; not a source tree. Leave deletion to the operator.
+/quadrant_n5/
 *.pdf
 *.zip
 external/

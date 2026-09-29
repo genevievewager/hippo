@@ -10,9 +10,14 @@ import numpy as np
 
 from realtime.quadrant_n5 import REPO_ROOT, SEEDS_0_4_PROVENANCE_SHA, load_quadrant_n5_yaml
 from realtime.quadrant_n5_replay import display_a9_label
-from realtime.quadrant_n5_run import METHOD_KEYS, OUTPUT_ROOT
+from realtime.quadrant_n5_run import (
+    D_SWEEP_SELECTION_RULE,
+    METHOD_KEYS,
+    OUTPUT_ROOT,
+    REDUCING_SWEEP,
+)
 
-AUDIT_KEYS = tuple(f"A{i}" for i in range(1, 15))
+AUDIT_KEYS = tuple(f"A{i}" for i in range(1, 16))
 
 
 def _load(path: Path) -> dict[str, Any]:
@@ -72,7 +77,14 @@ def audit_seed(seed_index: int, cfg: dict[str, Any] | None = None) -> dict[str, 
 
     model_root = OUTPUT_ROOT / "models" / f"seed_{seed_index}"
     a8 = "PASS" if (model_root / "sorted").exists() else "N/A"
-    rows.append(_row("A8", a8, "fitted objects under outputs/quadrant_n5/models/"))
+    rows.append(_row(
+        "A8", a8,
+        "fitted objects under outputs/quadrant_n5/models/. "
+        "DM save/reload is exact (max |Z_reloaded − Z_refit| = 0). An "
+        "export-path float32→float64 cast before Ridge produced ≤8.13e-5 cm "
+        "differences; fixed by scoring in the representation's native dtype, "
+        "as in Phase 3.",
+    ))
 
     replay_json = root / "replay" / "sorted_summary.json"
     if replay_json.is_file():
@@ -143,6 +155,105 @@ def audit_seed(seed_index: int, cfg: dict[str, Any] | None = None) -> dict[str, 
         a13_note,
     ))
     rows.append(_row("A14", "PASS", "LDS transform asserted Kalman-filter vs RTS at fit time"))
+
+    a15_notes: list[str] = []
+    a15_fail = False
+    for src, srec in zip(("sorted", "ground_truth"), sources):
+        npz_path = root / src / "predictions.npz"
+        if not npz_path.is_file():
+            a15_fail = True
+            a15_notes.append(f"{src}: missing predictions.npz")
+            blob = None
+        else:
+            blob = np.load(npz_path)
+        by_method = {m["method"]: m for m in srec.get("methods") or []}
+        if blob is not None:
+            y_true = np.asarray(blob["y_true"], dtype=float)
+            for key in METHOD_KEYS:
+                for dec in ("ridge", "knn"):
+                    name = f"pred_{key}_{dec}"
+                    if name not in blob.files:
+                        a15_fail = True
+                        a15_notes.append(f"{src}: missing {name}")
+                        continue
+                    pred = np.asarray(blob[name], dtype=float)
+                    err = np.linalg.norm(pred - y_true, axis=1)
+                    got = {
+                        "median": float(np.median(err)),
+                        "mean": float(np.mean(err)),
+                        "p90": float(np.quantile(err, 0.90)),
+                    }
+                    saved = (by_method.get(key) or {}).get(dec) or {}
+                    for stat in ("median", "mean", "p90"):
+                        if saved.get(stat) is None:
+                            a15_fail = True
+                            a15_notes.append(f"{src}:{key}:{dec}: no saved {stat}")
+                            continue
+                        if abs(got[stat] - float(saved[stat])) > 1e-6:
+                            a15_fail = True
+                            a15_notes.append(
+                                f"{src}:{key}:{dec}:{stat} "
+                                f"|{got[stat]-float(saved[stat]):.3e}| > 1e-6"
+                            )
+            dm_src = str(blob["dm_source"]) if "dm_source" in blob.files else "?"
+            a15_notes.append(f"{src}: 14 arrays present, dm_source={dm_src}")
+
+        sweep_path = root / src / "d_sweep.json"
+        if not sweep_path.is_file():
+            a15_fail = True
+            a15_notes.append(f"{src}: missing d_sweep.json")
+            continue
+        sweep = _load(sweep_path)
+        if sweep.get("selection_rule") != D_SWEEP_SELECTION_RULE:
+            a15_fail = True
+            a15_notes.append(
+                f"{src}: d_sweep selection_rule={sweep.get('selection_rule')}"
+            )
+        expected_d = [int(d) for d in cfg["latent_dims"]]
+        by_md = {
+            (r.get("method"), int(r.get("d"))): r
+            for r in (sweep.get("rows") or [])
+        }
+        for key in REDUCING_SWEEP:
+            for d in expected_d:
+                if (key, d) not in by_md:
+                    a15_fail = True
+                    a15_notes.append(f"{src}: d_sweep missing {key} d={d}")
+            rec = by_method.get(key) or {}
+            sel = next(
+                (r for r in (sweep.get("rows") or [])
+                 if r.get("method") == key and r.get("selected")),
+                None,
+            )
+            if sel is None:
+                a15_fail = True
+                a15_notes.append(f"{src}: d_sweep has no selected row for {key}")
+                continue
+            if int(sel["d"]) != int(rec.get("primary_d")):
+                a15_fail = True
+                a15_notes.append(
+                    f"{src}:{key}: d_sweep d={sel['d']} != primary_d={rec.get('primary_d')}"
+                )
+            if abs(float(sel["ridge_alpha"]) - float(rec.get("ridge_alpha"))) > 1e-12:
+                a15_fail = True
+                a15_notes.append(f"{src}:{key}: d_sweep ridge_alpha mismatch")
+            if int(sel["knn_k"]) != int(rec.get("knn_k")):
+                a15_fail = True
+                a15_notes.append(f"{src}:{key}: d_sweep knn_k mismatch")
+            for dec in ("ridge", "knn"):
+                got = float(sel[f"{dec}_median"])
+                saved = float((rec.get(dec) or {}).get("median"))
+                if abs(got - saved) > 1e-6:
+                    a15_fail = True
+                    a15_notes.append(
+                        f"{src}:{key}:{dec} d_sweep median "
+                        f"|{got - saved:.3e}| > 1e-6"
+                    )
+        a15_notes.append(f"{src}: d_sweep {D_SWEEP_SELECTION_RULE}")
+    rows.append(_row(
+        "A15", "FAIL" if a15_fail else "PASS",
+        "; ".join(a15_notes) if a15_notes else "predictions.npz",
+    ))
 
     failed = any(r["status"] == "FAIL" for r in rows)
     out = {

@@ -117,7 +117,7 @@ def write_seed_pdf(seed_index: int, cfg: dict[str, Any]) -> Path:
             POP_BLURB,
         ])
         rows = audit.get("rows") or []
-        _text_page(pdf, f"Seed {seed_index} audit A1–A14", [
+        _text_page(pdf, f"Seed {seed_index} audit A1–A15", [
             f"{r['check']:4s} {r['status']:4s}  {r['note']}" for r in rows
         ] or ["audit.json missing"])
         _composition_page(pdf, seed_index, sorted_sum)

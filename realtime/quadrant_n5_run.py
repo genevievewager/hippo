@@ -36,6 +36,8 @@ from realtime.train_decoder import causal_train_test_split
 
 OUTPUT_ROOT = REPO_ROOT / "outputs" / "quadrant_n5"
 METHOD_KEYS = ("raw", "raw_lag", "pca", "dm", "lds", "isomap", "gpfa")
+REDUCING_SWEEP = ("pca", "dm", "isomap", "lds", "gpfa")
+D_SWEEP_SELECTION_RULE = "phase3_per_fold_refit"
 
 
 def _git_sha() -> str | None:
@@ -384,6 +386,15 @@ def _choose_k(Xtr, ytr, times_tr, ks, n_blocks, gap_s) -> int:
     return best_k
 
 
+def ridge_alpha_grid(cfg: dict[str, Any]) -> np.ndarray:
+    dec = cfg["decoders"]
+    return np.logspace(
+        np.log10(float(dec["ridge_alpha_lo"])),
+        np.log10(float(dec["ridge_alpha_hi"])),
+        int(dec["ridge_alpha_n"]),
+    )
+
+
 def _inner_cv_select(
     key: str,
     X: np.ndarray,
@@ -394,11 +405,15 @@ def _inner_cv_select(
     methods_seed: int,
     alphas: np.ndarray,
     ks: list[int],
-) -> tuple[int | None, float, int, dict[str, Any]]:
+) -> tuple[int | None, float, int, dict[str, Any], list[dict[str, Any]]]:
     """Refit the representation in every fold; choose d / ridge alpha / kNN k.
 
     Validation rows are transformed with the same operator as test (Nyström,
     session-start Kalman filter, lag stack on the contiguous session).
+
+    The fifth return is the per-d decoder-choice curve. It does not change
+    the selected (d, alpha, k), which stay the Phase 3 joint-Ridge then k
+    at the winning d.
     """
     split = cfg["split"]
     reducing = key not in ("raw", "raw_lag")
@@ -481,12 +496,133 @@ def _inner_cv_select(
         med = _knn_med(d_key, int(k))
         if med < best_k_med or (med == best_k_med and int(k) < best_k):
             best_k, best_k_med = int(k), med
+    per_d: list[dict[str, Any]] = []
+    if reducing:
+        for dd in dims:
+            best_a_d, best_med_d = float(alphas[0]), np.inf
+            for a in alphas:
+                med = _ridge_med(int(dd), float(a))
+                if med < best_med_d or (med == best_med_d and float(a) < best_a_d):
+                    best_med_d, best_a_d = med, float(a)
+            best_k_d, best_k_med_d = int(ks[0]), np.inf
+            for k in ks:
+                med = _knn_med(int(dd), int(k))
+                if med < best_k_med_d or (med == best_k_med_d and int(k) < best_k_d):
+                    best_k_d, best_k_med_d = int(k), med
+            per_d.append({
+                "d": int(dd),
+                "ridge_alpha": float(best_a_d),
+                "knn_k": int(best_k_d),
+                "inner_cv_ridge_median": float(best_med_d),
+                "inner_cv_knn_median": float(best_k_med_d),
+            })
     return primary_d, alpha, best_k, {
         "inner_cv_ridge_median": best_med,
         "inner_cv_knn_median": best_k_med,
         "n_folds": len(folds),
         "refit_representation": True,
+    }, per_d
+
+
+def score_d_curve(
+    key: str,
+    X: np.ndarray,
+    y: np.ndarray,
+    train_ok: np.ndarray,
+    eval_mask: np.ndarray,
+    cfg: dict[str, Any],
+    methods_seed: int,
+    per_d_cv: list[dict[str, Any]],
+    primary_d: int,
+    pred_r_sel: np.ndarray | None = None,
+    pred_k_sel: np.ndarray | None = None,
+    Z_fit: np.ndarray | None = None,
+) -> list[dict[str, Any]]:
+    """Final full-train fit at every d. Reuse selected-d predictions when given."""
+    nested = bool((cfg["representations"].get(key) or {}).get("nested"))
+    yte = y[eval_mask]
+    rows: list[dict[str, Any]] = []
+    Z20 = Z_fit if (nested and Z_fit is not None) else None
+    if nested and Z20 is None:
+        model = _make_rep(
+            key, int(cfg["nested_fit_d"]), cfg, methods_seed,
+            n_fit=int(train_ok.sum()),
+        )
+        Z20 = fit_transform_representation(key, model, X, train_ok)
+    for spec in per_d_cv:
+        d = int(spec["d"])
+        reuse = (
+            pred_r_sel is not None
+            and pred_k_sel is not None
+            and d == int(primary_d)
+        )
+        if reuse:
+            pred_r, pred_k = pred_r_sel, pred_k_sel
+        elif nested:
+            assert Z20 is not None
+            Zd = Z20[:, :d]
+            pred_r = _fit_predict_ridge(
+                Zd[train_ok], y[train_ok], Zd[eval_mask], spec["ridge_alpha"],
+            )
+            pred_k = _fit_predict_knn(
+                Zd[train_ok], y[train_ok], Zd[eval_mask], spec["knn_k"],
+            )
+        else:
+            model = _make_rep(
+                key, d, cfg, methods_seed, n_fit=int(train_ok.sum()),
+            )
+            Zd = fit_transform_representation(key, model, X, train_ok)
+            pred_r = _fit_predict_ridge(
+                Zd[train_ok], y[train_ok], Zd[eval_mask], spec["ridge_alpha"],
+            )
+            pred_k = _fit_predict_knn(
+                Zd[train_ok], y[train_ok], Zd[eval_mask], spec["knn_k"],
+            )
+        ridge = _euclid(pred_r, yte)
+        knn = _euclid(pred_k, yte)
+        rows.append({
+            "method": key,
+            "d": d,
+            "ridge_median": ridge["median"],
+            "knn_median": knn["median"],
+            "ridge_alpha": float(spec["ridge_alpha"]),
+            "knn_k": int(spec["knn_k"]),
+            "inner_cv_ridge_median": float(spec["inner_cv_ridge_median"]),
+            "inner_cv_knn_median": float(spec["inner_cv_knn_median"]),
+            "refit_representation": True,
+            "selected": d == int(primary_d),
+        })
+    return rows
+
+
+def write_d_sweep_json(
+    path: Path,
+    cfg: dict[str, Any],
+    *,
+    seed_index: int,
+    spike_source: str,
+    eval_index_hash: str,
+    rows: list[dict[str, Any]],
+) -> dict[str, Any]:
+    selected = {
+        r["method"]: {
+            "d": int(r["d"]),
+            "ridge_alpha": float(r["ridge_alpha"]),
+            "knn_k": int(r["knn_k"]),
+        }
+        for r in rows if r.get("selected")
     }
+    payload = {
+        "seed_index": seed_index,
+        "spike_source": spike_source,
+        "config_sha256": cfg["config_sha256"],
+        "eval_index_hash": eval_index_hash,
+        "selection_rule": D_SWEEP_SELECTION_RULE,
+        "rows": rows,
+        "selected": selected,
+    }
+    _write_json(path, payload)
+    return payload
 
 
 def _unit_counts(units_df, unit_ids) -> dict[str, Any]:
@@ -703,6 +839,10 @@ def analyze_source(
     floor_err = _euclid(np.repeat(y_floor, int(eval_mask.sum()), axis=0), y[eval_mask])
     latents: dict[str, np.ndarray] = {}
     a13_by_method: dict[str, Any] = {}
+    pred_store: dict[str, np.ndarray] = {}
+    pred_source: dict[str, str] = {}
+    sweep_rows: list[dict[str, Any]] = []
+    computed_reducing: set[str] = set()
 
     for key in METHOD_KEYS:
         cached = reusable_result_json(out_dir / f"{key}.json", cfg)
@@ -720,7 +860,7 @@ def analyze_source(
         print(f"  [{spike_source}] {key} …", flush=True)
         t_method = time.perf_counter()
         reducing = key not in ("raw", "raw_lag")
-        primary_d, alpha, knn_k, cv_info = _inner_cv_select(
+        primary_d, alpha, knn_k, cv_info, per_d_cv = _inner_cv_select(
             key, X, y, train_ok, decode_times, cfg, methods_seed, alphas,
             list(dec["knn_k"]),
         )
@@ -728,13 +868,16 @@ def analyze_source(
         nested = bool((cfg["representations"].get(key) or {}).get("nested"))
         d_fit = int(cfg["nested_fit_d"]) if (nested and reducing) else d_final
         model = _make_rep(key, d_fit, cfg, methods_seed, n_fit=int(train_ok.sum()))
-        Z_all = fit_transform_representation(key, model, X, train_ok)
-        if nested and reducing:
-            Z_all = Z_all[:, : int(primary_d)]
+        Z_fit = fit_transform_representation(key, model, X, train_ok)
+        Z_all = Z_fit[:, : int(primary_d)] if (nested and reducing) else Z_fit
         Ztr, Zte = Z_all[train_ok], Z_all[eval_mask]
         ytr, yte = y[train_ok], y[eval_mask]
         pred_r = _fit_predict_ridge(Ztr, ytr, Zte, alpha)
         pred_k = _fit_predict_knn(Ztr, ytr, Zte, knn_k)
+        # Stage 2b: these are the in-memory Phase 3 scores, not export reload.
+        pred_store[f"pred_{key}_ridge"] = pred_r
+        pred_store[f"pred_{key}_knn"] = pred_k
+        pred_source[key] = "phase3_in_memory"
         latents[key] = Z_all
         model_dir = OUTPUT_ROOT / "models" / f"seed_{seed_index}" / spike_source / key
         if hasattr(model, "save"):
@@ -793,6 +936,13 @@ def analyze_source(
             "seed_streams": streams,
             **row,
         }))
+        if reducing:
+            computed_reducing.add(key)
+            sweep_rows.extend(score_d_curve(
+                key, X, y, train_ok, eval_mask, cfg, methods_seed,
+                per_d_cv, int(primary_d), pred_r, pred_k,
+                Z_fit if nested else None,
+            ))
 
     learning_curves: list[dict[str, Any]] = []
     if spike_source == cfg["phase3"]["learning_curve_source"]:
@@ -852,6 +1002,30 @@ def analyze_source(
         },
     })
     _write_json(out_dir / "source_summary.json", payload)
+    if set(REDUCING_SWEEP) <= computed_reducing:
+        write_d_sweep_json(
+            out_dir / "d_sweep.json",
+            cfg,
+            seed_index=seed_index,
+            spike_source=spike_source,
+            eval_index_hash=index_hashes["eval"],
+            rows=sweep_rows,
+        )
+    if len(pred_store) == 2 * len(METHOD_KEYS):
+        from agents.quadrant_n5.export_predictions import write_predictions_npz
+
+        write_predictions_npz(
+            out_dir / "predictions.npz",
+            cfg,
+            {
+                "decode_times": decode_times,
+                "y": y,
+                "eval_mask": eval_mask,
+                "index_hashes": index_hashes,
+            },
+            pred_store,
+            method_source=pred_source,
+        )
     return payload
 
 
