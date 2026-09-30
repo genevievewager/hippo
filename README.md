@@ -70,10 +70,14 @@ cd ~/projects/hippo
 python3 -m venv .hippo
 source .hippo/bin/activate
 pip install -r requirements.txt
+# optional: pip install -r requirements-optional.txt   # umap-learn, etc.
+# pinned:  pip install -r requirements.lock
 python -m pytest tests/ -q
+ln -sf ../../scripts/hooks/pre-commit .git/hooks/pre-commit
 ```
 
-Python 3.10+ (developed on 3.12). See `requirements.txt`.
+Python 3.10+ (developed on 3.12). See `requirements.txt`. Layout and import
+rules: [`ARCHITECTURE.md`](ARCHITECTURE.md).
 
 ### Streamlit UI
 

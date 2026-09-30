@@ -18,12 +18,24 @@ Trajectories are **config-driven** (not hard-coded in simulation logic). Each tr
 
 Related files:
 
-- Region–depth table: `configs/trajectories/lab_npx2_default_regions.csv` (VIS → HPF/ProS → SUB → DG_mo → ENT → deep ENT/HATA)
+- Region–depth table: `configs/trajectories/lab_npx2_default_regions.csv`
+  (VIS → entorhinal_transition → hippocampal_formation_transition →
+  ENT layer 6a/5 → MEC layers 3/2/1). Manual transcription of an NTE
+  probe-areas screenshot (far-left / probe 1); **not** an NTE export.
+  Whether this insertion crosses subiculum is unverified.
 - Cell capture: `configs/trajectories/lab_npx2_default_cell_capture.yaml`
+  (matched to those region names; includes some `Sub_bvc` in the HPF-transition
+  band without labeling that band `subiculum`)
 - Future template: `configs/trajectories/example_new_insertion.yaml`
 - Optimal dorsal stack: `configs/trajectories/hpc_optimal.yaml` (+ `_regions.csv`, `_cell_capture.yaml`)
 
-This default trajectory emphasizes **subiculum / entorhinal** capture more than a canonical CA1–CA3–DG stack. Visual cortex is crossed superficially but **excluded by default** from hippocampal decoder units.
+This **simulated default** is entorhinal / HPF-transition-heavy (no CA2/CA3
+bands; no labeled `subiculum` or DG). Visual cortex is crossed superficially
+but **excluded by default** from hippocampal decoder units.
+
+Lab **recordings** that include a subiculum region group (`SUB`) are labeled
+separately from this simulated default trajectory — do not assume
+`lab_npx2_default` describes every real insertion.
 
 ## `hpc_optimal`
 

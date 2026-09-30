@@ -1,0 +1,2 @@
+# Optional extras — not required for the core pipeline / default test suite.
+umap-learn>=0.5
