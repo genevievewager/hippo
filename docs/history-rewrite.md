@@ -263,3 +263,20 @@ git push --force --tags origin
 ```
 
 Then re-clone all working copies again.
+
+## Appendix — executed rewrite (2026-09-30, pass 2)
+
+Filter-repo purged `.hippo/`, `__pycache__/`, `.DS_Store`, and `outputs/`.
+Commit-map: `.git/filter-repo/commit-map`.
+
+| pre-rewrite | post-rewrite |
+|-------------|--------------|
+| `01b86a34…` (`01b86a3`) | `8c01b734b40e2f0069b3e16fea56dd756fbe9955` |
+| `775fa1c38063a1ecea07df28c64174beea8f122e` | `dcc78ed74194aa1d3e8fa7e1e25e90e02b26265e` |
+| `eb442e9f5d3137e1bfb5d9ec960f128f25fec32e` | `566b94353c2467147f90f839603c86e9f2102c56` |
+| tag tip `5a477fcf5170f6975f89b6c42858ca7b8094e8c8` | `2b8c46e917fca7d288ebe6df185babb3ff28f8c4` |
+
+`4da17a5d…` config content hash left unchanged.
+
+Tag `quadrant-n5-figures-v1` peeled commit is `2b8c46e9…` (pre-rewrite: `5a477fcf…`).
+
