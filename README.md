@@ -76,6 +76,15 @@ python -m pytest tests/ -q
 ln -sf ../../scripts/hooks/pre-commit .git/hooks/pre-commit
 ```
 
+Default `pytest` excludes `@pytest.mark.slow` (see `pytest.ini`). Slow tests
+cover the full quadrant-n5 method stack (LDS / GPFA / Isomap / DM) and may take
+several minutes:
+
+```bash
+python -m pytest tests/ -q -m slow                 # slow only
+python -m pytest tests/ -q -o addopts=             # everything, including slow
+```
+
 Python 3.10+ (developed on 3.12). See `requirements.txt`. Layout and import
 rules: [`ARCHITECTURE.md`](ARCHITECTURE.md).
 
