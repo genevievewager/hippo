@@ -1,15 +1,45 @@
+# Virtualenvs
 .hippo/
+.venv/
+venv/
+env/
+
+# Bytecode / notebooks / OS junk
 __pycache__/
 *.pyc
+.ipynb_checkpoints/
 .pytest_cache/
+.DS_Store
+
+# Local data and run outputs (never commit)
+# Note: ignoring directory contents (data/*) so fixture exceptions can re-include.
+data/*
+!data/probe_trajectories/
+data/probe_trajectories/*
+!data/probe_trajectories/lab_insertion_001.csv
 outputs/
-# Experiment outputs (explicit so they cannot be tracked the way .hippo/ was)
-outputs/quadrant_n5/
-# Corrupted desktop download; not a source tree. Leave deletion to the operator.
-/quadrant_n5/
+quadrant_n5/
+reports/
+external/
+analysis/**/outputs/
+logs/
+
+# Paper / Overleaf tree (outdated locally; leave history alone)
+docs/overleaf/
+
+# Binary / array / secret-ish artifacts
+*.npy
+*.npz
+*.parquet
+*.h5
+*.nwb
+*.mat
+*.pkl
+.env
+*.pem
 *.pdf
 *.zip
-external/
 
-# pressure-test agent
-reports/
+# Explicit fixture allowlist (tracked small CSVs)
+!configs/trajectories/*_regions.csv
+!data/probe_trajectories/lab_insertion_001.csv

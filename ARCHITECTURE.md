@@ -3,6 +3,44 @@
 Hippocampal BCI simulation and decoding testbed. The UI orchestrates backend
 functions; it does not own scientific logic.
 
+---
+
+## Repository layout
+
+```text
+hippo/                 core library (dataset, anatomy, partitions, probe viz)
+hippo_sim/             simulation backends
+realtime/              decoding, representations, quadrant pipeline
+visualization/         publication / report plots
+ui/                    Streamlit app
+agents/                pressure-test and experiment agents (do not import into core)
+analysis/              offline experiments / workstreams (may import core; never imported by core)
+configs/               tracked configs (no data, no secrets)
+scripts/               shell helpers and sync utilities
+tests/                 pytest suite
+docs/                  notes and design docs
+run_*.py               public CLI entry points (repo root)
+```
+
+### Import and data rules
+
+1. `hippo/`, `realtime/`, and `hippo_sim/` never import from `analysis/`,
+   `scripts/`, or `agents/`.
+2. `analysis/` may import `hippo`, `hippo_sim`, `realtime`, and `visualization`.
+3. Data and run outputs live outside git. Prefer `HIPPO_DATA_ROOT` for the data
+   root; experiment outputs go under a local `outputs/` (or an explicit run
+   directory), never into the package trees.
+4. Code moves from `analysis/` into `hippo/` / `realtime/` only once a second
+   consumer needs it. Do not prematurely “promote” one-off notebooks or
+   offline scripts.
+
+Active pipeline window ≠ window benchmark grid. Sweeps must be explicit and
+separately hashed. See configuration layers below.
+
+---
+
+## Pipeline overview
+
 ```text
 Behavior
     ↓

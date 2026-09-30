@@ -28,13 +28,20 @@ def test_default_trajectory_config_loads():
 
 
 def test_screenshot_derived_region_table_loads():
+    # Region table is a manual NTE screenshot transcription (far-left probe);
+    # whether this insertion crosses subiculum is unverified — replace with an
+    # NTE export when available.
     assert LAB_REGIONS.exists()
     with pytest.warns(UserWarning):
         cfg = load_trajectory_config(LAB_CONFIG)
     anatomy, meta = load_anatomy_for_visualization(cfg)
     assert meta["source"] == "screenshot_derived_region_table"
-    assert "visual_cortex" in set(anatomy["region"])
-    assert "subiculum" in set(anatomy["region"])
+    regions = set(anatomy["region"])
+    assert "visual_cortex" in regions
+    assert "hippocampal_formation_transition" in regions
+    assert "entorhinal_cortex_layer6a" in regions
+    assert "medial_entorhinal_layer1" in regions
+    assert "subiculum" not in regions
     assert list(anatomy["depth_start_mm"]) == sorted(anatomy["depth_start_mm"])
 
 
