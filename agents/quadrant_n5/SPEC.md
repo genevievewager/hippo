@@ -1,7 +1,7 @@
 # Quadrant N=5 experiment agent — spec for Cursor
 
 Repo: `hippo` (public). Runs on `bionet-neuroai` via Cursor Remote-SSH.
-Companion to `agents/pressure_test/` (built 2026-09-20 @ `01b86a3`).
+Companion to `agents/pressure_test/` (built 2026-09-20 @ `8c01b734`; pre-rewrite: `01b86a3`).
 Suggested location: `agents/quadrant_n5/SPEC.md`. Point Cursor at this file and
 tell it to start at Phase 0.
 

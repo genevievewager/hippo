@@ -18,7 +18,7 @@ data/*
 data/probe_trajectories/*
 !data/probe_trajectories/lab_insertion_001.csv
 outputs/
-quadrant_n5/
+/quadrant_n5/
 reports/
 external/
 analysis/**/outputs/

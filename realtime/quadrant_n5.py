@@ -18,7 +18,8 @@ DEFAULT_CONFIG_PATH = REPO_ROOT / "configs" / "quadrant_n5.yaml"
 # Commit (a) on quadrant-n5: runner as of 01:56 plus the n5 numerical tree.
 # Provenance SHA for seeds 0–4. Later runner fixes (A13 continue, skip, EXIT)
 # are not this SHA.
-SEEDS_0_4_PROVENANCE_SHA = "775fa1c38063a1ecea07df28c64174beea8f122e"
+# pre-rewrite: 775fa1c38063a1ecea07df28c64174beea8f122e
+SEEDS_0_4_PROVENANCE_SHA = "dcc78ed74194aa1d3e8fa7e1e25e90e02b26265e"
 
 
 def report_code_sha() -> str | None:

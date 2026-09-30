@@ -2,7 +2,7 @@
 Quadrant N=5 — publication figure set (Fig 1–6).
 
 Source data: data_*.csv, built by extract_json.py from the quadrant_n5 result
-JSONs (config 4da17a5d…, seeds_0_4_code 775fa1c3, report_code_sha eb442e9f).
+JSONs (config 4da17a5d…, seeds_0_4_code dcc78ed7 (pre-rewrite: 775fa1c3), report_code_sha 566b9435 (pre-rewrite: eb442e9f)).
 Writes vector PDF + 600-dpi PNG per figure.
 
     python extract_json.py outputs/quadrant_n5 <data_dir>

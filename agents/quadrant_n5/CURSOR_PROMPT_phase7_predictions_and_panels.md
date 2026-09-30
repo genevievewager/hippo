@@ -6,7 +6,7 @@ Paste the block below into Cursor (Agent mode) on branch `quadrant-n5`, after th
 Goal: produce the data behind four missing publication panels (decoded
 trajectories, error over time, spatial error maps, center-pull) plus a
 latent-d sweep, then plot them with the existing figure module. The
-experiment is frozen: config 4da17a5d…, seeds code 775fa1c3…. Nothing
+experiment is frozen: config 4da17a5d…, seeds code dcc78ed7… (pre-rewrite: 775fa1c3). Nothing
 numerical in the saved results may change. Everything runs on the
 server; no network, no new dependencies without asking me; outputs stay
 under outputs/quadrant_n5/ (gitignored). Don't print data arrays into
