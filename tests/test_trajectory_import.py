@@ -88,7 +88,25 @@ def test_load_lab_trajectory_config_warns_on_uncertain_fields():
     assert resolve_cell_capture_file(cfg) == LAB_CAPTURE
 
 
+# Included bands from lab_npx2_default_regions.csv (visual_cortex excluded).
+# Region table is a manual NTE screenshot transcription (far-left probe);
+# whether this insertion crosses subiculum is unverified — replace with an
+# NTE export when available.
+LAB_INCLUDED_REGIONS = {
+    "entorhinal_transition",
+    "hippocampal_formation_transition",
+    "entorhinal_cortex_layer6a",
+    "entorhinal_cortex_layer5",
+    "medial_entorhinal_layer3",
+    "medial_entorhinal_layer2",
+    "medial_entorhinal_layer1",
+}
+
+
 def test_lab_regions_assign_channels_and_exclude_visual():
+    # Region table is a manual NTE screenshot transcription (far-left probe);
+    # whether this insertion crosses subiculum is unverified — replace with an
+    # NTE export when available.
     raw = load_lab_anatomy_regions_csv(LAB_REGIONS)
     probe = {
         "type": "NP2.0",
@@ -104,8 +122,7 @@ def test_lab_regions_assign_channels_and_exclude_visual():
     segments = anatomy_table_to_region_segments(df)
     regions = {s["region"] for s in segments}
     assert "visual_cortex" not in regions
-    assert "subiculum" in regions
-    assert "entorhinal_cortex" in regions
+    assert regions == LAB_INCLUDED_REGIONS
     result = validate_channel_assignment(df, n_channels=384)
     assert result["ok_zero_or_one"]
 
@@ -123,18 +140,23 @@ def test_resolve_trajectory_by_name():
 
 
 def test_lab_default_apply_trajectory_zeros_ca2_ca3(tmp_path):
+    # Region table is a manual NTE screenshot transcription (far-left probe);
+    # whether this insertion crosses subiculum is unverified — replace with an
+    # NTE export when available.
     config = SimConfig(output_dir=tmp_path / "lab", seed=1, session_duration_s=2.0)
     with pytest.warns(UserWarning):
         apply_trajectory_to_config(config, trajectory_config=LAB_CONFIG)
     assert config.probe_type == "NP2.0"
     assert config.site_pitch_um == 15.0
-    # Lab path is Sub/ENT/DG-heavy — CA2/CA3 not crossed.
+    # Lab default is ENT/HPF-transition-heavy — CA2/CA3 not crossed.
     assert config.ratinabox_params["n_ca2_place_cells"] == 0
     assert config.ratinabox_params["n_ca3_place_cells"] == 0
     assert config.ratinabox_params["n_sub_bvc_cells"] > 0
     assert config.ratinabox_params["n_mec_grid_cells"] > 0
     anatomy = pd.read_csv(config.output_dir / "anatomy_regions.csv")
-    assert "subiculum" in set(anatomy["region"])
+    assert set(anatomy["region"]) >= LAB_INCLUDED_REGIONS | {"visual_cortex"}
+    assert "hippocampal_formation_transition" in set(anatomy["region"])
+    assert "subiculum" not in set(anatomy["region"])
     assert config.trajectory_meta["visual_cortex_excluded"] is True
     assert config.trajectory_meta["deployment_spike_source"] == "sorted"
     # Active coords live inside the trial folder.
@@ -155,6 +177,9 @@ def test_apply_trajectory_by_name_string(tmp_path):
 
 
 def test_lab_default_pipeline_short_run(tmp_path):
+    # Region table is a manual NTE screenshot transcription (far-left probe);
+    # whether this insertion crosses subiculum is unverified — replace with an
+    # NTE export when available.
     config = SimConfig(output_dir=tmp_path / "run", seed=1, session_duration_s=2.0)
     with pytest.warns(UserWarning):
         apply_trajectory_to_config(config, trajectory_config=LAB_CONFIG)
@@ -162,10 +187,7 @@ def test_lab_default_pipeline_short_run(tmp_path):
     summary = run_pipeline(config)
     units = pd.read_csv(config.output_dir / "units.csv")
     assert "visual_cortex" not in set(units["region"])
-    assert set(units["region"]).issubset({
-        "HPF_ProS_transition", "subiculum", "dentate_gyrus",
-        "entorhinal_cortex", "deep_entorhinal_HATA",
-    })
+    assert set(units["region"]).issubset(LAB_INCLUDED_REGIONS)
     assert (config.output_dir / "trajectory_metadata.json").exists()
     meta = json.loads((config.output_dir / "trajectory_metadata.json").read_text())
     assert meta["ap_mm_from_bregma"] == pytest.approx(-3.967)
