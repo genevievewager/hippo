@@ -762,7 +762,7 @@ Complete catalog and stems: [`docs/visualizations.md`](docs/visualizations.md).
 | [`docs/visualizations.md`](docs/visualizations.md) | Figure catalog |
 | [`docs/output_schema.md`](docs/output_schema.md) | Artifact tree |
 | [`docs/cli_reference.md`](docs/cli_reference.md) | Profiles and CLI flags |
-| [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) | Pipeline ownership, quadrants, config layers |
+| [`ARCHITECTURE.md`](ARCHITECTURE.md) | Pipeline ownership, quadrants, config layers |
 | [`docs/PIPELINE_CONTRACTS.md`](docs/PIPELINE_CONTRACTS.md) | Stage contracts (`AnalysisConfig`, features, E, D) |
 | [`docs/developer.md`](docs/developer.md) | Modules, utilities, tests |
 

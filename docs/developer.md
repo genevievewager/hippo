@@ -8,7 +8,7 @@ run_simulation.py → run_decoder.py → run_visualizations.py
 
 or `streamlit run ui/app.py` (same backends; no science reimplementation in the UI).
 
-Pipeline ownership, quadrants, and config layers: [`docs/ARCHITECTURE.md`](ARCHITECTURE.md).
+Pipeline ownership, quadrants, and config layers: [`ARCHITECTURE.md`](../ARCHITECTURE.md).
 Stage contracts: [`docs/PIPELINE_CONTRACTS.md`](PIPELINE_CONTRACTS.md).
 
 ## Shared modules
