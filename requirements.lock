@@ -1,5 +1,5 @@
 # Pinned from /tmp/hippo-fresh-venv after: pip install -r requirements.txt
-# Suite on cleanup/structure: 4 failed (lab regions/subiculum), rest passed (hanging npz test deselected).
+# Suite on cleanup/structure: 4 failed (lab regions/subiculum), rest passed.
 altair==6.3.0
 anyio==4.15.1
 attrs==26.1.0
@@ -35,6 +35,7 @@ pydeck==0.9.3
 Pygments==2.21.0
 pyparsing==3.3.3
 pytest==9.1.1
+pytest-timeout==2.4.0
 python-dateutil==2.9.0.post0
 python-multipart==0.0.32
 PyYAML==6.0.3
