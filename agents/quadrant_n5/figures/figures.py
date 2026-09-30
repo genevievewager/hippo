@@ -613,11 +613,16 @@ def fig5(D, out):
     save(fig, out, "Fig5_deployability")
 
 
+def _fmt_signed_cm(v: float) -> str:
+    """Format a signed cm difference with a Unicode minus."""
+    m = 0.0 if abs(v) < 0.05 else float(v)
+    return f"{m:+.1f} cm".replace("-", "−").replace("+0.0", "0.0")
+
+
 # ================================================================= FIG 6
 def fig6(D, out):
     E = D["E"]
     Xr, Xk = wide(E, "sorted", "ridge"), wide(E, "sorted", "knn")
-    Gk = wide(E, "ground_truth", "knn")
     fig = plt.figure(figsize=(W_FULL, 90 * MM))
     ax = fig.add_axes([0, 0, 1, 1]); ax.set_xlim(0, 180); ax.set_ylim(0, 90); ax.axis("off")
 
@@ -645,31 +650,53 @@ def fig6(D, out):
     dv = (Xr.lds - Xr.pca).values
     ax.annotate("", (X0 + 55, Y0 + 49.5), (X0 + 41, Y0 + 49.5),
                 arrowprops=dict(arrowstyle="-|>", lw=1.6, color=EDGE["lds"], mutation_scale=10))
-    ax.text(X0 + 48, Y0 + 54, f"{dv.mean():+.1f} cm", ha="center", fontsize=7.5, fontweight="bold", color=EDGE["lds"])
+    ax.text(X0 + 48, Y0 + 54, _fmt_signed_cm(float(dv.mean())), ha="center", fontsize=7.5,
+            fontweight="bold", color=EDGE["lds"])
     ax.text(X0 + 48, Y0 + 43.5, f"{neg(dv)}/5 seeds", ha="center", fontsize=6.3, color=INK2)
     dv2 = (Xr.dm - Xr.pca).values
     ax.annotate("", (X0 + 20, Y0 + 28), (X0 + 20, Y0 + 35),
                 arrowprops=dict(arrowstyle="-|>", lw=1.0, color=MUTED, mutation_scale=8))
-    ax.text(X0 + 22.5, Y0 + 31.5, f"{dv2.mean():+.1f} cm, {neg(dv2)}/5 lower — no advantage", fontsize=6.3,
-            va="center", color=INK2)
+    ax.text(X0 + 22.5, Y0 + 31.5,
+            f"{_fmt_signed_cm(float(dv2.mean()))}, {neg(dv2)}/5 lower — no advantage",
+            fontsize=6.3, va="center", color=INK2)
     ax.text(X0 + 76, Y0 + 31.5, "?", ha="center", va="center", fontsize=10, color=MUTED, fontweight="bold")
 
-    rl = (Xr.raw_lag - Xr.raw).values; lr = (Xr.lds - Xr.raw_lag).values
-    gl = (Xr.lds - Xk.lds).values; gp = (Xr.pca - Xk.pca).values
-    ps = (Xk.pca - Gk.pca).values; ls_ = (Xk.lds - Gk.lds).values
+    # Same computed values as the story / "In one sentence".
+    crit = D.get("knn_criteria") or {}
+    c4p = crit.get("cell_type_grid_bvc_cv_d") or {}
+    crit4p_k = int(c4p.get("n_lds_better") or 0)
+    knn_med = float(Xk.lds.mean())
+    knn_sd = float(Xk.lds.std(ddof=1))
+    jump_knn = jump_ridge = float("nan")
+    slope_lds = float("nan")
+    if "jump_rate" in D:
+        J = D["jump_rate"]
+        sub = J[(J.source == "sorted") & (J.decoder == "knn") & (J.method == "lds")]
+        if len(sub):
+            jump_knn = float(100.0 * sub.jump_rate.mean())
+        sub_r = J[(J.source == "sorted") & (J.decoder == "ridge") & (J.method == "lds")]
+        if len(sub_r):
+            jump_ridge = float(100.0 * sub_r.jump_rate.mean())
+    if "center_pull" in D:
+        CP = D["center_pull"]
+        sl = CP[(CP.kind == "slope") & (CP.source == "sorted") & (CP.decoder == "ridge")
+                & (CP.method == "lds")].slope.values
+        if len(sl):
+            slope_lds = float(np.mean(sl))
+
     tx, y = 120, 84.5
     ax.text(tx, y, "What has to be preserved?", fontsize=9, fontweight="bold", va="top"); y -= 8
     items = [
-        ("1  Temporal continuity of the population state.",
-         f"Dynamic beat static by {-dv.mean():.1f} cm in 5/5 seeds. Seeing the past helps "
-         f"({-rl.mean():.1f} cm), and the Kalman state model adds {-lr.mean():.1f} cm beyond it (5/5)."),
-        ("2  Not static nonlinear geometry.",
-         f"The diffusion map matched PCA ({dv2.mean():+.1f} cm, {neg(dv2)}/5) with either readout."),
-        ("3  A nonlinear readout of that state.",
-         f"kNN lowered LDS error by {gl.mean():.1f} cm vs {gp.mean():.1f} cm for PCA "
-         f"(larger in {int((gl > gp).sum())}/5 seeds)."),
-        ("4  Why: robustness to recording.",
-         f"Sorting raised kNN error by {ps.mean():.0f} cm for PCA but {ls_.mean():.0f} cm for LDS."),
+        ("1  Temporal continuity of the state.",
+         f"LDS − PCA {_fmt_signed_cm(float(dv.mean()))} under Ridge ({neg(dv)}/5)."),
+        ("2  No static nonlinear advantage.",
+         f"DM − PCA {_fmt_signed_cm(float(dv2.mean()))} ({neg(dv2)}/5)."),
+        ("3  Carried by grid and border cells.",
+         f"Criterion 4′ (post hoc, CV-selected d): LDS+kNN beat PCA+kNN "
+         f"on grid+BVC in {crit4p_k}/5 seeds."),
+        ("4  Accuracy vs continuity.",
+         f"LDS+kNN {knn_med:.1f} ± {knn_sd:.1f} cm, jumps on {jump_knn:.1f}% of steps; "
+         f"LDS+Ridge {jump_ridge:.0f}% jumps but centre slope {slope_lds:.2f}."),
     ]
     for hd, body in items:
         ax.text(tx, y, hd, fontsize=7, fontweight="bold", va="top"); y -= 3.7
@@ -679,7 +706,8 @@ def fig6(D, out):
     ax.text(tx, 16, "Sorted spikes; N = 5 paired seeds; mean ± SD of per-seed\n"
             "medians; k/5 = seeds with the stated sign; no p-values\n"
             "(smallest attainable p = 0.0625). Simulated, entorhinal-\n"
-            "dominated population; 600 s sessions.", fontsize=5.6, color=MUTED, va="top", linespacing=1.35)
+            "dominated population; 600 s sessions. Criterion 4′ is post hoc.",
+            fontsize=5.6, color=MUTED, va="top", linespacing=1.35)
     save(fig, out, "Fig6_answer")
 
 

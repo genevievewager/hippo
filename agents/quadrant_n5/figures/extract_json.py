@@ -73,7 +73,17 @@ meta = dict(config_sha256=cfg,
             report_code_sha=rp0.get("git_sha", ""),
             probe_track_sha256=rp0.get("probe_track_sha256", ""),
             latency_budget_ms=rp0.get("latency_budget_ms"))
-json.dump(meta, open(os.path.join(OUT, "data_meta.json"), "w"), indent=1)
+# Preserve release fields written after tagging (not recomputed from results).
+_meta_path = os.path.join(OUT, "data_meta.json")
+if os.path.isfile(_meta_path):
+    try:
+        _prev = json.load(open(_meta_path))
+        for _k in ("figure_set_tag", "figure_set_sha256"):
+            if _prev.get(_k):
+                meta[_k] = _prev[_k]
+    except (json.JSONDecodeError, OSError):
+        pass
+json.dump(meta, open(_meta_path, "w"), indent=1)
 print("behavior ok; config", cfg[:12])
 
 # ---- Phase 7: predictions.npz / d_sweep.json (skip if absent) ----

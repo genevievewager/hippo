@@ -255,6 +255,24 @@ def _fmt_pm(mean: float, sd: float) -> str:
     return s
 
 
+_NUM_WORDS = {
+    0: "zero", 1: "one", 2: "two", 3: "three", 4: "four", 5: "five",
+    6: "six", 7: "seven", 8: "eight", 9: "nine", 10: "ten",
+}
+
+
+def num_word(n: int, *, capitalize: bool = False) -> str:
+    """Spell out integers 0–10; larger values stay numeric."""
+    w = _NUM_WORDS.get(int(n), str(int(n)))
+    return w.capitalize() if capitalize else w
+
+
+def count_noun(n: int, singular: str, plural: str | None = None) -> str:
+    """'<word> <noun>' with correct plural (no '(s)' hack)."""
+    plural = plural or (singular + "s")
+    return f"{num_word(n)} {singular if int(n) == 1 else plural}"
+
+
 def load_phase8_story(data_dir: str, crit: dict) -> dict:
     """All Phase 8 story numbers from criteria.json + Phase 8 CSVs (no hand typing)."""
     out: dict = {"has": bool(crit)}
@@ -402,8 +420,14 @@ def story(n):
     P.append(Paragraph("Temporal state, not static geometry: a paired N = 5 test of the representation quadrant "
                        "for realtime position decoding", H1))
     mt = n["meta"]
-    P.append(Paragraph(f"Quadrant N = 5 experiment · config {mt['config_sha256'][:8]} · code {mt['seeds_code_sha'][:8]} (seeds) / "
-                       f"{mt['report_code_sha'][:8]} (reports) · simulated data · internal draft, not for distribution", SM))
+    prov = (f"Quadrant N = 5 experiment · config {mt['config_sha256'][:8]} · code "
+            f"{mt['seeds_code_sha'][:8]} (seeds) / {mt['report_code_sha'][:8]} (reports)")
+    if mt.get("figure_set_tag"):
+        prov += f" · tag {mt['figure_set_tag']}"
+    if mt.get("figure_set_sha256"):
+        prov += f" · figure-set sha256 {mt['figure_set_sha256']}"
+    prov += " · simulated data · internal draft, not for distribution"
+    P.append(Paragraph(prov, SM))
     P.append(Paragraph("The question", H2))
     P.append(Paragraph(
         "Which aspects of population structure must a neural representation preserve for accurate, stable and "
@@ -415,14 +439,15 @@ def story(n):
     P.append(Paragraph("How we got to the answer", H2))
     fails = n["a13_fail_rows"]
     n_aud = n.get("n_audit", 15)
-    aud_word = {14: "Fourteen", 15: "Fifteen"}.get(n_aud, str(n_aud))
+    aud_word = num_word(n_aud, capitalize=True)
     if fails:
         ftxt = "; ".join(f"seed {s}, {'ground truth' if src == 'ground_truth' else 'sorted'}, {SH[rep]} "
                          f"({dec}, {v:+.2f} cm)".replace("-", "−") for s, src, rep, dec, v in fails)
-        ftxt = (f"{aud_word} audit checks passed in every seed except the time-shift null control in {len(fails)} cell(s): "
+        ftxt = (f"{aud_word} audit checks passed in every seed except the time-shift null control in "
+                f"{count_noun(len(fails), 'cell')}: "
                 f"{ftxt}, against its pre-registered −2 cm line. " + n["a13_note"])
     else:
-        ftxt = f"All {aud_word.lower()} audit checks passed in every seed. "
+        ftxt = f"All {num_word(n_aud)} audit checks passed in every seed. "
     P.append(Paragraph(
         "Before interpreting any difference we tested whether the comparison was fair (Fig. 2). " + ftxt +
         "Causal replay reproduced offline predictions to floating-point precision for every causal method; GPFA, whose "
@@ -492,8 +517,8 @@ def story(n):
         f"{n['gt_k_lo']:.1f}–{n['gt_k_hi']:.1f} cm under kNN: the position information is present in all of them. Degradation "
         f"and sorting raised kNN error by {n['pen_k']['pca']:.0f} cm for PCA and {n['pen_k']['dm']:.0f} cm for DM, but only "
         f"{n['pen_k']['lds']:.0f} cm for LDS. The dynamics model's advantage over history-stacking is absent on clean spikes "
-        f"under Ridge ({n['gr_lds_raw_lag']}, {n['gr_lds_raw_lag_k']}/5) and appears only after sorting. Temporal integration "
-        f"is doing denoising.", BODY))
+        f"under Ridge ({n['gr_lds_raw_lag']}, {n['gr_lds_raw_lag_k']}/5) and appears only after sorting. This is consistent "
+        f"with temporal integration acting as denoising.", BODY))
     P.append(Paragraph(
         f"<b>5. Reduction alone can hurt.</b> Compressing to d ≤ 20 made the linear readout worse than raw counts "
         f"(PCA − raw {n['r_pca_raw']}, {n['r_pca_raw_pos']}/5 worse) while helping kNN ({n['k_pca_raw']}, "
@@ -623,10 +648,11 @@ def legends(n):
             "PCA and LDS). This is why paired, within-seed contrasts are the unit of evidence."),
         "Fig6_answer": ("Figure 6 | The answer at N = 5.",
             "Each cell shows mean ± SD across seeds of the per-seed median error (sorted spikes) under Ridge and kNN. "
-            "Arrows give the paired contrasts. Moving from static to dynamic (PCA → LDS) is the one large, consistent step; "
-            "moving from linear to nonlinear static geometry (PCA → DM) is not. The nonlinear-dynamic cell is the "
-            "next experiment. The consistent extra benefit of a nonlinear readout on the LDS state (Fig. 4a) suggests it is "
-            f"where an interaction, if any, would appear. {n['knn_best_note']}"),
+            "Arrows give the paired contrasts (Unicode minus on signed differences). The right-hand summary matches the "
+            "story: (1) temporal continuity (LDS − PCA); (2) no static nonlinear advantage (DM − PCA); (3) the state is "
+            "carried by grid and border cells (criterion 4′, CV-selected d, post hoc); (4) accuracy vs continuity "
+            "(LDS+kNN median and jump rate vs LDS+Ridge with centre slope). The nonlinear-dynamic cell is the next "
+            f"experiment. {n['knn_best_note']}"),
     }
     if n["has_pred"]:
         L["Fig7_trajectories"] = ("Figure 7 | Decoded trajectories.",
