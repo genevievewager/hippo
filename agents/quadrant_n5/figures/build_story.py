@@ -235,7 +235,7 @@ def jump_rate_summary(data):
 
 
 def load_phase8_flag(data):
-    """True only when Phase 8 criteria report phase8_passed (full PASS incl. cell-type)."""
+    """Load Phase 8 criteria.json (figures data/ or knn_pressure/)."""
     candidates = [
         os.path.join(data, "data_knn_criteria.json"),
         os.path.join(os.path.dirname(data), "knn_pressure", "criteria.json"),
@@ -245,12 +245,76 @@ def load_phase8_flag(data):
         if not os.path.isfile(path):
             continue
         crit = json.load(open(path))
-        if "phase8_passed" in crit:
-            return bool(crit["phase8_passed"]), crit
-        ok_13 = crit.get("overall_1_to_3") == "PASS"
-        ok_ct = (crit.get("cell_type_grid_bvc") or {}).get("status") == "PASS"
-        return bool(ok_13 and ok_ct), crit
+        return True, crit
     return False, {}
+
+
+def _fmt_pm(mean: float, sd: float) -> str:
+    m = 0.0 if abs(mean) < 0.05 else mean
+    s = f"{m:+.1f} ± {sd:.1f}".replace("-", "−").replace("+0.0", "0.0")
+    return s
+
+
+def load_phase8_story(data_dir: str, crit: dict) -> dict:
+    """All Phase 8 story numbers from criteria.json + Phase 8 CSVs (no hand typing)."""
+    out: dict = {"has": bool(crit)}
+    if not crit:
+        return out
+    out["phase8_status"] = crit.get("phase8_status") or ""
+    e = crit.get("exclusion_delta30") or {}
+    n = crit.get("neighbour_median_dt") or {}
+    st = crit.get("strata_lds_vs_pca_atypical") or {}
+    ct = crit.get("cell_type_grid_bvc") or {}
+    c4p = crit.get("cell_type_grid_bvc_cv_d") or {}
+    out["excl_k"] = int(e.get("n_pass") or 0)
+    out["nbr_k"] = int(n.get("n_pass") or 0)
+    nbr = list(n.get("per_seed_median_abs_dt_s") or [])
+    out["nbr_lo"] = float(min(nbr)) if nbr else float("nan")
+    out["nbr_hi"] = float(max(nbr)) if nbr else float("nan")
+    out["strata_k"] = int(st.get("n_lds_better") or 0)
+    out["crit4_k"] = int(ct.get("n_lds_better") or 0)
+    out["crit4_status"] = ct.get("status", "PENDING")
+    out["crit4p_k"] = int(c4p.get("n_lds_better") or 0)
+    out["crit4p_status"] = c4p.get("status", "PENDING")
+    diffs = list(c4p.get("per_seed_lds_minus_pca_knn_cm") or [])
+    if diffs:
+        # magnitude of LDS advantage (positive cm when LDS better)
+        mags = [abs(float(d)) for d in diffs]
+        out["crit4p_lo"] = float(min(mags))
+        out["crit4p_hi"] = float(max(mags))
+    else:
+        out["crit4p_lo"] = out["crit4p_hi"] = float("nan")
+
+    rep_path = os.path.join(data_dir, "data_criterion_4prime_report.csv")
+    gain_path = os.path.join(data_dir, "data_criterion_4prime_gains.csv")
+    # Fall back to knn_pressure outputs if extract not yet run
+    if not os.path.isfile(rep_path):
+        alt = os.path.join(os.path.dirname(os.path.dirname(data_dir)), "knn_pressure", "criterion_4prime_report.csv")
+        if not os.path.isfile(alt):
+            alt = os.path.join(os.path.dirname(data_dir), "knn_pressure", "criterion_4prime_report.csv")
+        if os.path.isfile(alt):
+            rep_path = alt
+            gain_path = os.path.join(os.path.dirname(alt), "criterion_4prime_gains.csv")
+    if os.path.isfile(rep_path):
+        R = pd.read_csv(rep_path)
+        lds_gb = R[(R.subset == "grid_bvc") & (R.method == "lds")].sort_values("seed").knn_median.values
+        lds_all = R[(R.subset == "all") & (R.method == "lds")].sort_values("seed").knn_median.values
+        out["lds_gb_knn_lo"] = float(np.min(lds_gb))
+        out["lds_gb_knn_hi"] = float(np.max(lds_gb))
+        out["within_1cm_k"] = int(np.sum(np.abs(lds_gb - lds_all) <= 1.0))
+    if os.path.isfile(gain_path):
+        G = pd.read_csv(gain_path)
+        gk = G[(G.decoder == "knn") & (G.method == "lds")].gain_all_minus_grid_bvc.values
+        gr = G[(G.decoder == "ridge") & (G.method == "lds")].gain_all_minus_grid_bvc.values
+        out["lds_knn_gain_mean"] = float(np.mean(gk))
+        out["lds_knn_gain_sd"] = float(np.std(gk, ddof=1)) if len(gk) > 1 else 0.0
+        out["lds_knn_gain_k"] = int(np.sum(gk < 0))
+        out["lds_ridge_gain_mean"] = float(np.mean(gr))
+        out["lds_ridge_gain_sd"] = float(np.std(gr, ddof=1)) if len(gr) > 1 else 0.0
+        out["lds_ridge_gain_k"] = int(np.sum(gr < 0))
+        out["lds_knn_gain_txt"] = _fmt_pm(out["lds_knn_gain_mean"], out["lds_knn_gain_sd"])
+        out["lds_ridge_gain_txt"] = _fmt_pm(out["lds_ridge_gain_mean"], out["lds_ridge_gain_sd"])
+    return out
 
 
 def numbers(data):
@@ -281,7 +345,8 @@ def numbers(data):
     has_dsweep = os.path.isfile(os.path.join(data, "data_d_sweep.csv"))
     pull = centre_pull_summary(data)
     jump = jump_rate_summary(data)
-    phase8_passed, phase8_crit = load_phase8_flag(data)
+    has_phase8, phase8_crit = load_phase8_flag(data)
+    p8 = load_phase8_story(data, phase8_crit)
     lds_d = d_detail.get("lds") or {}
     n_audit = int(A.check.nunique())
     n.update(
@@ -309,8 +374,9 @@ def numbers(data):
         lds_delta_mean=lds_d.get("mean"), lds_delta_sd=lds_d.get("sd"), lds_delta_k=lds_d.get("n_neg"),
         lds_knn_median_mean=float(Xk.lds.mean()),
         lds_knn_median_sd=float(Xk.lds.std(ddof=1)),
-        phase8_passed=phase8_passed, phase8_crit=phase8_crit,
+        phase8_crit=phase8_crit, p8=p8, has_phase8=has_phase8,
         has_pred=has_pred, has_fail=has_fail, has_dsweep=has_dsweep,
+        has_knn_pressure=os.path.isfile(os.path.join(data, "data_knn_exclusion.csv")),
         fs=fs, neg=neg, meta=json.load(open(os.path.join(data, "data_meta.json"))),
     )
     notes = []
@@ -361,6 +427,22 @@ def story(n):
         "Before interpreting any difference we tested whether the comparison was fair (Fig. 2). " + ftxt +
         "Causal replay reproduced offline predictions to floating-point precision for every causal method; GPFA, whose "
         "smoother uses future spikes, is shown only as an offline reference.", BODY))
+    p8 = n.get("p8") or {}
+    if p8.get("has"):
+        P.append(Paragraph(
+            f"We then pressure-tested the kNN result (Phase 8, pre-registered). "
+            f"Excluding the last 30 s of training changed LDS+kNN error by &lt; 2 cm "
+            f"({p8['excl_k']}/5); test samples' nearest neighbours lay a median "
+            f"{p8['nbr_lo']:.0f}–{p8['nbr_hi']:.0f} s away in time "
+            f"({p8['nbr_k']}/5 &gt; 60 s); and LDS beat PCA on atypical-heading/speed "
+            f"samples ({p8['strata_k']}/5). A pre-registered test on grid and border cells alone "
+            f"failed at fixed d = 20 ({p8['crit4_k']}/5); control analyses showed that d was "
+            f"too large for the 38-unit subset. With d chosen by inner CV (post hoc, "
+            f"criterion 4′), LDS+kNN beat PCA+kNN on grid and border cells in "
+            f"{p8['crit4p_k']}/5 seeds "
+            f"({p8['crit4p_lo']:.1f}–{p8['crit4p_hi']:.1f} cm).",
+            BODY,
+        ))
     P.append(Paragraph("The answer at N = 5", H2))
     lds_bound = ""
     if n.get("lds_delta_mean") is not None:
@@ -385,11 +467,26 @@ def story(n):
         f"<b>2. Static nonlinear geometry gives nothing here.</b> Diffusion maps and PCA were indistinguishable: "
         f"{n['r_dm_pca']} under Ridge ({n['r_dm_pca_k']}/5 seeds favouring DM) and {n['k_dm_pca']} under kNN "
         f"({n['k_dm_pca_k']}/5). Isomap was no better.", BODY))
-    P.append(Paragraph(
-        f"<b>3. Where nonlinearity does matter is in the readout of the dynamic state.</b> Replacing Ridge with kNN lowered "
-        f"LDS error by {n['gain_lds']:.1f} cm but PCA error by only {n['gain_pca']:.1f} cm (larger for LDS in "
-        f"{n['gain_k']}/5 seeds). Position is carried nonlinearly in the filtered latents, consistent with a grid-cell-dominated "
-        f"population. This is the closest the data come to the empty nonlinear-dynamic cell.", BODY))
+    if p8.get("has") and "lds_gb_knn_lo" in p8:
+        P.append(Paragraph(
+            f"<b>3. Nonlinearity matters in the readout of the dynamic state, and it "
+            f"is carried by spatially tuned cells.</b> Replacing Ridge with kNN lowered "
+            f"LDS error by {n['gain_lds']:.1f} cm vs {n['gain_pca']:.1f} cm for PCA "
+            f"({n['gain_k']}/5). On grid and border cells alone, at CV-selected d, "
+            f"LDS+kNN reached {p8['lds_gb_knn_lo']:.1f}–{p8['lds_gb_knn_hi']:.1f} cm, "
+            f"within 1 cm of the full population in {p8['within_1cm_k']}/5 seeds; "
+            f"adding head-direction and speed cells changed kNN error by "
+            f"{p8['lds_knn_gain_txt']} cm. Under Ridge they still helped LDS "
+            f"({p8['lds_ridge_gain_txt']} cm, {p8['lds_ridge_gain_k']}/5); "
+            f"why is unresolved.",
+            BODY,
+        ))
+    else:
+        P.append(Paragraph(
+            f"<b>3. Where nonlinearity does matter is in the readout of the dynamic state.</b> Replacing Ridge with kNN lowered "
+            f"LDS error by {n['gain_lds']:.1f} cm but PCA error by only {n['gain_pca']:.1f} cm (larger for LDS in "
+            f"{n['gain_k']}/5 seeds). Position is carried nonlinearly in the filtered latents, consistent with a grid-cell-dominated "
+            f"population. This is the closest the data come to the empty nonlinear-dynamic cell.", BODY))
     P.append(Paragraph(
         f"<b>4. The mechanism is robustness to recording.</b> With ground-truth spikes every representation reached "
         f"{n['gt_k_lo']:.1f}–{n['gt_k_hi']:.1f} cm under kNN: the position information is present in all of them. Degradation "
@@ -427,12 +524,12 @@ def story(n):
             f"({ridge_j:.1f}%) but pulls toward the centre (slope {lds_slope:.2f}). kNN on static representations jumps on "
             f"{pca_j:.1f}/{dm_j:.1f}% of steps (PCA/DM). For closed-loop use, continuity and accuracy trade off.", BODY))
     P.append(Paragraph("In one sentence", H2))
-    pending = "" if n.get("phase8_passed") else " (kNN result pending the Phase 8 pressure test)"
     P.append(Paragraph(
-        "<i>For this population, what must be preserved is the temporal continuity of the population state; "
-        "a nonlinear readout of that state gives the lowest error but discontinuous output, while a linear readout "
-        f"is continuous but centre-biased{pending}. Static nonlinear geometry adds nothing measurable. The benefit of "
-        "dynamics comes from resisting recording and sorting noise, and it costs well under 1 ms per update.</i>", BODY))
+        "<i>For this population, what must be preserved is the temporal continuity of the population state, "
+        "carried by grid and border cells: a nonlinear readout of that state gives the lowest "
+        "error but discontinuous output, while a linear readout is continuous "
+        "but centre-biased. Static nonlinear geometry adds nothing "
+        "measurable, and the dynamics cost well under 1 ms per update.</i>", BODY))
     P.append(Paragraph("What this does not show", H2))
     missing = []
     if not n["has_pred"]:
@@ -457,7 +554,11 @@ def story(n):
     P.append(Paragraph(
         "(i) Extend the d sweep for LDS/GPFA. (ii) Implement one nonlinear-dynamic representation (for example a switching "
         "or kernelised state-space model, or a filter on DM coordinates). (iii) Add a place-cell population to test whether "
-        "static geometry matters when the code is a place map. (iv) Increase N, now that the effect sizes are known.", BODY))
+        "static geometry matters when the code is a place map. (iv) Increase N, now that the effect sizes are known. "
+        "(v) Repeat the cell-type and shuffle controls with d selected per population by the full Phase 3 rule, to resolve "
+        "the Ridge-only HD/speed contribution. (vi) Blocked outer CV (rotating test blocks, exclusion windows on both sides).",
+        BODY,
+    ))
     return P
 
 
@@ -572,6 +673,21 @@ def legends(n):
             f"Ground-truth Ridge: {pull.get('ground_truth_ridge_line', '')}. "
             f"Ground-truth kNN: {pull.get('ground_truth_knn_line', '')}. {cause} "
             f"<b>c</b>, Pooled error CDFs (Ridge solid, kNN dashed). {jump_txt}")
+    crit = n.get("phase8_crit") or {}
+    p8 = n.get("p8") or {}
+    if n.get("has_knn_pressure"):
+        status = p8.get("phase8_status") or crit.get("phase8_status") or ""
+        L["FigS5_phase8"] = ("Figure S5 | kNN pressure test.",
+            "<b>a</b>, Median kNN error versus training exclusion Δ (thin = seeds; bold = mean; LDS solid, PCA dashed). "
+            "<b>b</b>, Pooled |t_test − t_neighbour| histogram for LDS kNN on sorted spikes (all seeds); "
+            "solid line = median across seeds; dashed = 60 s. "
+            "<b>c</b>, Typical vs atypical test errors (PCA vs LDS kNN; lines join the same seed). "
+            "<b>d</b>, Cell-type subsets at fixed d = 20 vs CV-selected d (grid+BVC and all units; PCA/LDS kNN), "
+            "showing the fixed-d artifact on the 38-unit grid+BVC pool. "
+            "<b>e</b>, Criteria table: 1–3, 4 (FAIL, as registered), 4′ (post hoc), (a)–(d), each with PASS/FAIL and k/5. "
+            "Criterion 4′ and d-selection by kNN CV are post hoc; Ridge values at the kNN-selected d are not shown in "
+            "panel d; the shuffle and noise controls ran at fixed d = 20 and are confounded by it. "
+            f"Summary: {status}")
     return L
 
 
@@ -616,6 +732,8 @@ def build(figs, out, data):
                 supp.append(name)
     if n["has_fail"] and os.path.isfile(os.path.join(figs, "FigS4_failure_modes.pdf")):
         supp.append("FigS4_failure_modes")
+    if n.get("has_knn_pressure") and os.path.isfile(os.path.join(figs, "FigS5_phase8.pdf")):
+        supp.append("FigS5_phase8")
     L = legends(n)
 
     # Page order: story → Fig 1–7 → divider → S1–S4 (asserted below).

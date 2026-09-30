@@ -475,6 +475,18 @@ def _reduced_fit_cv_scores(
     }
 
 
+def update_phase8_status(criteria: dict[str, Any]) -> dict[str, Any]:
+    """Set phase8_status summary string from criteria 1–3, 4, and 4′ (if present)."""
+    o13 = criteria.get("overall_1_to_3", "PENDING")
+    c4 = (criteria.get("cell_type_grid_bvc") or {}).get("status", "PENDING")
+    c4p = (criteria.get("cell_type_grid_bvc_cv_d") or {}).get("status")
+    parts = [f"1-3 {o13}", f"4 {c4} (as registered, fixed d=20)"]
+    if c4p:
+        parts.append(f"4′ {c4p} (post hoc, CV-selected d)")
+    criteria["phase8_status"] = "; ".join(parts)
+    return criteria
+
+
 def preregister_criterion_4prime(results: Path | None = None) -> dict[str, Any]:
     """Write criterion 4′ as PENDING. Does not change criterion 4 (cell_type_grid_bvc)."""
     results = Path(results or OUTPUT_ROOT)
@@ -677,6 +689,7 @@ def finish_criterion_4prime(
     if "rule" in keep:
         criteria["cell_type_grid_bvc_cv_d"]["rule"] = keep["rule"]
     # Explicitly leave criterion 4 unchanged (do not rewrite cell_type_grid_bvc).
+    update_phase8_status(criteria)
     crit_path.write_text(json.dumps(criteria, indent=2) + "\n")
 
     summary = {

@@ -132,10 +132,19 @@ def load(here):
     D = dict(E=rd("errors"), F=rd("floor"), SH=rd("a13_shifts"), LC=rd("learning_curves"),
              R=rd("replay"), A=pd.read_csv(os.path.join(here, "data_audit.csv"), keep_default_na=False), B=rd("behavior_5hz"),
              P=rd("population"))
-    for optional in ("predictions_window", "error_maps", "center_pull", "error_cdf", "d_sweep", "jump_rate"):
+    for optional in (
+        "predictions_window", "error_maps", "center_pull", "error_cdf", "d_sweep", "jump_rate",
+        "knn_exclusion", "knn_strata", "knn_neighbour_hist", "mechanism_gains",
+        "mechanism_reduced", "mechanism_shuffle_gains", "knn_neighbour",
+        "control_d_sweep", "criterion_4prime_report", "criterion_4prime_gains",
+    ):
         path = os.path.join(here, f"data_{optional}.csv")
         if os.path.isfile(path):
             D[optional] = pd.read_csv(path)
+    crit_path = os.path.join(here, "data_knn_criteria.json")
+    if os.path.isfile(crit_path):
+        import json
+        D["knn_criteria"] = json.load(open(crit_path))
     return D
 
 
@@ -1047,12 +1056,170 @@ def figS4(D, out):
     save(fig, out, "FigS4_failure_modes")
 
 
+# ================================================================= FIG S5
+def figS5(D, out):
+    need = ("knn_exclusion", "knn_strata", "control_d_sweep", "criterion_4prime_report")
+    if not all(k in D for k in need):
+        print("FigS5 skipped (missing Phase 8 tables)")
+        return
+    EX, ST = D["knn_exclusion"], D["knn_strata"]
+    NH = D.get("knn_neighbour_hist")
+    NBR = D.get("knn_neighbour")
+    DS = D["control_d_sweep"]
+    CVR = D["criterion_4prime_report"]
+    crit = D.get("knn_criteria") or {}
+    fig = plt.figure(figsize=(W_FULL, 230 * MM))
+
+    # a — exclusion curves
+    head_fig(fig, 0.0, 0.975, "a", "Training exclusion (kNN median vs Δ)")
+    ax = fig.add_axes([0.08, 0.78, 0.40, 0.14])
+    for method, ls in (("lds", "-"), ("pca", "--")):
+        sub = EX[(EX.source == "sorted") & (EX.method == method) & (EX.decoder == "knn")]
+        for s in range(5):
+            row = sub[sub.seed == s].sort_values("delta_s")
+            ax.plot(row.delta_s, row.median_err, color=COL[method], lw=0.55, alpha=0.35, ls=ls)
+        g = sub.groupby("delta_s").median_err.mean()
+        ax.plot(g.index, g.values, color=EDGE[method], lw=1.3, ls=ls, label=SHORT[method])
+    ax.set_xlabel("Δ excluded from train end (s)"); ax.set_ylabel("Median error (cm)")
+    ax.legend(fontsize=5.5, loc="upper right", frameon=True, fancybox=False, edgecolor="none")
+
+    # b — pooled neighbour-time histogram
+    head_fig(fig, 0.52, 0.975, "b", "Neighbour |Δt| (LDS kNN, sorted, pooled)")
+    ax = fig.add_axes([0.56, 0.78, 0.38, 0.14])
+    if NH is not None and len(NH):
+        keys = [k for k in NH.key.unique() if "sorted_lds" in str(k) or str(k).endswith("sorted_lds")]
+        # keys like seed0_sorted_lds
+        keys = [k for k in NH.key.unique() if "sorted" in str(k) and str(k).endswith("_lds")]
+        if keys:
+            # align bins by bin_lo; sum counts
+            pieces = [NH[NH.key == k].set_index("bin_lo")["count"] for k in keys]
+            pooled = pieces[0].copy()
+            for p in pieces[1:]:
+                pooled = pooled.add(p, fill_value=0.0)
+            pooled = pooled.sort_index()
+            sub0 = NH[NH.key == keys[0]].sort_values("bin_lo")
+            width = float((sub0.bin_hi - sub0.bin_lo).median())
+            centers = pooled.index.values + width / 2.0
+            ax.bar(centers, pooled.values, width=width * 0.9,
+                   color=COL["lds"], edgecolor=EDGE["lds"], lw=0.3)
+    med = float("nan")
+    if NBR is not None and len(NBR):
+        meds = NBR[(NBR.source == "sorted") & (NBR.method == "lds")].median_abs_dt_s.values
+        if len(meds):
+            med = float(np.median(meds))
+            ax.axvline(med, color=INK, lw=0.9, label=f"median {med:.0f} s")
+    ax.axvline(60.0, color=FAILC, lw=0.8, ls=(0, (3, 2)), label="60 s")
+    ax.set_xlabel("|t_test − t_neighbour| (s)"); ax.set_ylabel("Count")
+    ax.legend(fontsize=5.2, loc="upper right", frameon=True, fancybox=False, edgecolor="none")
+
+    # c — typical vs atypical, paired by seed
+    head_fig(fig, 0.0, 0.70, "c", "Typical vs atypical (kNN; paired by seed)")
+    ax = fig.add_axes([0.08, 0.50, 0.40, 0.14])
+    for s in range(5):
+        for j, st in enumerate(("typical", "atypical")):
+            vals = []
+            for method in ("pca", "lds"):
+                sub = ST[(ST.source == "sorted") & (ST.method == method)
+                         & (ST.decoder == "knn") & (ST.stratum == st) & (ST.seed == s)]
+                vals.append(float(sub.median_err.iloc[0]) if len(sub) else float("nan"))
+            x0, x1 = j * 2.5, j * 2.5 + 1
+            ax.plot([x0, x1], vals, color=MUTED, lw=0.5, zorder=1)
+            ax.scatter([x0], [vals[0]], s=16, facecolor=COL["pca"], edgecolor=EDGE["pca"], lw=0.6, zorder=3)
+            ax.scatter([x1], [vals[1]], s=16, facecolor=COL["lds"], edgecolor=EDGE["lds"], lw=0.6, zorder=3)
+    ax.set_xticks([0.5, 3.0], ["Typical", "Atypical"])
+    ax.set_ylabel("Median error (cm)")
+    ax.legend(handles=[
+        Line2D([0], [0], marker="o", color="none", markerfacecolor=COL["pca"],
+               markeredgecolor=EDGE["pca"], markersize=5, label="PCA"),
+        Line2D([0], [0], marker="o", color="none", markerfacecolor=COL["lds"],
+               markeredgecolor=EDGE["lds"], markersize=5, label="LDS"),
+    ], fontsize=5.5, loc="upper right")
+
+    # d — fixed d=20 vs CV-selected d
+    head_fig(fig, 0.52, 0.70, "d", "Fixed d=20 vs CV-selected d (kNN)")
+    ax = fig.add_axes([0.56, 0.50, 0.38, 0.14])
+    # x groups: grid_bvc@20, grid_bvc@CV, all@20, all@CV
+    labels = ["G+BVC\nd=20", "G+BVC\nCV-d", "All\nd=20", "All\nCV-d"]
+    for gi, (subset, mode) in enumerate((
+        ("grid_bvc", "fixed20"), ("grid_bvc", "cv"), ("all", "fixed20"), ("all", "cv"),
+    )):
+        for j, method in enumerate(("pca", "lds")):
+            if mode == "fixed20":
+                sub = DS[(DS.subset == subset) & (DS.method == method)
+                         & (DS.decoder == "knn") & (DS.d == 20)].sort_values("seed")
+                vals = sub.median_err.values
+            else:
+                sub = CVR[(CVR.subset == subset) & (CVR.method == method)].sort_values("seed")
+                vals = sub.knn_median.values
+            x = gi * 2.4 + j * 0.55
+            ax.scatter(np.full(len(vals), x), vals, s=14,
+                       facecolor=COL[method], edgecolor=EDGE[method], lw=0.6, zorder=3)
+            if len(vals):
+                ax.plot([x - 0.18, x + 0.18], [vals.mean(), vals.mean()], color=EDGE[method], lw=1.1)
+    ax.set_xticks([0.3, 2.7, 5.1, 7.5], labels, fontsize=5.5)
+    ax.set_ylabel("Median error (cm)")
+    ax.legend(handles=[
+        Line2D([0], [0], marker="o", color="none", markerfacecolor=COL["pca"],
+               markeredgecolor=EDGE["pca"], markersize=5, label="PCA"),
+        Line2D([0], [0], marker="o", color="none", markerfacecolor=COL["lds"],
+               markeredgecolor=EDGE["lds"], markersize=5, label="LDS"),
+    ], fontsize=5.5, loc="upper right")
+
+    # e — criteria table
+    head_fig(fig, 0.0, 0.40, "e", "Pre-registered and post-hoc criteria")
+    ax = fig.add_axes([0.08, 0.05, 0.86, 0.30])
+    ax.set_xlim(0, 1)
+    ax.set_ylim(0, 1)
+    ax.axis("off")
+
+    def _k5(block, key="n_pass"):
+        if not block:
+            return "—"
+        if key in block and block[key] is not None:
+            return f"{int(block[key])}/5"
+        if "n_lds_better" in block and block["n_lds_better"] is not None:
+            return f"{int(block['n_lds_better'])}/5"
+        if "n_lds_gain_negative" in block and block["n_lds_gain_negative"] is not None:
+            return f"{int(block['n_lds_gain_negative'])}/5"
+        return "—"
+
+    rows = [
+        ("1 Exclusion Δ=30 s", crit.get("exclusion_delta30"), "n_pass"),
+        ("2 Neighbour |Δt|", crit.get("neighbour_median_dt"), "n_pass"),
+        ("3 Strata atypical", crit.get("strata_lds_vs_pca_atypical"), "n_lds_better"),
+        ("4 Grid+BVC @ primary_d", crit.get("cell_type_grid_bvc"), "n_lds_better"),
+        ("4′ Grid+BVC @ CV-d", crit.get("cell_type_grid_bvc_cv_d"), "n_lds_better"),
+        ("(a) HD+speed LDS gain", crit.get("path_integration_a"), "n_lds_gain_negative"),
+        ("(b) Shuffle removes gain", crit.get("path_integration_b"), "n_pass"),
+        ("(c) Channel-count / noise", crit.get("control_c_channel_count"), "n_pass"),
+        ("(d) Fixed-d artifact", crit.get("control_d_fixed_d"), "n_pass"),
+    ]
+    ax.text(0.02, 0.96, "Criterion", fontsize=6.5, fontweight="bold", va="top", transform=ax.transAxes)
+    ax.text(0.58, 0.96, "Status", fontsize=6.5, fontweight="bold", va="top", transform=ax.transAxes)
+    ax.text(0.78, 0.96, "k/5", fontsize=6.5, fontweight="bold", va="top", transform=ax.transAxes)
+    ax.plot([0.02, 0.98], [0.90, 0.90], color=GRID, lw=0.6, transform=ax.transAxes)
+    for i, (name, block, key) in enumerate(rows):
+        y = 0.82 - i * 0.088
+        status = (block or {}).get("status", "—")
+        note = ""
+        if name.startswith("4 ") and status == "FAIL":
+            note = " (as registered)"
+        if name.startswith("4′"):
+            note = " (post hoc)"
+        ax.text(0.02, y, name + note, fontsize=6.2, va="center", transform=ax.transAxes)
+        col = EDGE["lds"] if status == "PASS" else (FAILC if status == "FAIL" else MUTED)
+        ax.text(0.58, y, status, fontsize=6.2, fontweight="bold", color=col, va="center",
+                transform=ax.transAxes)
+        ax.text(0.78, y, _k5(block, key), fontsize=6.2, va="center", transform=ax.transAxes)
+    save(fig, out, "FigS5_phase8")
+
+
 if __name__ == "__main__":
     ap = argparse.ArgumentParser(); ap.add_argument("--out", default="figures")
     ap.add_argument("--data", default=os.path.dirname(os.path.abspath(__file__)))
     a = ap.parse_args()
     os.makedirs(a.out, exist_ok=True)
     D = load(a.data)
-    for f in (fig1, fig2, fig3, fig4, fig5, fig6, fig7, figS1, figS2, figS3, figS4):
+    for f in (fig1, fig2, fig3, fig4, fig5, fig6, fig7, figS1, figS2, figS3, figS4, figS5):
         f(D, a.out)
     print("wrote", sorted(x for x in os.listdir(a.out) if not x.startswith("prev")))

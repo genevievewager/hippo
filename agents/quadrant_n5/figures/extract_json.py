@@ -221,5 +221,37 @@ if os.path.isdir(PRESS):
         import shutil
         shutil.copy(crit_path, os.path.join(OUT, "data_knn_criteria.json"))
         print("knn_criteria copied")
+    hist_npz = os.path.join(PRESS, "neighbour_hist.npz")
+    if os.path.isfile(hist_npz):
+        import numpy as np
+        z = np.load(hist_npz)
+        hist_rows = []
+        for key in z.files:
+            if not key.endswith("_counts"):
+                continue
+            prefix = key[: -len("_counts")]
+            edges = z[f"{prefix}_edges"]
+            counts = z[key]
+            for i, c in enumerate(counts):
+                hist_rows.append(dict(
+                    key=prefix, bin_lo=float(edges[i]), bin_hi=float(edges[i + 1]),
+                    count=float(c),
+                ))
+        if hist_rows:
+            pd.DataFrame(hist_rows).to_csv(os.path.join(OUT, "data_knn_neighbour_hist.csv"), index=False)
+            print("knn_neighbour_hist", len(hist_rows))
+    for src_name, dest in (
+        ("mechanism_gains.csv", "mechanism_gains"),
+        ("mechanism_reduced.csv", "mechanism_reduced"),
+        ("mechanism_shuffle_gains.csv", "mechanism_shuffle_gains"),
+        ("control_d_sweep.csv", "control_d_sweep"),
+        ("criterion_4prime_report.csv", "criterion_4prime_report"),
+        ("criterion_4prime_gains.csv", "criterion_4prime_gains"),
+        ("control_noise.csv", "control_noise"),
+    ):
+        path = os.path.join(PRESS, src_name)
+        if os.path.isfile(path):
+            pd.read_csv(path).to_csv(os.path.join(OUT, f"data_{dest}.csv"), index=False)
+            print(dest, "copied")
 else:
     print("knn_pressure skipped (absent)")
