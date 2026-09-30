@@ -1,0 +1,6 @@
+#!/usr/bin/env bash
+# Install from repo root:
+#   ln -sf ../../scripts/hooks/pre-commit .git/hooks/pre-commit
+set -euo pipefail
+ROOT="$(git rev-parse --show-toplevel)"
+exec python3 "${ROOT}/scripts/hooks/check_no_junk.py"
