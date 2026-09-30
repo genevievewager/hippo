@@ -85,11 +85,13 @@ def render_inherited_observation(
     run: PipelineRun | None,
     *,
     allow_benchmark_override: bool = False,
+    sweep_key: str = "pipeline_bench_sweep_windows",
 ) -> tuple[float | None, bool]:
     """Display the inherited pipeline window. Returns (window_s, benchmark_sweep).
 
     In pipeline mode the window is inherited. Benchmark override is an explicit
-    checkbox, never a silent independent selector.
+    checkbox, never a silent independent selector. ``sweep_key`` must be unique
+    per page so sweep UI state does not leak across views.
     """
     inherited = run.inherited_window_s() if run is not None else None
     if inherited is None:
@@ -107,10 +109,10 @@ def render_inherited_observation(
         sweep = st.checkbox(
             "Benchmark: compare additional cached windows",
             value=False,
-            key="pipeline_bench_sweep_windows",
+            key=sweep_key,
             help=(
-                "Targeted / full benchmark may sweep W. Pipeline mode keeps "
-                "the inherited observation window."
+                "This is a window *grid*, not the active pipeline window. "
+                "Each selected W is a separate observation hash."
             ),
         )
     return float(inherited), bool(sweep)

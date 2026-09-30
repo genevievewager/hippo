@@ -88,12 +88,13 @@ Experiment Setup
 → Neural Simulation
 → Feature Construction
 → Latent Representations
-→ Decoder Benchmark
+→ Quadrant Comparison   ← primary scientific analysis
+→ Decoder Benchmark     ← Quick / Targeted / Full exploration
 → Realtime Replay
 → Live Deployment
 ```
 
-Use **Experiment Setup** to generate or load a dataset (sets the shared **Active Dataset**), then continue through the pages above. Pages are views into one connected pipeline run (`pipeline_run.json` on the experiment). Feature Construction owns the active observation `O(W, F)`; later pages **inherit** that window in pipeline mode rather than choosing a new `W`. Decoder Benchmark can still sweep cached windows in Targeted / Full modes. Changing an upstream observation marks representation, decoder, and replay **stale** until you explicitly re-run those stages.
+Use **Experiment Setup** to generate or load a dataset (sets the shared **Active Dataset**), then continue through the pages above. Pages are views into one connected pipeline run (`pipeline_run.json` on the experiment). Feature Construction owns the active observation `O(W, F)`; later pages **inherit** that window in pipeline mode rather than choosing a new `W`. **Quadrant Comparison** is the default scientific analysis (four representation classes on that shared observation). Decoder Benchmark can still sweep cached windows in Targeted / Full modes. Changing an upstream observation marks representation, decoder, and replay **stale** until you explicitly re-run those stages.
 
 ### Active pipeline window vs window benchmark sweep
 
@@ -121,6 +122,22 @@ Fitted transforms include `train_frac` and `seed` so test data cannot leak into 
 CLI profiles (`quick` / `standard` / `manifolds` / `full` / `feature_robustness`) still set decoder-search defaults; they are not replaced.
 
 A four-stage search helper (`realtime.benchmark_plan.default_staged_search`) can compare timescales, then representations, then decoders, then finalists. It is not auto-applied to saved results.
+
+### Primary scientific analysis: quadrant comparison
+
+The pipeline supports broad `F × E × D × W` experimentation. The **default scientific focus** is a controlled comparison of representation *class*:
+
+```text
+                Static            Dynamic
+Linear          linear_static     linear_dynamic
+Nonlinear       nonlinear_static  nonlinear_dynamic
+```
+
+A method is an implementation of a quadrant (`global_pca` is linear_static; `diffusion_nystrom` is nonlinear_static; `global_lds` is linear_dynamic). The quadrant itself is the scientific category. Multiple implementations can exist inside one cell.
+
+**Quadrant Comparison** consumes the upstream FeatureDataset (same spikes, feature construction, `W`, `update_dt`, train/test split, target, and decoder family) and branches only at representation `E`. It does not build four independent pipelines. Window `W` is inherited from observation construction; a labeled **Window Sweep** runs a separate fair comparison per `W`. Nonlinear-dynamic is shown as not implemented until a valid method exists — no placeholder results are fabricated.
+
+Method-level metrics are preserved (optionally grouped by quadrant). Advanced controls on that page expose extra implementations and timescale sweeps. The full factorial search remains an explicit opt-in on **Decoder Benchmark**. Simulation today and future real Neuropixels recordings are intended to feed the same FeatureDataset → quadrant experiment path.
 
 ### Invalidation
 
@@ -741,6 +758,8 @@ Complete catalog and stems: [`docs/visualizations.md`](docs/visualizations.md).
 | [`docs/visualizations.md`](docs/visualizations.md) | Figure catalog |
 | [`docs/output_schema.md`](docs/output_schema.md) | Artifact tree |
 | [`docs/cli_reference.md`](docs/cli_reference.md) | Profiles and CLI flags |
+| [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) | Pipeline ownership, quadrants, config layers |
+| [`docs/PIPELINE_CONTRACTS.md`](docs/PIPELINE_CONTRACTS.md) | Stage contracts (`AnalysisConfig`, features, E, D) |
 | [`docs/developer.md`](docs/developer.md) | Modules, utilities, tests |
 
 ---

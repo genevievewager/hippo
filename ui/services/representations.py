@@ -13,6 +13,12 @@ from realtime.manifold_features import (
     OFFLINE_ONLY_FEATURE_MODES,
     is_realtime_compatible_feature_mode,
 )
+from realtime.representation_registry import (
+    QUADRANT_DISPLAY_LABELS,
+    canonicalize_quadrant,
+    get_spec,
+    methods_for_quadrant,
+)
 from realtime.search_space import resolve_manifold_alias
 
 
@@ -93,3 +99,41 @@ def format_representation_label(name: str) -> str:
     caps = representation_capabilities(name)
     short = "REALTIME" if caps["supports_realtime"] else "OFFLINE"
     return f"{name}  [{short}]"
+
+
+def quadrant_display_label(qid: str) -> str:
+    """Human label for a canonical or legacy quadrant id."""
+    canon = canonicalize_quadrant(qid)
+    return QUADRANT_DISPLAY_LABELS.get(canon, REPRESENTATION_QUADRANT_LABELS.get(qid, qid))
+
+
+def selectable_methods_for_quadrant(qid: str, *, advanced: bool = False) -> tuple[str, ...]:
+    """Methods shown in Quadrant Comparison pickers.
+
+    Default matches the existing public UI list (no ``layer_pca``). Advanced
+    adds other implemented methods in the same quadrant, including layer PCA.
+    """
+    canon = canonicalize_quadrant(qid)
+    legacy = {
+        "linear_static": "static_linear",
+        "nonlinear_static": "static_nonlinear",
+        "linear_dynamic": "dynamic_linear",
+        "nonlinear_dynamic": "dynamic_nonlinear",
+    }.get(canon, qid)
+    public = tuple(REPRESENTATION_QUADRANTS.get(legacy, ()))
+    if not advanced:
+        return public
+    extra = methods_for_quadrant(canon, implemented_only=True, public_ui_only=False)
+    # Keep public names first (counts alias), then extra canonical names.
+    out: list[str] = list(public)
+    seen = set(public)
+    seen.add("identity")  # counts already covers identity in the public list
+    for name in extra:
+        if name in seen or name == "identity":
+            continue
+        spec = get_spec(name)
+        if spec.quadrant == "unknown" or spec.supervised:
+            continue
+        out.append(name)
+        seen.add(name)
+    return tuple(out)

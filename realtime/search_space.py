@@ -32,6 +32,7 @@ ALL_EMBEDDING_TYPES = (
     "global_isomap",
     "global_isomap_distilled",
     "diffusion_nystrom",
+    "raw_lag",
     # Dynamic latent-state embeddings
     "global_lds",
     "gpfa",
@@ -64,6 +65,7 @@ LEGACY_MODE_TO_FE: dict[str, tuple[str, str]] = {
     "global_isomap": ("counts", "global_isomap"),
     "global_isomap_distilled": ("counts", "global_isomap_distilled"),
     "diffusion_nystrom": ("counts", "diffusion_nystrom"),
+    "raw_lag": ("counts", "raw_lag"),
     "global_lds": ("counts", "global_lds"),
     "gpfa": ("counts", "gpfa"),
 }
@@ -75,6 +77,7 @@ MANIFOLD_CLI_ALIASES: dict[str, str] = {
     "none": "identity",
     "identity": "identity",
     "no_manifold": "identity",
+    "raw_lag": "raw_lag",
 }
 
 
@@ -178,7 +181,7 @@ def _expand_embedding_jobs(
     isomap_n_neighbors: tuple[int, ...],
     n_landmarks: tuple[int, ...] = (DEFAULT_N_LANDMARKS,),
 ) -> list[tuple[str, str, int | None, int | None]]:
-    if embedding_type == "identity" or embedding_type == "bayesian_place_tuning":
+    if embedding_type in ("identity", "bayesian_place_tuning", "raw_lag"):
         return [(feature_type, embedding_type, None, None)]
 
     if is_diffusion_nystrom(embedding_type):

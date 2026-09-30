@@ -31,6 +31,7 @@ from ui.views import (
     live_deployment,
     manifold_explorer,
     neural_simulation,
+    quadrant_comparison,
     realtime_replay,
 )
 from ui.services.datasets import default_outputs_root
@@ -80,6 +81,7 @@ pages = {
         st.Page(_page(manifold_explorer), title="Latent Representations", icon=":material/grain:"),
     ],
     "Decoding": [
+        st.Page(_page(quadrant_comparison), title="Quadrant Comparison", icon=":material/grid_view:"),
         st.Page(_page(decoder_benchmark), title="Decoder Benchmark", icon=":material/play_arrow:"),
         st.Page(_page(realtime_replay), title="Realtime Replay", icon=":material/timeline:"),
         st.Page(_page(live_deployment), title="Live Deployment", icon=":material/sensors:"),

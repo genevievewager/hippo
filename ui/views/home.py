@@ -44,8 +44,10 @@ def render(_outputs_root: Path) -> None:
 
     st.subheader("Representation classes")
     st.markdown(
-        "Latent Representations, Decoder Benchmark, and Realtime Replay "
-        "organize `E` as a 2×2 grid (linearity × temporal dynamics):"
+        "The pipeline is the organizing spine. **Quadrant Comparison** is the "
+        "primary scientific analysis of representation class `E` "
+        "(linearity × temporal dynamics). Methods are implementations of a "
+        "quadrant — not the quadrant itself."
     )
     st.markdown(
         """
@@ -86,12 +88,11 @@ def render(_outputs_root: Path) -> None:
     st.markdown(
         "Use **Experiment Setup** to generate or load a dataset — that sets the "
         "shared **Active Dataset** for every downstream page. On **Neural "
-        "Simulation**, choose **Spike source** (sorted vs ground truth); "
-        "Feature Construction, Latent Representations, Decoder Benchmark, and "
-        "Realtime Replay show those choices as read-only context banners. "
-        "Live Open Ephys is a stub; Replay on Live Deployment uses stored "
-        "sorted spikes. Simulation-trained bundles are **pipeline tests**, "
-        "not scientifically validated behavioral decoding."
+        "Simulation**, choose **Spike source** (sorted vs ground truth). "
+        "**Feature Construction** commits the neural observation `O(W, F)`. "
+        "**Quadrant Comparison** is the default scientific analysis: four "
+        "representation classes on that shared observation. Decoder Benchmark "
+        "and Realtime Replay remain available for broader search and replay."
     )
     st.markdown(
         """
@@ -99,9 +100,10 @@ def render(_outputs_root: Path) -> None:
 |------|------|
 | Experiment Setup | Generate or load a dataset; sets **Active Dataset** |
 | Neural Simulation | Inspect rates, spikes, sorting quality; sets **Spike source** |
-| Feature Construction | Build and inspect observation sets `F` |
+| Feature Construction | Build and inspect observation sets `F` (owns window `W`) |
 | Latent Representations | Fit and cache embeddings `E` in the 2×2 grid |
-| Decoder Benchmark | Search `D × W` (continuous and discrete jobs); reuse cached transforms |
+| Quadrant Comparison | Controlled four-quadrant analysis on the shared observation (primary) |
+| Decoder Benchmark | Quick / Targeted / Full `F × E × D × W` search |
 | Realtime Replay | Closed-loop comparison of the three realtime-capable representations |
 | Live Deployment | Pack a frozen `F → E → D` bundle; Replay now, Open Ephys later |
 """

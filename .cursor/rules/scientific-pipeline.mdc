@@ -1,0 +1,58 @@
+---
+description: Scientific invariants for the hippocampal BCI pipeline. Prefer correctness and consistent pipeline state over UI convenience.
+alwaysApply: true
+---
+
+# Scientific pipeline
+
+This is a hippocampal BCI research codebase. The central experiment compares neural representations across four quadrants (linearity × temporal type):
+
+- linear static
+- nonlinear static
+- linear dynamic
+- nonlinear dynamic
+
+A quadrant is a category. A method is one implementation (`realtime/representation_registry.py`). Do not invent a nonlinear-dynamic method. Do not treat GPFA as nonlinear-dynamic.
+
+## Priorities (in order)
+
+1. scientific correctness
+2. reproducibility
+3. consistent pipeline state
+4. causal / realtime validity
+5. runtime efficiency
+6. UI convenience
+
+## Never silently change
+
+- train/test splitting
+- causal window definitions (`[t−W, t)`)
+- feature construction
+- behavioral target construction
+- representation definitions
+- decoder evaluation metrics
+- realtime eligibility (`offline_only` / `realtime_capable`)
+
+Before changing any of these, state the change explicitly in the reply.
+
+## Configuration ownership
+
+- `ObservationConfig` owns `W`, `update_dt`, feature set, spike source.
+- `AnalysisConfig` is the analysis overlay (E, D, target, causal, train split) wrapping that observation.
+- `st.session_state` may hold UI chrome and an overlay dict. It is not a second source of `W`.
+- `AnalysisConfig.resolve(observation, overlay)` always takes the window from the committed observation.
+- Downstream stages consume upstream artifacts and hashes. Do not rebuild features/representations from independent page widgets.
+
+Active pipeline window ≠ window benchmark grid. Sweeps must be explicit and separately hashed.
+
+## UI vs backend
+
+UI code orchestrates backend analysis functions. Do not implement fitting, splitting, or metrics inside Streamlit callbacks when `realtime/` already does it.
+
+CLI (`run_simulation.py`, `run_decoder.py`, `run_visualizations.py`) and Streamlit must call the same core functions.
+
+## Refactors
+
+Preserve numerical behavior unless the user asked to change it. Preserve saved-output compatibility where reasonable. Prefer small patches. Avoid unnecessary renaming and broad rewrites. Run relevant tests after scientific or pipeline changes.
+
+Experimental flexibility (F × E × D × W × C) stays. Secondary controls must not obscure or override the quadrant experiment.

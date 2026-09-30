@@ -95,6 +95,7 @@ from realtime.spike_features import build_causal_spike_matrix
 from realtime.train_decoder import causal_train_test_split, infer_arena_bounds
 from realtime.trigger_comparison import default_trigger_rules
 from realtime.transform_cache import (
+    feature_transform_dirname,
     find_feature_transform_in_roots,
     find_manifold_transform_in_roots,
     try_load_feature_transform,
@@ -108,6 +109,7 @@ from realtime.artifact_cache import (
 from realtime.pipeline_artifacts import (
     ArtifactOrigin,
     ObservationConfig,
+    hash_train_indices,
     write_provenance,
 )
 
@@ -212,6 +214,8 @@ class ComparisonRunConfig:
     decode_windows: tuple[float, ...] = DEFAULT_DECODE_WINDOWS
     update_dt: float = 0.050
     train_frac: float = 0.70
+    # Purge gap after the train cut. 0 preserves historical splits.
+    split_gap_s: float = 0.0
     # Legacy combined modes (backward compatible with --feature-modes).
     feature_modes: tuple[str, ...] = QUICK_FEATURE_MODES
     # New F × E search dimensions (when set, expand Cartesian product).
@@ -227,6 +231,10 @@ class ComparisonRunConfig:
     lagged_coupling_lags: tuple[int, ...] = (1, 2)
     run_feature_ablation: bool = False
     compute_latent_stability: bool = True
+    # Matplotlib figures for LDS/GPFA. Off for UI worker threads (can deadlock).
+    write_dynamic_latent_figures: bool = True
+    # Association tables / reconstruction metrics for dynamic E (slow; not required to decode).
+    compute_dynamic_latent_extras: bool = True
     manifold_n_components: tuple[int, ...] = DEFAULT_MANIFOLD_N_COMPONENTS
     isomap_n_neighbors: tuple[int, ...] = (DEFAULT_ISOMAP_N_NEIGHBORS,)
     isomap_pre_pca_enabled: bool = True
@@ -639,7 +647,9 @@ def run_decoder_comparison(
         aligned = align_extended_behavior_to_decoder_times(
             data["behavior_df"], decode_times, data["summary"]
         )
-        train_mask, test_mask = causal_train_test_split(decode_times, config.train_frac)
+        train_mask, test_mask = causal_train_test_split(
+            decode_times, config.train_frac, gap_s=float(config.split_gap_s),
+        )
         beh_train = aligned.loc[train_mask].reset_index(drop=True)
         beh_test = aligned.loc[test_mask].reset_index(drop=True)
         decode_times_test = decode_times[test_mask]
@@ -673,6 +683,9 @@ def run_decoder_comparison(
                 simulation_run_id=str(config.run_id or config.input_dir.name),
                 seed=int(config.seed),
                 train_frac=float(config.train_frac),
+                train_index_hash=hash_train_indices(train_mask),
+                session_s=float(data["session_duration"]),
+                config_hash=getattr(config, "experiment_config_hash", None),
             )
             extractor = NeuralFeatureExtractor.from_feature_set(
                 feature_set,
@@ -781,12 +794,14 @@ def run_decoder_comparison(
                     continue
 
                 # Leakage rule: fit F / E on train partition only (or reuse
-                # previously fit transforms for the same W/fs/E under output_dir).
+                # a previously fit transform whose fit_hash matches).
                 X_train_raw = X_feat[train_mask]
                 X_test_raw = X_feat[test_mask]
-                f_name = (
-                    f"{feature_set}__{f_type_eff}_w"
-                    f"{int(round(decode_window * 1000)):04d}ms"
+                f_name = feature_transform_dirname(
+                    feature_set,
+                    f_type_eff,
+                    decode_window,
+                    fit_hash=observation.fit_hash(),
                 )
                 f_path = feature_dir / f_name
                 reused_f = False
@@ -796,6 +811,7 @@ def run_decoder_comparison(
                         feature_set=feature_set,
                         feature_type_eff=f_type_eff,
                         decode_window=decode_window,
+                        fit_hash=observation.fit_hash(),
                     )
                     if cached_f is not None:
                         loaded_f = try_load_feature_transform(cached_f)
@@ -810,17 +826,21 @@ def run_decoder_comparison(
                     write_provenance(f_path, {
                         "kind": "SpikeFeatureTransformer",
                         "observation": observation.to_dict(),
-                        "config_hash": observation.fit_hash(),
+                        "fit_hash": observation.fit_hash(),
+                        "config_hash": observation.config_hash,
                         "origin": ArtifactOrigin.COMPUTED.value,
                         "train_frac": float(config.train_frac),
                         "seed": int(config.seed),
+                        "train_index_hash": observation.train_index_hash,
+                        "session_s": observation.session_s,
                         "includes_fitted_transform": True,
                     })
                 else:
                     write_provenance(f_path, {
                         "kind": "SpikeFeatureTransformer",
                         "observation": observation.to_dict(),
-                        "config_hash": observation.fit_hash(),
+                        "fit_hash": observation.fit_hash(),
+                        "config_hash": observation.config_hash,
                         "origin": ArtifactOrigin.CACHE.value,
                         "includes_fitted_transform": True,
                     })
@@ -934,9 +954,16 @@ def run_decoder_comparison(
 
                     # Dynamic latents: causal filter train, then continue into test
                     # without reset (warm-start). Never use future test frames for train.
+                    # A14: LDS readouts train on Kalman-filtered latents, never RTS.
                     if is_dynamic_embedding(embedding_type) and hasattr(
                         unsupervised_embed, "transform"
                     ):
+                        n_dyn = int(X_train_f.shape[0] + X_test_f.shape[0])
+                        _progress(
+                            f"Causal filter · {embedding_type} · {n_dyn} samples",
+                            stage="Embedding",
+                            task=f"{embedding_type} filter",
+                        )
                         causal_flag = embedding_type != "gpfa"
                         X_train_shared = unsupervised_embed.transform(
                             X_train_f, causal=causal_flag, reset=True,
@@ -1063,16 +1090,21 @@ def run_decoder_comparison(
                         "geodesic_distance_correlation": geo.get("geodesic_distance_correlation"),
                     }
                     # Dynamic latent-state metrics + association table + figures (once per E).
-                    if is_dynamic_embedding(embedding_type):
+                    if (
+                        is_dynamic_embedding(embedding_type)
+                        and getattr(config, "compute_dynamic_latent_extras", True)
+                    ):
+                        _progress(
+                            f"Dynamic extras · {embedding_type}",
+                            stage="Embedding",
+                            task=f"{embedding_type} extras",
+                        )
                         try:
                             from realtime.dynamic_latents.behavioral_association import (
                                 associate_latent_with_behavior,
                             )
                             from realtime.dynamic_latents.metrics import (
                                 compute_dynamic_latent_metrics,
-                            )
-                            from realtime.dynamic_latents.visualization import (
-                                generate_dynamic_latent_figures,
                             )
 
                             Z_all_dyn = np.vstack([X_train_shared, X_test_shared])
@@ -1113,20 +1145,30 @@ def run_decoder_comparison(
                             beh_assoc.to_csv(assoc_path, index=False)
                             shared_extras["behavioral_association_path"] = str(assoc_path)
 
-                            fig_dir = (
-                                Path(config.input_dir) / "figures" / "dynamic" / embedding_type
-                            )
-                            fig_paths = generate_dynamic_latent_figures(
-                                Z=Z_all_dyn,
-                                behavior=beh_for_assoc,
-                                output_dir=fig_dir,
-                                representation=embedding_type,
-                                causal_status=str(causal_status),
-                            )
-                            shared_extras["dynamic_figure_paths"] = json.dumps(fig_paths)
+                            if getattr(config, "write_dynamic_latent_figures", True):
+                                from realtime.dynamic_latents.visualization import (
+                                    generate_dynamic_latent_figures,
+                                )
+
+                                fig_dir = (
+                                    Path(config.input_dir) / "figures" / "dynamic" / embedding_type
+                                )
+                                fig_paths = generate_dynamic_latent_figures(
+                                    Z=Z_all_dyn,
+                                    behavior=beh_for_assoc,
+                                    output_dir=fig_dir,
+                                    representation=embedding_type,
+                                    causal_status=str(causal_status),
+                                )
+                                shared_extras["dynamic_figure_paths"] = json.dumps(fig_paths)
                         except Exception as dyn_exc:
                             print(f"  warn dynamic extras for {embedding_type}: {dyn_exc}")
                     if config.compute_latent_stability and embedding_type != "identity":
+                        _progress(
+                            f"Latent stability · {embedding_type}",
+                            stage="Embedding",
+                            task=f"{embedding_type} stability",
+                        )
                         if is_dynamic_embedding(embedding_type):
                             Z_all = np.vstack([X_train_shared, X_test_shared])
                         else:
@@ -1561,7 +1603,9 @@ def _base_row(
     embedding_type: str = "identity",
     feature_set: str = "counts",
 ) -> dict[str, Any]:
-    return {
+    from realtime.representation_registry import embedding_metadata_columns
+
+    row: dict[str, Any] = {
         "spike_source": config.spike_source,
         "source": config.spike_source,
         "feature_set": feature_set,
@@ -1583,7 +1627,12 @@ def _base_row(
         "n_units": len(data["unit_ids"]),
         "max_compute_ms": float(config.max_compute_ms),
         "max_effective_history_s": float(config.max_effective_history_s),
+        "train_frac": float(config.train_frac),
+        "split_gap_s": float(config.split_gap_s),
+        "seed": int(config.seed),
     }
+    row.update(embedding_metadata_columns(str(embedding_type)))
+    return row
 
 
 def _run_unit_ablation(
@@ -1614,7 +1663,9 @@ def _run_unit_ablation(
     aligned = align_extended_behavior_to_decoder_times(
         data["behavior_df"], decode_times, data["summary"]
     )
-    train_mask, test_mask = causal_train_test_split(decode_times, config.train_frac)
+    train_mask, test_mask = causal_train_test_split(
+        decode_times, config.train_frac, gap_s=float(config.split_gap_s),
+    )
     beh_train = aligned.loc[train_mask].reset_index(drop=True)
     beh_test = aligned.loc[test_mask].reset_index(drop=True)
 
@@ -1687,7 +1738,9 @@ def _run_population_ablation(
     aligned = align_extended_behavior_to_decoder_times(
         data["behavior_df"], decode_times, data["summary"]
     )
-    train_mask, test_mask = causal_train_test_split(decode_times, config.train_frac)
+    train_mask, test_mask = causal_train_test_split(
+        decode_times, config.train_frac, gap_s=float(config.split_gap_s),
+    )
     beh_train = aligned.loc[train_mask].reset_index(drop=True)
     beh_test = aligned.loc[test_mask].reset_index(drop=True)
 
