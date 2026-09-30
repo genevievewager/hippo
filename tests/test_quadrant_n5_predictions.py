@@ -23,6 +23,10 @@ from realtime.quadrant_n5_run import (
     analyze_source,
 )
 
+# Default suite: cheap methods only. Full stack lives in the slow test.
+FAST_METHOD_KEYS = ("raw", "pca")
+FAST_REDUCING_SWEEP = ("pca",)
+
 
 def _sha256(path: Path) -> str:
     return hashlib.sha256(path.read_bytes()).hexdigest()
@@ -99,6 +103,16 @@ def _test_cfg() -> dict:
     return cfg
 
 
+def _patch_method_keys(monkeypatch, keys: tuple[str, ...], reducing: tuple[str, ...]) -> None:
+    """Restrict analyze_source / export loops without changing production defaults."""
+    import agents.quadrant_n5.export_predictions as export_mod
+    import realtime.quadrant_n5_run as run
+
+    monkeypatch.setattr(run, "METHOD_KEYS", keys)
+    monkeypatch.setattr(run, "REDUCING_SWEEP", reducing)
+    monkeypatch.setattr(export_mod, "METHOD_KEYS", keys)
+
+
 def _json_payloads(src_dir: Path) -> dict[str, str]:
     out = {}
     for p in sorted(src_dir.glob("*.json")):
@@ -106,7 +120,7 @@ def _json_payloads(src_dir: Path) -> dict[str, str]:
     return out
 
 
-def _scientific_fields(src_dir: Path) -> dict[str, object]:
+def _scientific_fields(src_dir: Path, method_keys: tuple[str, ...] = METHOD_KEYS) -> dict[str, object]:
     """Fields the runner change must not touch (no elapsed / paths)."""
     keep = (
         "method", "primary_d", "ridge_alpha", "knn_k", "ridge", "knn",
@@ -114,7 +128,7 @@ def _scientific_fields(src_dir: Path) -> dict[str, object]:
         "inner_cv_ridge_median", "inner_cv_knn_median", "n_folds",
     )
     out: dict[str, object] = {}
-    for key in METHOD_KEYS:
+    for key in method_keys:
         rec = json.loads((src_dir / f"{key}.json").read_text())
         out[key] = {k: rec.get(k) for k in keep}
     summary = json.loads((src_dir / "source_summary.json").read_text())
@@ -126,6 +140,7 @@ def _scientific_fields(src_dir: Path) -> dict[str, object]:
 def test_export_reload_medians_match_tiny(tmp_path, monkeypatch):
     import realtime.quadrant_n5_run as run
 
+    _patch_method_keys(monkeypatch, FAST_METHOD_KEYS, FAST_REDUCING_SWEEP)
     monkeypatch.setattr(run, "OUTPUT_ROOT", tmp_path)
     sim = _tiny_sim(tmp_path / "seed_0" / "sim")
     cfg = _test_cfg()
@@ -136,7 +151,7 @@ def test_export_reload_medians_match_tiny(tmp_path, monkeypatch):
     assert sweep_path.is_file()
     sweep = json.loads(sweep_path.read_text())
     assert sweep["selection_rule"] == D_SWEEP_SELECTION_RULE
-    for key in REDUCING_SWEEP:
+    for key in FAST_REDUCING_SWEEP:
         rec = json.loads((src / f"{key}.json").read_text())
         assert "selection_rule" not in rec
         sel = next(
@@ -151,7 +166,9 @@ def test_export_reload_medians_match_tiny(tmp_path, monkeypatch):
     assert (src / "predictions.npz").is_file()
     npz = src / "predictions.npz"
     npz.unlink()
-    obs, preds, rows, method_source = reconstruct_source(cfg, 0, "sorted", tmp_path)
+    obs, preds, rows, method_source = reconstruct_source(
+        cfg, 0, "sorted", tmp_path, methods=FAST_METHOD_KEYS,
+    )
     assert all(r["pass"] for r in rows)
     write_predictions_npz(
         src / "predictions.npz", cfg, obs, preds, method_source=method_source,
@@ -159,7 +176,7 @@ def test_export_reload_medians_match_tiny(tmp_path, monkeypatch):
     assert _json_payloads(src) == before
     blob = np.load(src / "predictions.npz")
     y = np.asarray(blob["y_true"], dtype=float)
-    for key in METHOD_KEYS:
+    for key in FAST_METHOD_KEYS:
         rec = json.loads((src / f"{key}.json").read_text())
         for dec in ("ridge", "knn"):
             got = _euclid(np.asarray(blob[f"pred_{key}_{dec}"]), y)
@@ -172,10 +189,11 @@ def test_runner_json_byte_identical_with_and_without_npz(tmp_path, monkeypatch):
     import realtime.quadrant_n5_run as run
     import agents.quadrant_n5.export_predictions as export_mod
 
+    _patch_method_keys(monkeypatch, FAST_METHOD_KEYS, FAST_REDUCING_SWEEP)
     cfg = _test_cfg()
     streams = {"methods": 2, "data_seed": 2, "master_seed": 2, "seed_index": 0}
 
-    def _run(root: Path, write_npz: bool) -> dict[str, str]:
+    def _run(root: Path, write_npz: bool) -> None:
         monkeypatch.setattr(run, "OUTPUT_ROOT", root)
         if not write_npz:
             monkeypatch.setattr(export_mod, "write_predictions_npz", lambda *a, **k: None)
@@ -186,14 +204,13 @@ def test_runner_json_byte_identical_with_and_without_npz(tmp_path, monkeypatch):
             )
         sim = _tiny_sim(root / "seed_0" / "sim")
         run.analyze_source(cfg, sim, "sorted", streams, 0)
-        return _json_payloads(root / "seed_0" / "sorted")
 
     a = tmp_path / "without"
     b = tmp_path / "with"
     _run(a, write_npz=False)
     _run(b, write_npz=True)
-    assert _scientific_fields(a / "seed_0" / "sorted") == _scientific_fields(
-        b / "seed_0" / "sorted"
+    assert _scientific_fields(a / "seed_0" / "sorted", FAST_METHOD_KEYS) == _scientific_fields(
+        b / "seed_0" / "sorted", FAST_METHOD_KEYS
     )
     assert not (a / "seed_0" / "sorted" / "predictions.npz").is_file()
     npz = b / "seed_0" / "sorted" / "predictions.npz"
@@ -201,11 +218,34 @@ def test_runner_json_byte_identical_with_and_without_npz(tmp_path, monkeypatch):
     blob = np.load(npz)
     y = np.asarray(blob["y_true"], dtype=float)
     src = b / "seed_0" / "sorted"
-    for key in METHOD_KEYS:
+    for key in FAST_METHOD_KEYS:
         rec = json.loads((src / f"{key}.json").read_text())
         for dec in ("ridge", "knn"):
             got = _euclid(np.asarray(blob[f"pred_{key}_{dec}"]), y)
             assert abs(got["median"] - rec[dec]["median"]) <= 1e-6
+
+
+@pytest.mark.slow
+@pytest.mark.timeout(600)
+def test_analyze_source_full_method_stack_writes_predictions(tmp_path, monkeypatch):
+    """Full METHOD_KEYS stack (lds/gpfa/isomap/dm). Excluded from default runs."""
+    import realtime.quadrant_n5_run as run
+
+    monkeypatch.setattr(run, "OUTPUT_ROOT", tmp_path)
+    # Explicit full stack (do not inherit FAST patches from other tests).
+    monkeypatch.setattr(run, "METHOD_KEYS", METHOD_KEYS)
+    monkeypatch.setattr(run, "REDUCING_SWEEP", REDUCING_SWEEP)
+    sim = _tiny_sim(tmp_path / "seed_0" / "sim")
+    cfg = _test_cfg()
+    streams = {"methods": 3, "data_seed": 3, "master_seed": 3, "seed_index": 0}
+    analyze_source(cfg, sim, "sorted", streams, 0)
+    src = tmp_path / "seed_0" / "sorted"
+    for key in METHOD_KEYS:
+        assert (src / f"{key}.json").is_file()
+    assert (src / "predictions.npz").is_file()
+    assert (src / "d_sweep.json").is_file()
+    for key in ("dm", "lds", "isomap", "gpfa"):
+        assert key in REDUCING_SWEEP
 
 
 def test_export_float32_representation_reproduces_stored_medians():
