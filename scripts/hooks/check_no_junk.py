@@ -4,8 +4,9 @@
 Blocks:
   - files larger than 5 MB
   - data extensions: .npy .npz .parquet .h5 .nwb .mat .pkl
-  - paths under data/, outputs/, quadrant_n5/, reports/, analysis/**/outputs/,
-    or HIPPO_DATA_ROOT (when set)
+  - paths under root-only data/, outputs/, quadrant_n5/, reports/
+    (same anchoring as .gitignore `/quadrant_n5/` — not agents/quadrant_n5/),
+    analysis/**/outputs/, or HIPPO_DATA_ROOT (when set)
 
 Allowlist (fixtures):
   - configs/trajectories/*_regions.csv
@@ -25,12 +26,14 @@ from pathlib import Path
 
 MAX_BYTES = 5 * 1024 * 1024
 DATA_EXTS = {".npy", ".npz", ".parquet", ".h5", ".nwb", ".mat", ".pkl"}
-BLOCKED_PREFIXES = (
-    "data/",
-    "outputs/",
-    "quadrant_n5/",
-    "reports/",
-)
+# Root-anchored only (path must begin with these segments). Nested names like
+# agents/quadrant_n5/ are allowed — mirrors .gitignore `/quadrant_n5/`.
+BLOCKED_ROOT_DIRS = frozenset({
+    "data",
+    "outputs",
+    "quadrant_n5",
+    "reports",
+})
 ALLOWLIST = {
     "configs/trajectories/hpc_optimal_regions.csv",
     "configs/trajectories/lab_npx2_default_regions.csv",
@@ -94,7 +97,8 @@ def violations_for(path: str, *, root: Path, size: int | None) -> list[str]:
     ext = Path(norm).suffix.lower()
     if ext in DATA_EXTS:
         bad.append(f"extension {ext}")
-    if any(norm == p.rstrip("/") or norm.startswith(p) for p in BLOCKED_PREFIXES):
+    top = Path(norm).parts[0] if Path(norm).parts else ""
+    if top in BLOCKED_ROOT_DIRS:
         bad.append("blocked path prefix")
     if is_under_analysis_outputs(norm):
         bad.append("under analysis/**/outputs/")

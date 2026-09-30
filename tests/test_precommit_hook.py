@@ -52,3 +52,22 @@ def test_rejects_file_over_5mb(repo_root: Path) -> None:
 def test_accepts_fixtures(repo_root: Path, rel: str) -> None:
     errors = hook.check_paths([rel], root=repo_root)
     assert errors == []
+
+
+def test_accepts_agents_quadrant_n5(repo_root: Path) -> None:
+    """Root /quadrant_n5/ is blocked; agents/quadrant_n5/ must stay allowed."""
+    rel = "agents/quadrant_n5/SPEC.md"
+    target = repo_root / rel
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text("# ok\n", encoding="utf-8")
+    assert hook.check_paths([rel], root=repo_root) == []
+
+
+def test_rejects_root_quadrant_n5(repo_root: Path) -> None:
+    rel = "quadrant_n5/report.json"
+    target = repo_root / rel
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text("{}\n", encoding="utf-8")
+    errors = hook.check_paths([rel], root=repo_root)
+    assert errors
+    assert any("blocked path" in e for e in errors)
