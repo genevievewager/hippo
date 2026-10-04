@@ -202,10 +202,14 @@ All evaluation is within a **single room segment**. No split, fit, or
 normalization spans two segments. Exclusion rules (min units, min valid
 fraction) apply **per segment**.
 
-- Drop the first `W` (250 ms) of each segment so no window contains spikes from
-  the previous room.
-- Start LDS filtering and `raw_lag` history at **segment start**, not session
-  start.
+- Exclude the **first 60 s** of each room segment from all fitting and
+  evaluation (settling after the room change), and the **last 10 s** (removal
+  from the room). Record these trim values in the config hash.
+- LDS filtering and `raw_lag` history still start at **segment start** (not
+  session start), so the excluded minute is warm-up and the first evaluated
+  point has a settled filter state.
+- Compute the valid-fraction exclusion rule (§3.0f) on the **retained** part
+  only.
 
 ### 3.0c Invalid frames
 
@@ -228,7 +232,8 @@ Sim-vs-real comparisons use **normalized error**
 Fixed before any results:
 
 - Minimum **30 units** after the NON-SOMA filter.
-- Minimum **0.7** valid-target fraction within the room segment used.
+- Minimum **0.7** valid-target fraction within the **retained** part of the
+  room segment (after the 60 s / 10 s trims in §3.0b).
 
 Log excluded sessions with reasons in the **local manifest only** (ignored
 outputs; never commit).
@@ -249,7 +254,7 @@ outputs; never commit).
 | Train/test + purge | Time-blocked **inside one segment** | Never cross segment boundaries |
 | Inner CV + purge | Keep, within segment | All fits train-fold only |
 | Floor / A13 time-shift | Keep, within segment | Chance baseline for every metric; sim-vs-real uses error/floor |
-| LDS / lag history from session start | From **segment** start | Drop first W of segment |
+| LDS / lag history from session start | From **segment** start | 60 s / 10 s edge trims for fit/eval; warm-up uses full segment prefix |
 | Realtime replay arm | **Not in scope** for M1–M4 | |
 | UI config audit (A12) | **Not applicable** | |
 | Outputs | Ignored real-data output root (§3.5) | Never commit |
@@ -290,11 +295,14 @@ analysis/real_quadrant/outputs/…         # gitignored
 **Adapter duties (per segment)**
 
 1. Resolve bin-edge convention (§3.0a); build causal `X_counts` for `W=250 ms`.
-2. Slice times to the segment range from `map_rooms`; drop first `W`.
+2. Slice to the segment range from `map_rooms`; keep neural history from segment
+   start; mark fit/eval indices after excluding the first 60 s and last 10 s
+   (trim values in config hash).
 3. `y` in room-local cm; mask targets where `valid==False` (counts stay in `X`).
 4. Units: all regions except NON-SOMA; attach `Region` via clusters `usecols`.
 5. Arena centre/extents from boundary polygon for that room.
-6. Enforce exclusion thresholds (§3.0f) or skip with a manifest reason.
+6. Enforce exclusion thresholds (§3.0f) on the retained part, or skip with a
+   manifest reason.
 
 ### 3.3 Evaluation and leakage rules
 
