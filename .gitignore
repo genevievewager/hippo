@@ -27,6 +27,9 @@ logs/
 # Paper / Overleaf tree (outdated locally; leave history alone)
 docs/overleaf/
 
+# Local real-data survey (unpublished dataset details; never commit)
+docs/real_data_quadrant/SURVEY.local.md
+
 # Binary / array / secret-ish artifacts
 *.npy
 *.npz
