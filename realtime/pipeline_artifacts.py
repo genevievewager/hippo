@@ -91,6 +91,20 @@ def config_hash(payload: Any, *, n: int = 16) -> str:
     return digest[: max(int(n), 8)]
 
 
+def hash_train_indices(train_mask) -> str | None:
+    """Stable hash of the training index set (boolean mask or index array)."""
+    if train_mask is None:
+        return None
+    arr = np.asarray(train_mask)
+    if arr.size == 0:
+        return None
+    if arr.dtype == bool or arr.dtype == np.bool_:
+        payload = np.asarray(arr, dtype=np.uint8).reshape(-1).tobytes()
+    else:
+        payload = np.asarray(arr, dtype=np.int64).reshape(-1).tobytes()
+    return hashlib.sha256(payload).hexdigest()[:16]
+
+
 def window_ms(window_s: float) -> int:
     return int(round(float(window_s) * 1000.0))
 
@@ -116,6 +130,9 @@ class ObservationConfig:
     feature_mode: str | None = None
     seed: int | None = None
     train_frac: float | None = None
+    train_index_hash: str | None = None
+    session_s: float | None = None
+    config_hash: str | None = None
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "window_s", float(self.window_s))
@@ -149,11 +166,25 @@ class ObservationConfig:
         return config_hash(payload)
 
     def fit_hash(self) -> str:
-        """Hash including train/test identity (for fitted F transforms)."""
+        """Identity of a fitted F transform.
+
+        Covers seed, spike source, train-index hash, train_frac, session
+        length, W, step (``update_dt``), and the frozen experiment config
+        hash. Changing any of these must miss the transform cache.
+        """
         payload = {
-            **json.loads(canonical_json(self.to_dict())),
             "seed": self.seed,
-            "train_frac": self.train_frac,
+            "source_spikes": self.source_spikes,
+            "train_index_hash": self.train_index_hash,
+            "train_frac": None if self.train_frac is None else float(self.train_frac),
+            "session_s": None if self.session_s is None else round(float(self.session_s), 9),
+            "window_s": round(self.window_s, 9),
+            "update_dt": round(self.update_dt, 9),
+            "config_hash": self.config_hash,
+            "feature_set": self.feature_set,
+            "feature_type": self.feature_type,
+            "feature_mode": self.feature_mode,
+            "simulation_run_id": self.simulation_run_id,
         }
         return config_hash(payload)
 
@@ -181,6 +212,18 @@ class ObservationConfig:
             feature_mode=data.get("feature_mode"),
             seed=data.get("seed"),
             train_frac=data.get("train_frac"),
+            train_index_hash=(
+                None if data.get("train_index_hash") in (None, "")
+                else str(data.get("train_index_hash"))
+            ),
+            session_s=(
+                None if data.get("session_s") is None
+                else float(data.get("session_s"))
+            ),
+            config_hash=(
+                None if data.get("config_hash") in (None, "")
+                else str(data.get("config_hash"))
+            ),
         )
 
 
@@ -207,6 +250,194 @@ def migrate_legacy_observation(data: dict[str, Any]) -> dict[str, Any]:
         if mode:
             data["feature_set"] = str(mode)
     return data
+
+
+@dataclass(frozen=True)
+class AnalysisConfig:
+    """Authoritative analysis overlay on a committed ``ObservationConfig``.
+
+    Window, feature set, update interval, and spike source are owned by
+    ``observation``. Representation, decoder, target, and train/test identity
+    may be selected downstream but cannot silently replace ``W``.
+    """
+
+    observation: ObservationConfig
+    representation: str = "global_pca"
+    decoder: str = "ridge"
+    target: str = "position"
+    causal: bool = True
+    realtime: bool | None = None
+    train_frac: float = 0.70
+    seed: int = 42
+    n_components: int = 3
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "representation", str(self.representation or "global_pca"))
+        object.__setattr__(self, "decoder", str(self.decoder or "ridge"))
+        object.__setattr__(self, "target", str(self.target or "position"))
+        object.__setattr__(self, "causal", bool(self.causal))
+        object.__setattr__(self, "train_frac", float(self.train_frac))
+        object.__setattr__(self, "seed", int(self.seed))
+        object.__setattr__(self, "n_components", int(self.n_components))
+        if self.realtime is not None:
+            object.__setattr__(self, "realtime", bool(self.realtime))
+
+    @property
+    def window_s(self) -> float:
+        return float(self.observation.window_s)
+
+    @property
+    def feature_mode(self) -> str:
+        return str(self.observation.feature_mode or self.observation.feature_set)
+
+    def inherit_observation(self, observation: ObservationConfig) -> "AnalysisConfig":
+        """Keep E/D/target; replace the observation (including ``W``)."""
+        return replace(self, observation=observation)
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "observation": self.observation.to_dict(),
+            "representation": self.representation,
+            "decoder": self.decoder,
+            "target": self.target,
+            "causal": bool(self.causal),
+            "realtime": self.realtime,
+            "train_frac": float(self.train_frac),
+            "seed": int(self.seed),
+            "n_components": int(self.n_components),
+            "window_s": float(self.window_s),
+            "feature_mode": self.feature_mode,
+            "observation_hash": self.observation.hash(),
+            "analysis_config_hash": self.hash(),
+        }
+
+    def to_overlay_dict(self) -> dict[str, Any]:
+        """Session overlay: E/D/target only. ``window_s`` is a checksum, not ownership."""
+        return {
+            "representation": self.representation,
+            "decoder": self.decoder,
+            "target": self.target,
+            "causal": bool(self.causal),
+            "realtime": self.realtime,
+            "train_frac": float(self.train_frac),
+            "seed": int(self.seed),
+            "n_components": int(self.n_components),
+            "observation_hash": self.observation.hash(),
+            "window_s": float(self.window_s),
+        }
+
+    def hash(self) -> str:
+        payload = {
+            "observation_hash": self.observation.hash(),
+            "fit_hash": self.observation.fit_hash(),
+            "representation": self.representation,
+            "decoder": self.decoder,
+            "target": self.target,
+            "causal": bool(self.causal),
+            "train_frac": float(self.train_frac),
+            "seed": int(self.seed),
+            "n_components": int(self.n_components),
+        }
+        if self.realtime is not None:
+            payload["realtime"] = bool(self.realtime)
+        return config_hash(payload)
+
+    @classmethod
+    def from_observation(
+        cls,
+        observation: ObservationConfig,
+        *,
+        representation: str = "global_pca",
+        decoder: str = "ridge",
+        target: str = "position",
+        causal: bool = True,
+        realtime: bool | None = None,
+        train_frac: float | None = None,
+        seed: int | None = None,
+        n_components: int = 3,
+    ) -> "AnalysisConfig":
+        tf = float(observation.train_frac) if train_frac is None and observation.train_frac is not None else (
+            0.70 if train_frac is None else float(train_frac)
+        )
+        sd = int(observation.seed) if seed is None and observation.seed is not None else (
+            42 if seed is None else int(seed)
+        )
+        return cls(
+            observation=observation,
+            representation=representation,
+            decoder=decoder,
+            target=target,
+            causal=causal,
+            realtime=realtime,
+            train_frac=tf,
+            seed=sd,
+            n_components=int(n_components),
+        )
+
+    @classmethod
+    def from_dict(cls, raw: dict[str, Any] | None) -> "AnalysisConfig":
+        data = dict(raw or {})
+        obs_raw = data.get("observation")
+        if isinstance(obs_raw, dict):
+            observation = ObservationConfig.from_dict(obs_raw)
+        else:
+            observation = ObservationConfig.from_dict(data)
+        rt = data.get("realtime")
+        return cls.from_observation(
+            observation,
+            representation=str(data.get("representation") or "global_pca"),
+            decoder=str(data.get("decoder") or data.get("decoder_name") or "ridge"),
+            target=str(data.get("target") or data.get("target_name") or "position"),
+            causal=True if data.get("causal") is None else bool(data.get("causal")),
+            realtime=None if rt is None else bool(rt),
+            train_frac=data.get("train_frac"),
+            seed=data.get("seed"),
+            n_components=int(data.get("n_components") or 3),
+        )
+
+    @classmethod
+    def resolve(
+        cls,
+        observation: ObservationConfig,
+        overlay: dict[str, Any] | None = None,
+    ) -> "AnalysisConfig":
+        """Build from the committed observation plus an optional UI overlay.
+
+        Overlay ``window_s`` / nested observation are ignored so a page widget
+        cannot silently replace the pipeline window.
+        """
+        data = dict(overlay or {})
+        data.pop("window_s", None)
+        data.pop("decode_window_s", None)
+        data.pop("W", None)
+        data.pop("observation", None)
+        data.pop("observation_hash", None)
+        return cls.from_dict({**data, "observation": observation.to_dict()})
+
+
+def analysis_config_hash(
+    observation: ObservationConfig,
+    *,
+    representation: str,
+    decoder: str,
+    target: str,
+    train_frac: float = 0.70,
+    seed: int = 42,
+    causal: bool = True,
+    n_components: int = 3,
+    realtime: bool | None = None,
+) -> str:
+    return AnalysisConfig.from_observation(
+        observation,
+        representation=representation,
+        decoder=decoder,
+        target=target,
+        causal=causal,
+        realtime=realtime,
+        train_frac=train_frac,
+        seed=seed,
+        n_components=n_components,
+    ).hash()
 
 
 @dataclass
@@ -359,7 +590,7 @@ class RepresentationResult:
     target_name: str | None = None  # supervised embeddings only
 
     def to_meta(self) -> dict[str, Any]:
-        return {
+        meta: dict[str, Any] = {
             "schema_version": SCHEMA_VERSION,
             "kind": "RepresentationResult",
             "representation_name": self.representation_name,
@@ -372,6 +603,17 @@ class RepresentationResult:
             "path": str(self.path) if self.path else None,
             "provenance": self.provenance.to_dict() if self.provenance else None,
         }
+        from realtime.representation_registry import get_spec
+
+        spec = get_spec(self.representation_name)
+        meta.update({
+            "quadrant": spec.quadrant,
+            "linearity": spec.linearity,
+            "temporal_type": spec.temporal_type,
+            "realtime_capable": spec.realtime_capable,
+            "offline_only": spec.offline_only,
+        })
+        return meta
 
 
 @dataclass
@@ -410,6 +652,14 @@ class DecoderResult:
             "hyperparameters": dict(self.hyperparameters),
             "path": str(self.path) if self.path else None,
             "provenance": self.provenance.to_dict() if self.provenance else None,
+            "analysis_config_hash": analysis_config_hash(
+                self.observation,
+                representation=self.representation_name,
+                decoder=self.decoder_name,
+                target=self.target,
+                train_frac=self.train_frac,
+                seed=self.seed,
+            ),
         }
 
 

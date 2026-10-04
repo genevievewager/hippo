@@ -6,11 +6,10 @@ states. These checks never mutate scientific artifacts.
 
 from __future__ import annotations
 
-from typing import Any
-
 import numpy as np
 
 from realtime.pipeline_artifacts import (
+    AnalysisConfig,
     DecoderResult,
     FeatureDataset,
     ObservationConfig,
@@ -21,6 +20,56 @@ from realtime.pipeline_artifacts import (
 
 class PipelineInvariantError(ValueError):
     """Raised when a pipeline compatibility rule is violated."""
+
+
+# Sample-index clocks (30 kHz × a few seconds) sit well above this; real
+# sessions in this project are hundreds of seconds, written as floats.
+_SAMPLE_INDEX_INTEGER_MAX_S = 10_000.0
+_MAX_PLAUSIBLE_SESSION_S = 24 * 3600.0
+
+
+def assert_times_in_seconds(
+    times,
+    *,
+    session_length_s: float | None = None,
+    context: str = "timestamps",
+    plausible_cap: bool = True,
+) -> None:
+    """Reject spike/position times that are sample indices, not seconds.
+
+    Heuristic (spec Phase 1): ``max > session_length × 2`` when a session
+    length is known; integer dtype with a large max; otherwise a 24 h cap
+    at file/stream loaders. Live buffers omit the 24 h cap so a single
+    clock-glitch sample is handled by retention, not this gate.
+    """
+    arr = np.asarray(times)
+    if arr.size == 0:
+        return
+    integer_in = np.issubdtype(arr.dtype, np.integer)
+    t = np.asarray(arr, dtype=float).ravel()
+    finite = t[np.isfinite(t)]
+    if finite.size == 0:
+        return
+    tmax = float(np.max(finite))
+    if session_length_s is not None and float(session_length_s) > 0:
+        limit = float(session_length_s) * 2.0
+        if tmax > limit:
+            raise PipelineInvariantError(
+                f"{context} are not in seconds: max={tmax:.6g} exceeds "
+                f"session_length×2={limit:.6g}. This pattern matches sample "
+                "indices (e.g. 30 kHz Phy spike_times.npy) read as seconds."
+            )
+    elif plausible_cap and tmax > _MAX_PLAUSIBLE_SESSION_S:
+        raise PipelineInvariantError(
+            f"{context} are not in seconds: max={tmax:.6g} exceeds the "
+            f"{_MAX_PLAUSIBLE_SESSION_S:.0f} s plausibility cap. "
+            "Spike and position times must be seconds, not sample indices."
+        )
+    if integer_in and tmax > _SAMPLE_INDEX_INTEGER_MAX_S:
+        raise PipelineInvariantError(
+            f"{context} have integer dtype and max={tmax:.6g}, consistent "
+            "with sample indices rather than seconds."
+        )
 
 
 def assert_valid_timing(window_s: float, update_dt: float) -> None:
@@ -171,17 +220,109 @@ def assert_target_present(behavior, timestamps: np.ndarray | None, target: str) 
     )
 
 
-def assert_realtime_compatible(embedding_type: str, *, deployment: bool) -> None:
-    if not deployment:
+def assert_realtime_compatible(
+    embedding_type: str,
+    *,
+    deployment: bool = False,
+    replay: bool = False,
+) -> None:
+    """Reject offline-only representations for deployment and/or realtime replay."""
+    if not deployment and not replay:
         return
-    from realtime.manifold_features import is_realtime_compatible_feature_mode
+    from realtime.representation_registry import get_spec
+    from realtime.search_space import resolve_manifold_alias
 
-    if embedding_type in {"identity", "counts", "rates"}:
+    name = resolve_manifold_alias(str(embedding_type or "").strip())
+    if name in {"identity", "counts", "rates"}:
         return
-    if not is_realtime_compatible_feature_mode(embedding_type):
+    spec = get_spec(name)
+    if spec.offline_only or not spec.realtime_capable:
+        kind = "deployment" if deployment else "realtime replay"
         raise PipelineInvariantError(
-            f"Representation {embedding_type!r} is not realtime-compatible; "
-            "cannot pack or run a deployment bundle with it."
+            f"Representation {embedding_type!r} is offline-only / not "
+            f"realtime-capable and cannot be used for {kind}."
+        )
+
+
+def validate_analysis_config(
+    cfg: AnalysisConfig,
+    *,
+    require_realtime: bool = False,
+) -> None:
+    """Lightweight checks at analysis boundaries. Does not mutate ``cfg``."""
+    assert_valid_timing(cfg.window_s, cfg.observation.update_dt)
+    if not 0.0 < float(cfg.train_frac) < 1.0:
+        raise PipelineInvariantError(
+            f"train_frac must be in (0, 1), got {cfg.train_frac}."
+        )
+    from realtime.representation_registry import get_spec
+
+    spec = get_spec(cfg.representation)
+    if spec.temporal_type == "dynamic" and float(cfg.window_s) + 1e-12 < float(
+        cfg.observation.update_dt
+    ):
+        raise PipelineInvariantError(
+            "Dynamic representation requires a causal history window "
+            f"W={cfg.window_s}s >= update_dt={cfg.observation.update_dt}s."
+        )
+    want_rt = bool(require_realtime) or (cfg.realtime is True)
+    if want_rt:
+        assert_realtime_compatible(cfg.representation, replay=True)
+
+
+def assert_cache_matches_analysis(
+    stored_hash: str | None,
+    cfg: AnalysisConfig,
+    *,
+    context: str = "cached result",
+) -> None:
+    """Refuse to treat a result from a different analysis config as current."""
+    if not stored_hash:
+        return
+    allowed = {cfg.hash(), cfg.observation.hash(), cfg.observation.fit_hash()}
+    if str(stored_hash) not in allowed:
+        raise PipelineInvariantError(
+            f"{context} was generated under a different configuration "
+            f"(stored={stored_hash}, active={cfg.hash()})."
+        )
+
+
+def assert_feature_matches_analysis(
+    features: FeatureDataset,
+    cfg: AnalysisConfig,
+) -> None:
+    if features.observation.hash() != cfg.observation.hash():
+        raise PipelineInvariantError(
+            "Feature dataset observation hash does not match the active "
+            f"analysis (features={features.observation.hash()}, "
+            f"active={cfg.observation.hash()}). W and F are owned by "
+            "the committed observation."
+        )
+    if not windows_close(features.window_s, cfg.window_s):
+        raise PipelineInvariantError(
+            f"Feature window {features.window_s:.3f}s does not match active "
+            f"analysis window {cfg.window_s:.3f}s."
+        )
+
+
+def assert_decoder_matches_analysis(
+    decoder: DecoderResult,
+    cfg: AnalysisConfig,
+) -> None:
+    from realtime.search_space import resolve_manifold_alias
+
+    assert_decoder_matches_observation(decoder, cfg.observation)
+    if decoder.target != cfg.target:
+        raise PipelineInvariantError(
+            f"Decoder target {decoder.target!r} does not match analysis "
+            f"target {cfg.target!r}."
+        )
+    left = resolve_manifold_alias(decoder.representation_name)
+    right = resolve_manifold_alias(cfg.representation)
+    if left != right:
+        raise PipelineInvariantError(
+            f"Decoder representation {decoder.representation_name!r} does not "
+            f"match analysis representation {cfg.representation!r}."
         )
 
 

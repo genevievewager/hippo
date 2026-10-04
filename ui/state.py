@@ -2,6 +2,11 @@
 
 Streamlit reruns frequently — expensive work must only start after an explicit
 ``request_action`` flag is consumed.
+
+Scientific knobs (W, F, E, D, target, train/test) belong on
+``ObservationConfig`` / ``AnalysisConfig``, not as independent session copies.
+``KEY_SELECTED_ANALYSIS_CONFIG`` holds an overlay dict (E/D/target). Window
+always comes from ``PipelineRun.observation``.
 """
 
 from __future__ import annotations
@@ -31,6 +36,7 @@ KEY_SIM_RUN_REQUESTED = "hippo_sim_run_requested"
 KEY_REPLAY_RUN_REQUESTED = "hippo_replay_run_requested"
 KEY_QUADRANT_REPLAY_REQUESTED = "hippo_quadrant_replay_requested"
 KEY_QUADRANT_RIDGE_REQUESTED = "hippo_quadrant_ridge_requested"
+KEY_QUADRANT_EXPERIMENT_REQUESTED = "hippo_quadrant_experiment_requested"
 KEY_VIZ_GENERATE_REQUESTED = "hippo_viz_generate_requested"
 KEY_REPLAY_INDEX = "hippo_replay_index"
 KEY_SELECTED_RESULT_RUN = "hippo_selected_result_run"
@@ -62,6 +68,7 @@ def init_session_state(outputs_root: Path | None = None) -> None:
         KEY_REPLAY_RUN_REQUESTED: False,
         KEY_QUADRANT_REPLAY_REQUESTED: False,
         KEY_QUADRANT_RIDGE_REQUESTED: False,
+        KEY_QUADRANT_EXPERIMENT_REQUESTED: False,
         KEY_VIZ_GENERATE_REQUESTED: False,
         KEY_REPLAY_INDEX: 0,
         KEY_SELECTED_RESULT_RUN: None,
@@ -145,6 +152,64 @@ def get_selected_analysis_config() -> dict[str, Any] | None:
 
 def set_selected_analysis_config(cfg: dict[str, Any] | None) -> None:
     st.session_state[KEY_SELECTED_ANALYSIS_CONFIG] = cfg
+
+
+def get_active_analysis_config():
+    """Committed observation plus optional E/D/target overlay.
+
+    Returns ``None`` until Feature Construction has an ``ObservationConfig``.
+    Overlay ``window_s`` is ignored.
+    """
+    from realtime.pipeline_artifacts import AnalysisConfig
+    from realtime.pipeline_graph import load_or_infer_pipeline
+
+    dataset = get_active_dataset()
+    if dataset is None:
+        return None
+    run = load_or_infer_pipeline(dataset)
+    if run is None or run.observation is None:
+        return None
+    overlay = get_selected_analysis_config()
+    if isinstance(overlay, dict) and overlay:
+        return AnalysisConfig.resolve(run.observation, overlay)
+    return run.active_analysis()
+
+
+def set_active_analysis_config(cfg, *, persist: bool = False):
+    """Write the E/D/target overlay. Never lets the overlay own ``W``.
+
+    If ``persist`` is true, also store the overlay on ``pipeline_run.json``.
+    """
+    from realtime.pipeline_artifacts import AnalysisConfig
+    from realtime.pipeline_graph import load_or_infer_pipeline, save_pipeline_run
+    from realtime.pipeline_invariants import validate_analysis_config
+
+    if cfg is None:
+        st.session_state[KEY_SELECTED_ANALYSIS_CONFIG] = None
+        return None
+    if not isinstance(cfg, AnalysisConfig):
+        cfg = AnalysisConfig.from_dict(cfg)
+    dataset = get_active_dataset()
+    if dataset is not None:
+        run = load_or_infer_pipeline(dataset)
+        if run is not None and run.observation is not None:
+            cfg = cfg.inherit_observation(run.observation)
+            if persist:
+                run.set_analysis(cfg)
+                save_pipeline_run(run)
+    validate_analysis_config(cfg)
+    st.session_state[KEY_SELECTED_ANALYSIS_CONFIG] = cfg.to_overlay_dict()
+    return cfg
+
+
+def validate_active_analysis_config(cfg=None, *, require_realtime: bool = False):
+    from realtime.pipeline_invariants import validate_analysis_config
+
+    active = cfg if cfg is not None else get_active_analysis_config()
+    if active is None:
+        return None
+    validate_analysis_config(active, require_realtime=require_realtime)
+    return active
 
 
 def request_action(flag_key: str) -> None:

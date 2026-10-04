@@ -97,6 +97,15 @@ class DynamicLatentEmbedding(BaseEstimator, TransformerMixin):
             raise RuntimeError("DynamicLatentEmbedding must be fit before step")
         return self.model_.step(x_t)
 
+    def transform_one(self, x: np.ndarray) -> np.ndarray:
+        """Per-row path for A9. GPFA uses a diagnostic filter; LDS uses ``step``."""
+        if self.model_ is None:
+            raise RuntimeError("DynamicLatentEmbedding must be fit before transform_one")
+        inner = getattr(self.model_, "transform_one", None)
+        if callable(inner):
+            return inner(x)
+        return self.step(x)
+
     def reset_state(self) -> None:
         if self.model_ is not None:
             self.model_.reset_state()

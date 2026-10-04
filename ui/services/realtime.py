@@ -98,6 +98,9 @@ def build_replay_config(
     else:
         # A saved model permanently owns its observation window.
         try:
+            from realtime.deployment_selection import load_best_realtime_decoders
+            from realtime.pipeline_artifacts import migrate_legacy_decoder_entry
+
             payload = load_best_realtime_decoders(Path(input_dir))
             entry = migrate_legacy_decoder_entry(
                 (payload.get("targets") or {}).get(closed_loop_target) or {}

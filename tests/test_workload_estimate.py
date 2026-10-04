@@ -133,12 +133,12 @@ def test_estimate_workload_targets_hint_scales_planned():
 
 
 def test_feature_coverage_reads_f_cache_not_run_json(tmp_path, monkeypatch):
-    from realtime.transform_cache import window_ms
+    from realtime.transform_cache import feature_transform_dirname
 
     exp = tmp_path / "exp"
     root = exp / "decoder_comparison" / "sorted" / "models" / "feature_transforms"
     for fs, w in (("counts", 0.25), ("counts", 0.5), ("global_pca", 0.25), ("global_pca", 0.5)):
-        name = f"{fs}__counts_w{window_ms(w):04d}ms"
+        name = feature_transform_dirname(fs, "counts", w, fit_hash="cafebabedeadbeef")
         d = root / name
         d.mkdir(parents=True)
         (d / "meta.json").write_text(
@@ -167,7 +167,7 @@ def test_feature_coverage_reads_f_cache_not_run_json(tmp_path, monkeypatch):
 
 
 def test_run_feature_analysis_skips_only_when_f_cache_complete(tmp_path):
-    from realtime.transform_cache import window_ms
+    from realtime.transform_cache import feature_transform_dirname
 
     exp = tmp_path / "exp"
     fig = exp / "figures" / "features"
@@ -176,7 +176,7 @@ def test_run_feature_analysis_skips_only_when_f_cache_complete(tmp_path):
         (fig / f"fig_feature_panel_{kind}.png").write_bytes(b"png")
     d = (
         exp / "decoder_comparison" / "sorted" / "models" / "feature_transforms"
-        / f"counts__counts_w{window_ms(0.25):04d}ms"
+        / feature_transform_dirname("counts", "counts", 0.25, fit_hash="cafebabedeadbeef")
     )
     d.mkdir(parents=True)
     (d / "meta.json").write_text(

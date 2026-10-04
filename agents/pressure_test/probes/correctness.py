@@ -455,7 +455,10 @@ class CorrectnessProbe(Probe):
         near = float(buf.counts_at(1.5, 0.25)[0])          # truth: 2 (1.3, 1.4)
         far = float(buf.counts_at(100.0, 0.25)[0])          # truth: 0
         retained_before = buf.n_spikes
+        # Insert 500 past spikes. Prune is decoder-clock driven and runs
+        # inside counts_at, not extend — so give it a decode step.
         buf.extend(list(np.arange(2.0, 7.0, 0.01)), [1] * 500)
+        buf.counts_at(100.0, 0.25)
         retained_after = buf.n_spikes
 
         if near != 2.0 or far != 0.0:

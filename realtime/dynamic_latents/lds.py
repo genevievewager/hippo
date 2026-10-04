@@ -166,10 +166,26 @@ class LinearDynamicalSystem(DynamicLatentModel):
             self.reset_state()
 
         if causal:
-            Z = np.zeros((X.shape[0], self.latent_dim))
-            for t in range(X.shape[0]):
-                Z[t] = self.step(X[t])
-            return Z
+            if reset or self._mu is None or self._P is None:
+                self.reset_state()
+                mu0 = self.mu0_
+                P0 = self.P0_
+                predict_first = False
+                step0 = 0
+            else:
+                mu0 = self._mu
+                P0 = self._P
+                predict_first = True
+                step0 = int(self._step_count)
+            filt = kalman_filter(
+                X, self.A_, self.C_, self.d_, self.Q_, self.R_, mu0, P0,
+                compute_loglik=False,
+                predict_first=predict_first,
+            )
+            self._mu = filt.mu[-1].copy()
+            self._P = filt.P[-1].copy()
+            self._step_count = step0 + int(X.shape[0])
+            return filt.mu
 
         # Acausal smoothed trajectory (offline analysis only).
         filt = kalman_filter(
@@ -337,6 +353,36 @@ class LinearDynamicalSystem(DynamicLatentModel):
     def _require_fit(self) -> None:
         if self.A_ is None or self.C_ is None:
             raise RuntimeError("LinearDynamicalSystem must be fit before use")
+
+
+def assert_readout_latents_are_filtered(
+    model: "LinearDynamicalSystem",
+    Z: np.ndarray,
+    X: np.ndarray,
+    *,
+    atol: float = 1e-6,
+) -> None:
+    """A14: readout features must match Kalman-filter latents, not RTS.
+
+    Compares ``Z`` to a fresh causal filter of ``X``. A match to the
+    smoother when the two inferences differ is a failure.
+    """
+    from realtime.pipeline_invariants import PipelineInvariantError
+
+    Z = np.asarray(Z, dtype=float)
+    X = np.asarray(X, dtype=float)
+    Z_filt = model.transform(X, causal=True, reset=True)
+    Z_smooth = model.transform(X, causal=False, reset=True)
+    if not np.allclose(Z, Z_filt, rtol=1e-5, atol=atol):
+        raise PipelineInvariantError(
+            "A14: LDS readout latents are not Kalman-filtered. "
+            "Ridge/kNN must be trained on filter inferences, never RTS."
+        )
+    if not np.allclose(Z_filt, Z_smooth, rtol=1e-5, atol=atol):
+        if np.allclose(Z, Z_smooth, rtol=1e-5, atol=atol):
+            raise PipelineInvariantError(
+                "A14: LDS readout latents match the RTS smoother, not the filter."
+            )
 
 
 def _jsonable(v: Any) -> bool:

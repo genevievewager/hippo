@@ -262,7 +262,7 @@ def plot_fig_behavior_dynamics(
         ax = fig.add_subplot(gs_cov[i // 2, i % 2])
         cov_axes.append(ax)
         t_ds, y_ds = downsample_series(t, beh[col].to_numpy(), MAX_LINE_POINTS)
-        ax.plot(t_ds, y_ds, lw=0.75, color=behavior_covariate_trace_color(col))
+        ax.plot(t_ds, y_ds, lw=0.75, color="k")
         ax.set_ylabel(lab, fontsize=10)
         on_bottom = i >= n_cov - 2
         if on_bottom:

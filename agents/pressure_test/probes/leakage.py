@@ -93,12 +93,24 @@ class LeakageProbe(Probe):
         from realtime.temporal.splits import required_split_gap_s
 
         sig = inspect.signature(causal_train_test_split)
-        if "gap_s" in sig.parameters:
-            return []
-
         dt = 0.05
         t = np.arange(0.0, 600.0, dt)
-        train_mask, test_mask = causal_train_test_split(t, 0.70)
+        if "gap_s" in sig.parameters:
+            from realtime.train_decoder import purge_gap_s
+
+            W, hist = 0.250, 0.250
+            gap = purge_gap_s(W, max_history_s=hist, update_dt=dt)
+            train_mask, test_mask = causal_train_test_split(
+                t, 0.80, gap_s=gap,
+            )
+            last_train = float(t[train_mask][-1])
+            first_test = float(t[test_mask][0])
+            n_overlap = int(((t[test_mask] - W) < last_train).sum())
+            if first_test - last_train + 1e-12 >= gap and n_overlap == 0:
+                return []
+            # Parameter exists but does not actually purge — still a finding.
+        else:
+            train_mask, test_mask = causal_train_test_split(t, 0.70)
         split_time = float(t[train_mask][-1])
         n_test = int(test_mask.sum())
 

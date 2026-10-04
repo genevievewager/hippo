@@ -33,6 +33,7 @@ MANIFOLD_FEATURE_MODES = (
     "global_isomap",
     "global_isomap_distilled",
     "diffusion_nystrom",
+    "raw_lag",
     # Dynamic latent-state embeddings (parallel to static manifolds).
     "global_lds",
     "gpfa",
@@ -51,6 +52,7 @@ EMBEDDING_TYPES = (
     "global_isomap",
     "global_isomap_distilled",
     "diffusion_nystrom",
+    "raw_lag",
     "global_lds",
     "gpfa",
 )
@@ -73,6 +75,7 @@ STATIC_REPRESENTATION_TYPES = (
     "global_isomap",
     "global_isomap_distilled",
     "diffusion_nystrom",
+    "raw_lag",
 )
 DYNAMIC_REPRESENTATION_TYPES = ("global_lds", "gpfa")
 
@@ -101,6 +104,7 @@ GROUPING_COLUMN = {
     "pls": None,
     "bayesian_place_tuning": None,
     "identity": None,
+    "raw_lag": None,
     "global_lds": None,
     "gpfa": None,
     "region_pca": "region",
@@ -187,6 +191,10 @@ class PassThroughEmbedding(BaseEstimator, TransformerMixin):
 
     def transform(self, X: np.ndarray) -> np.ndarray:
         return np.asarray(X, dtype=float)
+
+    def transform_one(self, x: np.ndarray) -> np.ndarray:
+        """Apply the fitted pass-through to one row. No refit."""
+        return np.asarray(self.transform(np.asarray(x, dtype=float).reshape(1, -1))).ravel()
 
     def get_metadata(self) -> dict[str, Any]:
         return {
@@ -314,6 +322,10 @@ class IdentityFeatures(BaseEstimator, TransformerMixin):
             return X / self.decode_window
         return X
 
+    def transform_one(self, x: np.ndarray) -> np.ndarray:
+        """Apply the fitted pass-through to one row. No refit."""
+        return np.asarray(self.transform(np.asarray(x, dtype=float).reshape(1, -1))).ravel()
+
     def get_metadata(self) -> dict[str, Any]:
         return {
             "manifold_type": "none",
@@ -346,12 +358,131 @@ class IdentityFeatures(BaseEstimator, TransformerMixin):
         return obj
 
 
+class LaggedRawFeatures(BaseEstimator, TransformerMixin):
+    """History control: current observation stacked with the previous ``n_lags`` steps.
+
+    Causal. Frame ``t`` is ``[x_t, x_{t-1}, …, x_{t-n_lags}]``. The first
+    ``n_lags`` rows of a contiguous series have incomplete history and are
+    marked invalid. Not a dynamics model and not a quadrant member.
+    """
+
+    def __init__(self, n_lags: int = 5, decode_window: float = 0.250):
+        if int(n_lags) < 1:
+            raise ValueError(f"n_lags must be >= 1, got {n_lags}")
+        self.n_lags = int(n_lags)
+        self.decode_window = float(decode_window)
+        self.n_features_in_: int | None = None
+        self.n_features_out_: int | None = None
+        self._hist: list[np.ndarray] = []
+
+    def fit(self, X: np.ndarray, y: Any = None):
+        X = np.asarray(X, dtype=float)
+        if X.ndim != 2:
+            raise ValueError("X must be 2D")
+        self.n_features_in_ = int(X.shape[1])
+        self.n_features_out_ = self.n_features_in_ * (1 + self.n_lags)
+        self.reset_state()
+        return self
+
+    def valid_mask(self, n_samples: int) -> np.ndarray:
+        mask = np.ones(int(n_samples), dtype=bool)
+        mask[: self.n_lags] = False
+        return mask
+
+    def transform(self, X: np.ndarray) -> np.ndarray:
+        X = np.asarray(X, dtype=float)
+        if X.ndim != 2:
+            raise ValueError("X must be 2D")
+        if self.n_features_in_ is None:
+            raise RuntimeError("LaggedRawFeatures must be fit before transform")
+        if X.shape[1] != self.n_features_in_:
+            raise ValueError(
+                f"Expected {self.n_features_in_} features, got {X.shape[1]}"
+            )
+        t, d = X.shape
+        n_frames = 1 + self.n_lags
+        out = np.zeros((t, d * n_frames), dtype=float)
+        for k in range(n_frames):
+            sl = slice(k * d, (k + 1) * d)
+            if k == 0:
+                out[:, sl] = X
+            else:
+                out[k:, sl] = X[:-k]
+        return out
+
+    def reset_state(self) -> None:
+        self._hist = []
+
+    def transform_one(self, x: np.ndarray) -> np.ndarray:
+        """Causal one-step stack. Call ``reset_state`` at session start."""
+        x = np.asarray(x, dtype=float).ravel()
+        if self.n_features_in_ is None:
+            raise RuntimeError("LaggedRawFeatures must be fit before transform_one")
+        frames = [x]
+        for k in range(1, 1 + self.n_lags):
+            if len(self._hist) >= k:
+                frames.append(self._hist[-k])
+            else:
+                frames.append(np.zeros(self.n_features_in_, dtype=float))
+        self._hist.append(x.copy())
+        if len(self._hist) > self.n_lags:
+            self._hist = self._hist[-self.n_lags :]
+        return np.concatenate(frames)
+
+    def get_metadata(self) -> dict[str, Any]:
+        return {
+            "manifold_type": "none",
+            "manifold_grouping": None,
+            "manifold_n_components": None,
+            "actual_n_features": self.n_features_out_,
+            "n_lags": self.n_lags,
+            "n_history_lost": self.n_lags,
+            "explained_variance_ratio": None,
+            "groups": [],
+            "realtime_compatible": True,
+            "causal_status": "causal_lag_stack",
+        }
+
+    def save(self, output_dir: Path) -> None:
+        output_dir = Path(output_dir)
+        output_dir.mkdir(parents=True, exist_ok=True)
+        with open(output_dir / "meta.json", "w") as f:
+            json.dump({
+                "class_name": "LaggedRawFeatures",
+                "n_lags": self.n_lags,
+                "decode_window": self.decode_window,
+                "n_features_in": self.n_features_in_,
+                "n_features_out": self.n_features_out_,
+            }, f, indent=2)
+
+    @classmethod
+    def load(cls, input_dir: Path) -> "LaggedRawFeatures":
+        with open(Path(input_dir) / "meta.json") as f:
+            meta = json.load(f)
+        obj = cls(
+            n_lags=int(meta.get("n_lags", 5)),
+            decode_window=float(meta.get("decode_window", 0.250)),
+        )
+        obj.n_features_in_ = meta.get("n_features_in")
+        obj.n_features_out_ = meta.get("n_features_out")
+        obj.reset_state()
+        return obj
+
+
 class GlobalPCAManifold(BaseEstimator, TransformerMixin):
     """Fit PCA on all units together."""
 
-    def __init__(self, n_components: int = 3, random_state: int = 42):
+    def __init__(
+        self,
+        n_components: int = 3,
+        random_state: int = 42,
+        svd_solver: str = "auto",
+        whiten: bool = False,
+    ):
         self.n_components = int(n_components)
         self.random_state = random_state
+        self.svd_solver = str(svd_solver)
+        self.whiten = bool(whiten)
         self.pca_: PCA | None = None
         self.actual_n_components_: int | None = None
         self.explained_variance_ratio_: np.ndarray | None = None
@@ -360,7 +491,12 @@ class GlobalPCAManifold(BaseEstimator, TransformerMixin):
         X = np.asarray(X, dtype=float)
         n_samples, n_units = X.shape
         n_comp = min(self.n_components, n_units, max(1, n_samples - 1))
-        self.pca_ = PCA(n_components=n_comp, random_state=self.random_state)
+        self.pca_ = PCA(
+            n_components=n_comp,
+            random_state=self.random_state,
+            svd_solver=self.svd_solver,
+            whiten=self.whiten,
+        )
         self.pca_.fit(X)
         self.actual_n_components_ = int(self.pca_.n_components_)
         self.explained_variance_ratio_ = np.asarray(self.pca_.explained_variance_ratio_)
@@ -370,6 +506,10 @@ class GlobalPCAManifold(BaseEstimator, TransformerMixin):
         if self.pca_ is None:
             raise RuntimeError("GlobalPCAManifold must be fit before transform")
         return self.pca_.transform(np.asarray(X, dtype=float))
+
+    def transform_one(self, x: np.ndarray) -> np.ndarray:
+        """Apply the fitted PCA to one row. No refit."""
+        return np.asarray(self.transform(np.asarray(x, dtype=float).reshape(1, -1))).ravel()
 
     def get_metadata(self) -> dict[str, Any]:
         return {
@@ -659,6 +799,10 @@ class IsomapManifold(BaseEstimator, TransformerMixin):
             raise RuntimeError("IsomapManifold must be fit before transform")
         return self._encoder.transform(np.asarray(X, dtype=float))
 
+    def transform_one(self, x: np.ndarray) -> np.ndarray:
+        """Apply the fitted Isomap out-of-sample map to one row. No refit."""
+        return np.asarray(self.transform(np.asarray(x, dtype=float).reshape(1, -1))).ravel()
+
     def get_metadata(self) -> dict[str, Any]:
         if self._encoder is None:
             return {
@@ -762,9 +906,12 @@ def make_feature_transformer(
     isomap_require_connected_graph: bool = True,
     n_jobs: int | None = -1,
     isomap_transform: str = "sqrt_counts",
+    n_lags: int = 5,
     update_dt: float = 0.025,
     feature_set: str | None = None,
     spike_source: str | None = None,
+    svd_solver: str = "auto",
+    whiten: bool = False,
 ) -> Any:
     """
     Construct an unfitted feature transformer for a feature mode.
@@ -780,11 +927,19 @@ def make_feature_transformer(
     if feature_mode in ("identity", "bayesian_place_tuning"):
         return PassThroughEmbedding(embedding_type=feature_mode)
 
+    if feature_mode == "raw_lag":
+        return LaggedRawFeatures(n_lags=n_lags, decode_window=decode_window)
+
     if feature_mode == "pls":
         return PLSEmbedding(n_components=n_components, random_state=random_state)
 
     if feature_mode == "global_pca":
-        return GlobalPCAManifold(n_components=n_components, random_state=random_state)
+        return GlobalPCAManifold(
+            n_components=n_components,
+            random_state=random_state,
+            svd_solver=svd_solver,
+            whiten=whiten,
+        )
 
     if feature_mode in DYNAMIC_REPRESENTATION_TYPES:
         from realtime.dynamic_latents.adapters import DynamicLatentEmbedding
@@ -871,6 +1026,8 @@ def load_feature_transformer(input_dir: Path) -> Any:
         return IdentityFeatures.load(input_dir)
     if name == "PassThroughEmbedding":
         return PassThroughEmbedding.load(input_dir)
+    if name == "LaggedRawFeatures":
+        return LaggedRawFeatures.load(input_dir)
     if name == "PLSEmbedding":
         return PLSEmbedding.load(input_dir)
     if name == "GlobalPCAManifold":

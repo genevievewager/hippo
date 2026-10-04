@@ -4,7 +4,7 @@ Concise tree (see root README for the public summary):
 
 ```text
 outputs/<run>/
-├── pipeline_run.json          # committed observation + stale/fresh stage ledger
+├── pipeline_run.json          # committed observation, optional analysis overlay, stage ledger
 ├── behavior.csv
 ├── units.csv
 ├── spikes_ground_truth.csv

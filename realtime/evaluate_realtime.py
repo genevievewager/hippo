@@ -168,21 +168,11 @@ def run_realtime_pipeline(
     beh_test = aligned_all.loc[test_mask].reset_index(drop=True)
 
     if feature_transformer is None:
-        from realtime.manifold_features import (
-            OFFLINE_ONLY_FEATURE_MODES,
-            is_realtime_compatible_feature_mode,
-        )
+        from realtime.pipeline_invariants import assert_realtime_compatible
         from realtime.search_space import resolve_manifold_alias
 
         feature_type_resolved = resolve_manifold_alias(feature_type)
-        if feature_type_resolved in OFFLINE_ONLY_FEATURE_MODES or not is_realtime_compatible_feature_mode(
-            feature_type_resolved
-        ):
-            raise ValueError(
-                f"Representation {feature_type!r} is offline-only / acausal and "
-                "cannot be launched for realtime replay. Use global_lds, "
-                "global_pca, counts, or another realtime-compatible method."
-            )
+        assert_realtime_compatible(feature_type_resolved, replay=True)
         feature_transformer = make_feature_transformer(
             feature_type_resolved,
             decode_window=decode_window,

@@ -213,6 +213,7 @@ def render(outputs_root: Path) -> None:
     pipe = load_active_pipeline(dataset)
     inherited, sweep = render_inherited_observation(
         pipe, allow_benchmark_override=(mode != "quick"),
+        sweep_key="bench_sweep_windows",
     )
     from realtime.transform_cache import list_cached_decode_windows
 

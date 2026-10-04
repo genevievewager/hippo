@@ -1,0 +1,17 @@
+---
+description: Active analysis window W is owned by Feature Construction / ObservationConfig, not by downstream UI pages.
+globs: ui/**/*.py,realtime/pipeline_*.py,realtime/quadrant_experiment.py,realtime/decoder_comparison.py
+alwaysApply: false
+---
+
+# Window ownership
+
+The active pipeline window is `PipelineRun.observation.window_s`, committed on Feature Construction.
+
+Downstream pages may display that window, compare precomputed multi-window artifacts, or run an **explicit** labeled sweep. They must not silently assign a new `window_s` that diverges from the committed observation.
+
+- Pipeline mode: inherit `W`. Do not add a second analysis window slider.
+- Benchmark / Advanced sweep: visible checkbox or labeled control; each `W` is its own `ObservationConfig.hash()`.
+- Replay and deployment use the **model's** saved observation. Reject offline-only representations rather than substituting another method.
+
+Use `AnalysisConfig.resolve()` / `get_active_analysis_config()` instead of storing a competing `window_s` in session state.

@@ -160,16 +160,48 @@ def align_behavior_to_decoder_times(
     })
 
 
+def purge_gap_s(
+    window_s: float,
+    *,
+    max_history_s: float = 0.0,
+    update_dt: float = 0.050,
+    minimum_s: float = 1.0,
+) -> float:
+    """Purge gap: ``max(W + max_history, minimum_s)``, rounded up to whole steps."""
+    raw = float(window_s) + float(max_history_s)
+    gap = max(raw, float(minimum_s))
+    step = float(update_dt)
+    if step <= 0:
+        raise ValueError(f"update_dt must be > 0, got {step}")
+    n = int(np.ceil(gap / step - 1e-12))
+    return float(n) * step
+
+
 def causal_train_test_split(
     decode_times: np.ndarray,
     train_frac: float = 0.70,
+    *,
+    gap_s: float = 0.0,
 ) -> tuple[np.ndarray, np.ndarray]:
-    """Split decode times by session chronology (not random shuffle)."""
+    """Split decode times by session chronology (not random shuffle).
+
+    ``gap_s`` is a purge window after the train cut. Train is the first
+    ``train_frac`` of the span; test starts at ``split_time + gap_s``.
+    Samples inside the gap belong to neither mask. Default ``gap_s=0``
+    preserves the historical no-purge split used by existing analyses.
+    """
     if not 0.0 < train_frac < 1.0:
         raise ValueError(f"train_frac must be in (0, 1), got {train_frac}")
-    split_time = decode_times[0] + train_frac * (decode_times[-1] - decode_times[0])
-    train_mask = decode_times < split_time
-    test_mask = ~train_mask
+    t = np.asarray(decode_times, dtype=float)
+    split_time = t[0] + train_frac * (t[-1] - t[0])
+    gap = max(float(gap_s), 0.0)
+    train_mask = t < split_time
+    test_mask = t >= (split_time + gap)
+    if gap > 0.0 and (not train_mask.any() or not test_mask.any()):
+        raise ValueError(
+            "Split produced an empty partition after purge gap "
+            f"(gap_s={gap}, train={int(train_mask.sum())}, test={int(test_mask.sum())})"
+        )
     return train_mask, test_mask
 
 

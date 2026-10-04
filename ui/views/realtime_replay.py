@@ -312,7 +312,9 @@ def _render_quadrant_run(dataset: Path, spike_source: str, *, slot: str) -> None
         key="rt_quad_target",
     )
     pipe = load_active_pipeline(dataset)
-    inherited, sweep = render_inherited_observation(pipe, allow_benchmark_override=True)
+    inherited, sweep = render_inherited_observation(
+        pipe, allow_benchmark_override=True, sweep_key="rt_quad_sweep_windows",
+    )
     cached_windows = list_replay_ready_windows(dataset, spike_source)
     if sweep:
         window_sel = gated_decode_window_selector(
@@ -426,11 +428,13 @@ def _render_ridge_quadrant(dataset: Path, spike_source: str) -> None:
     cached_windows = list_ridge_diag_ready_windows(
         dataset, spike_source, n_components=3,
     )
+    pipe = load_active_pipeline(dataset)
+    inherited = pipe.inherited_window_s() if pipe is not None else None
     window_sel = gated_decode_window_selector(
         cached_windows,
         key="rt_ridge_w",
-        defaults=[0.250],
-        label="Decode window",
+        defaults=[float(inherited)] if inherited is not None else [0.250],
+        label="Diagnostic windows (cached grid; does not change active pipeline W)",
         multiple=False,
         disabled_help=(
             "Generate this window on Feature Construction and fit all latent "

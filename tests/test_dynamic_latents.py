@@ -96,6 +96,30 @@ def test_lds_causal_no_future_leakage():
     np.testing.assert_allclose(Z_ext[:-1], Z_batch, rtol=1e-5, atol=1e-5)
 
 
+def test_lds_reset_false_continues_filter():
+    X, *_ = _synthetic_lds_data(T=80, n=8, k=2, seed=8)
+    model = LinearDynamicalSystem(n_components=2, n_em_iters=4, random_state=8).fit(X[:50])
+    Z_all = model.transform(X[50:], causal=True, reset=True)
+    model.reset_state()
+    Z_tr = model.transform(X[50:65], causal=True, reset=True)
+    Z_te = model.transform(X[65:], causal=True, reset=False)
+    np.testing.assert_allclose(np.vstack([Z_tr, Z_te]), Z_all, rtol=1e-5, atol=1e-5)
+
+
+def test_lds_high_dim_causal_transform_finishes_quickly():
+    """Observation-space PSD must not eigh a 110-D matrix every timestep."""
+    import time
+
+    X, *_ = _synthetic_lds_data(T=800, n=110, k=3, seed=9)
+    model = LinearDynamicalSystem(n_components=3, n_em_iters=2, random_state=9).fit(X[:200])
+    t0 = time.perf_counter()
+    Z = model.transform(X[200:], causal=True, reset=True)
+    elapsed = time.perf_counter() - t0
+    assert Z.shape == (600, 3)
+    assert np.all(np.isfinite(Z))
+    assert elapsed < 5.0
+
+
 def test_lds_save_load(tmp_path: Path):
     X, *_ = _synthetic_lds_data(T=100, seed=3)
     model = LinearDynamicalSystem(n_components=3, n_em_iters=4, random_state=3).fit(X[:70])

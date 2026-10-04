@@ -95,7 +95,8 @@ def window_ms(decode_window: float) -> int:
     return int(round(float(decode_window) * 1000))
 
 
-_WINDOW_DIR_RE = re.compile(r"_w(\d+)ms$", re.IGNORECASE)
+_WINDOW_DIR_RE = re.compile(r"_w(\d+)ms(?:__fit[0-9a-fA-F]+)?$", re.IGNORECASE)
+_KEYED_FIT_RE = re.compile(r"__fit[0-9a-fA-F]+$", re.IGNORECASE)
 
 _FEATURE_CONSTRUCTION_WINDOW_MSG = (
     "Decode window {label} has no Feature Construction cache. "
@@ -190,7 +191,7 @@ def inventory_feature_construction_cache(
     hits: list[dict[str, Any]] = []
     for fs, w in sorted(wanted, key=lambda p: (p[0], p[1])):
         f_eff = effective_spike_feature_type(str(fs), feature_type)
-        path = find_feature_transform_in_roots(
+        path = find_keyed_feature_transform_any(
             roots,
             feature_set=str(fs),
             feature_type_eff=str(f_eff),
@@ -239,6 +240,8 @@ def list_cached_decode_windows(
     found_ms: set[int] = set()
     for feat_dir in _feature_transform_dirs(experiment_dir, spike_source):
         for meta_path in feat_dir.glob("*/meta.json"):
+            if not is_keyed_feature_transform_dir(meta_path.parent.name):
+                continue
             ms: int | None = None
             try:
                 meta = json.loads(meta_path.read_text())
@@ -263,7 +266,7 @@ def list_cached_decode_windows(
     kept: list[float] = []
     for w in windows:
         if all(
-            find_feature_transform_in_roots(
+            find_keyed_feature_transform_any(
                 roots,
                 feature_set=fs,
                 feature_type_eff=effective_spike_feature_type(fs, feature_type),
@@ -304,11 +307,31 @@ def feature_transform_dirname(
     feature_set: str,
     feature_type_eff: str,
     decode_window: float,
+    *,
+    fit_hash: str | None = None,
+    train_frac: float | None = None,
+    seed: int | None = None,
 ) -> str:
-    return (
+    """Directory name for a fitted F transform.
+
+    ``fit_hash`` (from ``ObservationConfig.fit_hash()``) is required for a
+    keyed, reusable cache entry. The unkeyed name (no ``__fit…`` suffix) is
+    the pre-fix layout and is never returned by ``find_feature_transform``.
+    ``train_frac`` / ``seed`` are accepted so callers can pass partition
+    identity; they are already inside ``fit_hash``.
+    """
+    del train_frac, seed  # identity lives in fit_hash
+    base = (
         f"{feature_set}__{feature_type_eff}_w"
         f"{window_ms(decode_window):04d}ms"
     )
+    if fit_hash:
+        return f"{base}__fit{str(fit_hash)[:16]}"
+    return base
+
+
+def is_keyed_feature_transform_dir(name: str) -> bool:
+    return bool(_KEYED_FIT_RE.search(str(name)))
 
 
 def _isomap_like_mode(feature_mode: str) -> bool:
@@ -539,20 +562,83 @@ def find_manifold_transform_in_roots(
     return None
 
 
+def _provenance_fit_hash(path: Path) -> str | None:
+    from realtime.pipeline_artifacts import read_provenance
+
+    prov = read_provenance(path)
+    stored = prov.get("fit_hash")
+    if stored in (None, ""):
+        return None
+    return str(stored)
+
+
+def provenance_matches_fit(path: Path, expected_fit_hash: str) -> bool:
+    stored = _provenance_fit_hash(path)
+    return stored is not None and stored == str(expected_fit_hash)
+
+
 def find_feature_transform(
     comparison_root: Path,
     *,
     feature_set: str,
     feature_type_eff: str,
     decode_window: float,
+    fit_hash: str | None = None,
+    train_frac: float | None = None,
+    seed: int | None = None,
 ) -> Path | None:
+    """Return a keyed F cache whose provenance matches ``fit_hash``.
+
+    Unkeyed directories (no ``__fit…`` suffix, or no stored fit hash) are
+    never returned. Missing ``fit_hash`` is a miss, not a fallback.
+    """
+    del train_frac, seed
+    if not fit_hash:
+        return None
     roots = comparison_model_roots(comparison_root)
     base = roots.get("feature")
     if base is None:
         return None
-    name = feature_transform_dirname(feature_set, feature_type_eff, decode_window)
+    name = feature_transform_dirname(
+        feature_set, feature_type_eff, decode_window, fit_hash=fit_hash,
+    )
     path = base / name
-    return path if _is_usable_transform_dir(path) else None
+    if not _is_usable_transform_dir(path):
+        return None
+    if not is_keyed_feature_transform_dir(path.name):
+        return None
+    if not provenance_matches_fit(path, str(fit_hash)):
+        return None
+    return path
+
+
+def find_keyed_feature_transform_any(
+    comparison_roots: list[Path] | tuple[Path, ...] | Path,
+    *,
+    feature_set: str,
+    feature_type_eff: str,
+    decode_window: float,
+) -> Path | None:
+    """Inventory-only: any keyed dir for this F × W, ignoring partition.
+
+    Does not load the transform and never returns an unkeyed directory.
+    """
+    roots = comparison_roots
+    if isinstance(roots, Path):
+        roots = [roots]
+    prefix = feature_transform_dirname(feature_set, feature_type_eff, decode_window)
+    keyed_prefix = f"{prefix}__fit"
+    for root in roots:
+        if root is None:
+            continue
+        base = comparison_model_roots(Path(root)).get("feature")
+        if base is None or not Path(base).is_dir():
+            continue
+        for child in Path(base).iterdir():
+            if child.is_dir() and child.name.startswith(keyed_prefix):
+                if _is_usable_transform_dir(child):
+                    return child
+    return None
 
 
 def find_feature_transform_in_roots(
@@ -707,7 +793,7 @@ def inventory_reusable_feature_transforms(
                     continue
                 seen.add(key)
                 total += 1
-                path = find_feature_transform(
+                path = find_keyed_feature_transform_any(
                     root,
                     feature_set=str(fs),
                     feature_type_eff=str(f_eff),
@@ -739,10 +825,11 @@ def feature_transform_path(
     feature_set: str,
     feature_type_eff: str,
     decode_window: float,
+    fit_hash: str | None = None,
 ) -> Path:
     roots = comparison_model_roots(comparison_root)
     return roots["feature"] / feature_transform_dirname(
-        feature_set, feature_type_eff, decode_window,
+        feature_set, feature_type_eff, decode_window, fit_hash=fit_hash,
     )
 
 
@@ -753,16 +840,26 @@ def save_feature_transform_checkpoint(
     feature_set: str,
     feature_type_eff: str,
     decode_window: float,
+    fit_hash: str | None = None,
     extra_meta: dict[str, Any] | None = None,
 ) -> Path:
     """Persist a fitted SpikeFeatureTransformer into the shared F cache."""
     if transformer is None or not hasattr(transformer, "save"):
         raise TypeError("transformer must implement save(output_dir)")
+    extra = dict(extra_meta or {})
+    if fit_hash is None:
+        fit_hash = extra.get("fit_hash")
+    if not fit_hash:
+        raise ValueError(
+            "fit_hash is required to write a feature-transform cache; "
+            "unkeyed directories are never reused"
+        )
     path = feature_transform_path(
         comparison_root,
         feature_set=feature_set,
         feature_type_eff=feature_type_eff,
         decode_window=decode_window,
+        fit_hash=fit_hash,
     )
     path.mkdir(parents=True, exist_ok=True)
     transformer.save(path)
@@ -787,6 +884,10 @@ def save_feature_transform_checkpoint(
             "includes_fitted_transform": True,
             "train_frac": extra.get("train_frac"),
             "seed": extra.get("seed"),
+            "fit_hash": fit_hash or extra.get("fit_hash"),
+            "train_index_hash": extra.get("train_index_hash"),
+            "session_s": extra.get("session_s"),
+            "config_hash": extra.get("config_hash"),
         })
     except Exception:  # noqa: BLE001
         pass

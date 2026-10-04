@@ -50,11 +50,13 @@ def checkpoint_feature_transform(
     decode_window: float = 0.250,
     feature_type: str = "counts",
     train_frac: float = 0.70,
+    seed: int = 0,
     force: bool = False,
 ) -> dict[str, Any]:
     """Fit SpikeFeatureTransformer F on train split and save to shared cache.
 
-    Matches Decoder Benchmark's F key: ``{feature_set}__{f_eff}_w####ms``.
+    Matches Decoder Benchmark's F key:
+    ``{feature_set}__{f_eff}_w####ms__fit{fit_hash}``.
     """
     from realtime.transform_cache import (
         comparison_roots_for_feature_cache,
@@ -133,19 +135,38 @@ def checkpoint_feature_transform(
         unit_ids=data["unit_ids"],
     )
     f_transform.fit(X[train_mask])
+    from realtime.pipeline_artifacts import ObservationConfig, hash_train_indices
+
+    observation = ObservationConfig(
+        window_s=float(decode_window),
+        update_dt=float(update_dt),
+        feature_set=str(feature_set),
+        feature_type="counts",
+        source_spikes=str(spike_source),
+        simulation_run_id=str(Path(input_dir).name),
+        seed=int(seed),
+        train_frac=float(train_frac),
+        train_index_hash=hash_train_indices(train_mask),
+        session_s=float(data["session_duration"]),
+    )
     saved = save_feature_transform_checkpoint(
         f_transform,
         write_root,
         feature_set=feature_set,
         feature_type_eff=f_eff,
         decode_window=float(decode_window),
+        fit_hash=observation.fit_hash(),
         extra_meta={
             "fit_scope": "train_split",
             "train_frac": float(train_frac),
+            "seed": int(seed),
             "source": "feature_explorer",
             "spike_source": spike_source,
             "n_train_samples": int(train_mask.sum()),
             "n_features_in": int(X.shape[1]),
+            "train_index_hash": observation.train_index_hash,
+            "session_s": observation.session_s,
+            "fit_hash": observation.fit_hash(),
         },
     )
     # Also persist the neural extractor (Benchmark always saves these).

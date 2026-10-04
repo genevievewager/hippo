@@ -72,11 +72,14 @@ def _touch_geometry(experiment: Path, feature_set: str = "counts", colors=("posi
 
 
 def _write_feature_window_cache(experiment: Path, decode_window: float = 0.25) -> None:
-    from realtime.transform_cache import window_ms
+    from realtime.transform_cache import feature_transform_dirname
 
+    name = feature_transform_dirname(
+        "counts", "counts", decode_window, fit_hash="cafebabedeadbeef",
+    )
     d = (
         experiment / "decoder_comparison" / "sorted" / "models" / "feature_transforms"
-        / f"counts__counts_w{window_ms(decode_window):04d}ms"
+        / name
     )
     d.mkdir(parents=True, exist_ok=True)
     (d / "meta.json").write_text(

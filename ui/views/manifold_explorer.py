@@ -536,7 +536,9 @@ def _render_run_analysis(
         dataset, spike_source=spike_source, feature_sets=feature_sets,
     )
     pipe = load_active_pipeline(dataset)
-    inherited, sweep = render_inherited_observation(pipe, allow_benchmark_override=True)
+    inherited, sweep = render_inherited_observation(
+        pipe, allow_benchmark_override=True, sweep_key="manifold_sweep_windows",
+    )
     if sweep:
         windows = _gated_windows_for_page(
             cached_windows,

@@ -22,6 +22,7 @@ from realtime.pipeline_artifacts import (
     STAGE_REPLAY,
     STAGE_REPRESENTATION,
     STAGE_SIMULATION,
+    AnalysisConfig,
     ArtifactOrigin,
     ArtifactStatus,
     ObservationConfig,
@@ -103,6 +104,7 @@ class PipelineRun:
     simulation_run_id: str
     stages: dict[str, StageRecord] = field(default_factory=dict)
     observation: ObservationConfig | None = None
+    analysis: AnalysisConfig | None = None
     schema_version: int = SCHEMA_VERSION
     updated_at: str = field(default_factory=_now_iso)
 
@@ -171,6 +173,8 @@ class PipelineRun:
         extra = observation.to_dict()
         extra["window_s"] = float(observation.window_s)
         changed = prev is not None and prev.hash() != observation.hash()
+        if self.analysis is not None:
+            self.analysis = self.analysis.inherit_observation(observation)
         self.mark_committed(
             STAGE_FEATURES,
             run_id=run_id,
@@ -180,6 +184,26 @@ class PipelineRun:
             invalidate=changed,
         )
         return list(INVALIDATION[STAGE_FEATURES]) if changed else []
+
+    def set_analysis(self, analysis: AnalysisConfig) -> AnalysisConfig:
+        """Commit E/D/target overlay. Window always follows ``self.observation`` if set."""
+        if self.observation is not None:
+            analysis = analysis.inherit_observation(self.observation)
+        else:
+            self.observation = analysis.observation
+        self.analysis = analysis
+        self.updated_at = _now_iso()
+        return analysis
+
+    def active_analysis(self) -> AnalysisConfig | None:
+        """Return the overlay resolved against the committed observation."""
+        if self.observation is None and self.analysis is None:
+            return None
+        if self.observation is None:
+            return self.analysis
+        if self.analysis is None:
+            return AnalysisConfig.from_observation(self.observation)
+        return self.analysis.inherit_observation(self.observation)
 
     def inherited_window_s(self) -> float | None:
         if self.observation is not None:
@@ -196,6 +220,7 @@ class PipelineRun:
             "simulation_run_id": self.simulation_run_id,
             "updated_at": self.updated_at,
             "observation": self.observation.to_dict() if self.observation else None,
+            "analysis": self.analysis.to_dict() if self.analysis else None,
             "stages": {name: self.stage(name).to_dict() for name in PIPELINE_STAGES},
         }
 
@@ -217,6 +242,15 @@ class PipelineRun:
         schema = data.get("schema_version")
         if schema is None:
             schema = 0
+        analysis = None
+        analysis_raw = data.get("analysis")
+        if isinstance(analysis_raw, dict):
+            try:
+                analysis = AnalysisConfig.from_dict(analysis_raw)
+                if observation is not None:
+                    analysis = analysis.inherit_observation(observation)
+            except (TypeError, ValueError):
+                analysis = None
         return cls(
             experiment_dir=exp,
             simulation_run_id=str(
@@ -224,6 +258,7 @@ class PipelineRun:
             ),
             stages=stages,
             observation=observation,
+            analysis=analysis,
             schema_version=int(schema),
             updated_at=str(data.get("updated_at") or _now_iso()),
         )
