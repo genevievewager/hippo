@@ -45,6 +45,15 @@ class IntegrityError(RuntimeError):
     """Centre-window rebuild did not match Cell_* exactly."""
 
 
+class ExtentError(RuntimeError):
+    """Retained path extent is not comparable to the room boundary polygon."""
+
+
+# Retained tracking bbox must be this fraction of the boundary width/height.
+EXTENT_FRAC_LO = 0.50
+EXTENT_FRAC_HI = 1.10
+
+
 def _require_data_root() -> Path:
     root = os.environ.get("HIPPO_DATA_ROOT", "").strip()
     if not root:
@@ -177,7 +186,11 @@ def load_units_and_spikes(
 def _room_boundary(
     cfg: dict[str, Any], room: str,
 ) -> tuple[float, float, float, float, float, float]:
-    """Return centre_x, centre_y, width, height, xmin, ymin from boundary polygon."""
+    """Return centre_x, centre_y, width, height, xmin, ymin from boundary polygon.
+
+    Boundary coordinates are centimetres in the same frame as
+    ``postions_dataset.csv``.
+    """
     mr = cfg["preprocessing"]["map_rooms"]
     idx_map = {int(k): str(v) for k, v in (mr.get("index") or {}).items()}
     # Prefer matching Room index for this label; lowercase rooms share geometry
@@ -210,6 +223,49 @@ def _room_boundary(
         xmin,
         ymin,
     )
+
+
+def assert_path_extent_matches_boundary(
+    x_cm: np.ndarray,
+    y_cm: np.ndarray,
+    boundary_width_cm: float,
+    boundary_height_cm: float,
+    *,
+    frac_lo: float = EXTENT_FRAC_LO,
+    frac_hi: float = EXTENT_FRAC_HI,
+) -> dict[str, float]:
+    """Require retained path bbox ≈ boundary size (catches normalized coords)."""
+    x = np.asarray(x_cm, dtype=float)
+    y = np.asarray(y_cm, dtype=float)
+    m = np.isfinite(x) & np.isfinite(y)
+    if not m.any():
+        raise ExtentError("no finite positions for extent check")
+    path_w = float(np.nanmax(x[m]) - np.nanmin(x[m]))
+    path_h = float(np.nanmax(y[m]) - np.nanmin(y[m]))
+    bw = float(boundary_width_cm)
+    bh = float(boundary_height_cm)
+    if bw <= 0 or bh <= 0:
+        raise ExtentError(f"invalid boundary size width={bw} height={bh}")
+    wr, hr = path_w / bw, path_h / bh
+    stats = {
+        "path_width_cm": path_w,
+        "path_height_cm": path_h,
+        "boundary_width_cm": bw,
+        "boundary_height_cm": bh,
+        "width_ratio": wr,
+        "height_ratio": hr,
+    }
+    if not (frac_lo <= wr <= frac_hi and frac_lo <= hr <= frac_hi):
+        raise ExtentError(
+            "retained path extent not comparable to boundary polygon: "
+            f"width_ratio={wr:.3f} height_ratio={hr:.3f} "
+            f"(require {frac_lo:.2f}–{frac_hi:.2f} of boundary); "
+            f"path=({path_w:.2f}×{path_h:.2f}) cm, "
+            f"boundary=({bw:.2f}×{bh:.2f}) cm. "
+            "Check that targets come from postions_dataset.csv in cm, "
+            "not dataset.csv normalized X/Y."
+        )
+    return stats
 
 
 def _append_manifest(record: dict[str, Any], path: Path = DEFAULT_MANIFEST_PATH) -> None:
@@ -268,30 +324,47 @@ def build_segment_bundle(
             f"excluded {session_name} room={room}: n_units={len(unit_ids)} < {min_units}"
         )
 
-    # Behavior grid from dataset timestamps (not Cell_* as features).
-    ds_cols = ["timestamp", "X", "Y", "valid", "room"] + [
-        f"Cell_{u}" for u in unit_ids
-    ]
+    # Neural grid + Cell_* (integrity only) from dataset.csv.
+    # Targets MUST come from postions_dataset.csv (cm). dataset.csv X/Y are
+    # normalized (~0–1) and must never be used as decoder targets.
+    pos_path = session_dir / "postions_dataset.csv"
+    if not pos_path.is_file():
+        raise FileNotFoundError(pos_path)
+    ds_cols = ["timestamp", "valid"] + [f"Cell_{u}" for u in unit_ids]
     ds = pd.read_csv(session_dir / "dataset.csv", usecols=ds_cols)
-    grid_all = ds["timestamp"].to_numpy(dtype=float)
-    # Restrict to segment time range (inclusive start, exclusive end-ish).
+    pos = pd.read_csv(pos_path, usecols=["timestamp", "X", "Y", "valid", "room"])
+    # Align positions onto the neural timestamp grid.
+    aligned = ds[["timestamp", "valid"]].merge(
+        pos.rename(columns={"valid": "pos_valid"}),
+        on="timestamp",
+        how="left",
+        validate="one_to_one",
+    )
+    if len(aligned) != len(ds):
+        raise RuntimeError(
+            f"timestamp alignment failed: dataset n={len(ds)} aligned n={len(aligned)}"
+        )
+    grid_all = aligned["timestamp"].to_numpy(dtype=float)
     seg = (grid_all >= t0) & (grid_all < t1)
     if not seg.any():
         raise RuntimeError(f"no dataset rows in segment {room} [{t0}, {t1})")
     grid = grid_all[seg]
     y_global = np.column_stack([
-        ds.loc[seg, "X"].to_numpy(dtype=float),
-        ds.loc[seg, "Y"].to_numpy(dtype=float),
+        aligned.loc[seg, "X"].to_numpy(dtype=float),
+        aligned.loc[seg, "Y"].to_numpy(dtype=float),
     ])
-    y = y_global.copy()
+    # Room-local cm: origin at boundary-polygon centre.
+    y = y_global.astype(float, copy=True)
     y[:, 0] = y[:, 0] - cx
     y[:, 1] = y[:, 1] - cy
-    target_valid = ds.loc[seg, "valid"].to_numpy()
-    if target_valid.dtype != bool:
-        target_valid = pd.to_numeric(target_valid, errors="coerce").fillna(0).to_numpy() != 0
-    # Non-finite or invalid targets are masked for fit/eval only (counts stay in X).
-    target_valid = target_valid & np.isfinite(y).all(axis=1)
-    y = y.astype(float, copy=True)
+    ds_valid = aligned.loc[seg, "valid"].to_numpy()
+    if ds_valid.dtype != bool:
+        ds_valid = pd.to_numeric(ds_valid, errors="coerce").fillna(0).to_numpy() != 0
+    pos_valid = aligned.loc[seg, "pos_valid"].to_numpy()
+    if pos_valid.dtype != bool:
+        pos_valid = pd.to_numeric(pos_valid, errors="coerce").fillna(0).to_numpy() != 0
+    # Prefer positions valid flag; also require finite cm coords.
+    target_valid = pos_valid & ds_valid & np.isfinite(y_global).all(axis=1)
     y[~target_valid] = np.nan
 
     cell_mat = np.column_stack([
@@ -369,6 +442,24 @@ def build_segment_bundle(
             f"excluded {session_name} room={room}: valid_frac={valid_frac:.3f} "
             f"< {min_valid_frac}"
         )
+    # Extent check on retained + valid path in global cm (pre room-local).
+    try:
+        extent_stats = assert_path_extent_matches_boundary(
+            y_global[retained & target_valid, 0],
+            y_global[retained & target_valid, 1],
+            width,
+            height,
+        )
+    except ExtentError as exc:
+        reason = {
+            "session": session_name,
+            "room": room,
+            "status": "excluded",
+            "reason": "path_extent_mismatch",
+            "detail": str(exc),
+        }
+        _append_manifest(reason)
+        raise
 
     arena_cm = float(max(width, height))
     bundle = prepared_source_bundle(
@@ -396,6 +487,9 @@ def build_segment_bundle(
             "cache_key": key,
             "window_s": float(window_s),
             "update_dt": float(update_dt),
+            "target_source": "postions_dataset.csv",
+            "target_units": "cm",
+            "extent": extent_stats,
         },
     )
     _append_manifest({

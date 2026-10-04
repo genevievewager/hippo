@@ -182,8 +182,10 @@ ranges: see `SURVEY.local.md`.
 4. **M3 cohort:** 2-room sessions only. 3-room and morph held out.
 5. **Units:** all regions; exclude `BClabel == NON-SOMA`. Region subsets are
    secondary analyses.
-6. **Coordinates:** room-local, origin at the room centre from the boundary
-   polygon.
+6. **Coordinates:** room-local **cm**, origin at the room centre from the
+   boundary polygon. Targets come from ``postions_dataset.csv`` ``X,Y`` only —
+   never ``dataset.csv`` ``X,Y`` (those are normalized). Load-time check:
+   retained path extent must be 50–110% of the boundary width and height.
 7. **`valid==False`:** masks **targets only**; report dropped fraction. Spike
    counts in those bins stay in `X` and in causal windows (§3.0c).
 8. **M4:** offline report only; no realtime replay arm.

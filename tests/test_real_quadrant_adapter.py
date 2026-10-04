@@ -10,7 +10,9 @@ import pytest
 import yaml
 
 from analysis.real_quadrant.adapter import (
+    ExtentError,
     IntegrityError,
+    assert_path_extent_matches_boundary,
     build_segment_bundle,
     causal_count_matrix,
     centre_window_match_fraction,
@@ -32,8 +34,14 @@ def _write_synthetic_session(
     session_s: float = 200.0,
     dt: float = 0.05,
     n_units: int = 40,
+    path_scale: float = 1.0,
 ) -> Path:
-    """Create a minimal session dir with centre-labeled Cell_* and spike lists."""
+    """Create a minimal session dir with centre-labeled Cell_* and spike lists.
+
+    ``postions_dataset.csv`` holds cm coords (boundary-sized path).
+    ``dataset.csv`` X/Y are deliberately normalized (~0–1) so using them as
+    targets fails the extent check.
+    """
     dest.mkdir(parents=True, exist_ok=True)
     t0, t1 = 10.0, 10.0 + session_s
     grid = np.arange(t0, t1, dt)
@@ -48,18 +56,37 @@ def _write_synthetic_session(
     if corrupt_spikes:
         # Drop half the spikes from unit 0's list so integrity fails.
         spike_lists[0] = spike_lists[0][::2]
-    x = 40.0 + 10.0 * np.sin(2 * np.pi * (grid - t0) / session_s)
-    y = 60.0 + 10.0 * np.cos(2 * np.pi * (grid - t0) / session_s)
+    # cm path covering ~90% of the 80×120 cm boundary (unless path_scale shrinks it).
+    x_cm = 40.0 + 36.0 * path_scale * np.sin(2 * np.pi * (grid - t0) / (session_s / 3))
+    y_cm = 60.0 + 54.0 * path_scale * np.cos(2 * np.pi * (grid - t0) / (session_s / 5))
     valid = np.ones(len(grid), dtype=bool)
     valid[::17] = False
-    ds = {"timestamp": grid, "X": x, "Y": y, "V": np.ones(len(grid)),
-          "HD": np.zeros(len(grid)), "valid": valid, "room": ["A"] * len(grid)}
+    # dataset.csv: normalized X/Y (wrong for targets) + Cell_*
+    ds = {
+        "timestamp": grid,
+        "X": x_cm / 80.0,
+        "Y": y_cm / 120.0,
+        "V": np.ones(len(grid)),
+        "HD": np.zeros(len(grid)),
+        "valid": valid,
+        "room": ["A"] * len(grid),
+    }
     for u in range(n_units):
         ds[f"Cell_{u + 1}"] = cell[:, u]
     # NON-SOMA unit present in dataset but must be dropped by BClabel filter.
     ds[f"Cell_{n_units + 1}"] = np.zeros(len(grid), dtype=int)
     pd.DataFrame(ds).to_csv(dest / "dataset.csv", index=False)
-    pd.DataFrame(ds).to_csv(dest / "postions_dataset.csv", index=False)
+    # postions_dataset.csv: true cm coordinates
+    pos = pd.DataFrame({
+        "timestamp": grid,
+        "X": x_cm,
+        "Y": y_cm,
+        "V": np.ones(len(grid)),
+        "HD": np.zeros(len(grid)),
+        "valid": valid,
+        "room": ["A"] * len(grid),
+    })
+    pos.to_csv(dest / "postions_dataset.csv", index=False)
     rows = []
     for u in range(n_units):
         st = spike_lists[u]
@@ -135,6 +162,12 @@ def test_integrity_passes_and_causal_differs_from_cell(tmp_path):
         trim_end_s=10.0,
     )
     assert bundle["meta"]["integrity_match_fraction"] == pytest.approx(1.0)
+    assert bundle["meta"]["target_source"] == "postions_dataset.csv"
+    assert bundle["meta"]["target_units"] == "cm"
+    # Room-local y should be tens of cm, not ~1.
+    y = bundle["y"]
+    m = np.isfinite(y).all(axis=1)
+    assert float(np.nanmax(np.abs(y[m]))) > 10.0
     # Reload Cell_* and ensure causal ≠ centre Cell on the segment grid
     ds = pd.read_csv(sess / "dataset.csv")
     unit_ids = bundle["unit_ids"]
@@ -150,6 +183,30 @@ def test_integrity_passes_and_causal_differs_from_cell(tmp_path):
     assert not np.array_equal(
         np.rint(bundle["X_counts"]), np.rint(cell)
     ), "causal features must differ from centre-labeled Cell_*"
+
+
+def test_extent_check_rejects_normalized_coords():
+    # Path bbox ~1×1 on a 100×100 boundary → ratios ~0.01.
+    with pytest.raises(ExtentError, match="postions_dataset"):
+        assert_path_extent_matches_boundary(
+            np.array([0.1, 0.9]),
+            np.array([0.2, 0.8]),
+            boundary_width_cm=100.0,
+            boundary_height_cm=100.0,
+        )
+
+
+def test_extent_check_rejects_shrunken_path_in_adapter(tmp_path):
+    sess = _write_synthetic_session(tmp_path / "synth_tiny", path_scale=0.05)
+    with pytest.raises(ExtentError):
+        build_segment_bundle(
+            sess.name,
+            room="A",
+            data_root=sess.parent,
+            cache_root=tmp_path / "cache",
+            min_units=30,
+            min_valid_frac=0.5,
+        )
 
 
 def test_integrity_fails_on_corrupted_spikes(tmp_path):
