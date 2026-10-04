@@ -797,13 +797,22 @@ def _a13_null(
         k = int(round(f * session_s / update_dt))
         ys = np.roll(y, k, axis=0)
         ytr, yte = ys[train_ok], ys[eval_mask]
+        # Real-data invalid targets are NaN outside target_valid; a roll can
+        # move them onto train/eval indices. Drop non-finite pairs (no-op on sim).
+        tr_ok = np.isfinite(ytr).all(axis=1)
+        te_ok = np.isfinite(yte).all(axis=1)
+        if not tr_ok.any() or not te_ok.any():
+            continue
+        ytr_f, yte_f = ytr[tr_ok], yte[te_ok]
+        Ztr_f, Zte_f = Ztr[tr_ok], Zte[te_ok]
         floor = _euclid(
-            np.repeat(np.mean(ytr, axis=0, keepdims=True), len(yte), axis=0), yte,
+            np.repeat(np.mean(ytr_f, axis=0, keepdims=True), len(yte_f), axis=0),
+            yte_f,
         )
-        pred_r = _fit_predict_ridge(Ztr, ytr, Zte, ridge_alpha)
-        pred_k = _fit_predict_knn(Ztr, ytr, Zte, knn_k)
-        ridge = _euclid(pred_r, yte)
-        knn = _euclid(pred_k, yte)
+        pred_r = _fit_predict_ridge(Ztr_f, ytr_f, Zte_f, ridge_alpha)
+        pred_k = _fit_predict_knn(Ztr_f, ytr_f, Zte_f, knn_k)
+        ridge = _euclid(pred_r, yte_f)
+        knn = _euclid(pred_k, yte_f)
         rows.append({
             "frac": float(f),
             "shift_s": float(k * update_dt),
@@ -812,6 +821,17 @@ def _a13_null(
             "knn_median": knn["median"],
             "ridge_minus_floor": ridge["median"] - floor["median"],
             "knn_minus_floor": knn["median"] - floor["median"],
+        })
+    if not rows:
+        return record_a13({
+            "shifts": [],
+            "ridge_median_minus_floor": float("nan"),
+            "knn_median_minus_floor": float("nan"),
+            "ridge_pass": False,
+            "knn_pass": False,
+            "pass_min_cm": float(a13["pass_min_cm"]),
+            "n_shifts": 0,
+            "unshifted_n": {"n_train": int(len(ytr0)), "n_eval": int(len(yte0))},
         })
     pass_min = float(a13["pass_min_cm"])
     ridge_delta = float(np.median([r["ridge_minus_floor"] for r in rows]))

@@ -289,6 +289,10 @@ def build_segment_bundle(
     target_valid = ds.loc[seg, "valid"].to_numpy()
     if target_valid.dtype != bool:
         target_valid = pd.to_numeric(target_valid, errors="coerce").fillna(0).to_numpy() != 0
+    # Non-finite or invalid targets are masked for fit/eval only (counts stay in X).
+    target_valid = target_valid & np.isfinite(y).all(axis=1)
+    y = y.astype(float, copy=True)
+    y[~target_valid] = np.nan
 
     cell_mat = np.column_stack([
         ds.loc[seg, f"Cell_{u}"].to_numpy(dtype=float) for u in unit_ids
