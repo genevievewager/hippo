@@ -362,34 +362,79 @@ and especially GPFA dominate wall time (see local survey for scale notes).
 Pilot rule: time one full method grid on one segment; if wall time explodes,
 trim GPFA/LDS d-sweep or keep heavy methods on a designated subset.
 
-### 3.5 Report plan
+### 3.5 Report plan (M4 figure specification)
 
-Mirror the sim figure set for side-by-side reading. Write only under an
-**ignored** dir (`analysis/real_quadrant/outputs/` or `outputs/real_quadrant/`).
-**Never commit** PDFs, NPZs, or tidy CSVs from real data.
+M4 builds an offline figure report that reads **side by side** with
+`agents/quadrant_n5/figures`. Number real-data figures **RD1–RD9** and note
+the parallel sim figure. Same visual style as `agents/quadrant_n5/figures`:
+reuse its style constants and plotting helpers by import where those helpers
+accept arrays (do not import sim report code into core analysis; report pages
+only).
 
-| Sim section | Real-data report |
-| ----------- | ---------------- |
-| Fig1 design | Same class; real pipeline (no GT branch); population by `Region`; room-`A` trajectory example at render time only |
-| Fig2 validity | Audits that apply within a segment; drop A7 GT, A10 sim seeds, A12 UI, A9/A11 replay |
-| Fig3 quadrant answer | Same method contrasts; **room A primary**, B and a as replication columns/facets |
-| Fig4 mechanism | Drop sorted-vs-GT; keep kNN vs Ridge and LDS vs `raw_lag`; **sim-vs-real** via normalized error (error/floor) from published sim aggregates |
-| Fig5 deployability | Drop latency/replay; keep d-selection + learning curves; coverage in room-local arena |
-| Fig6 answer | Same summary cells; N = animals/sessions language |
-| Fig7 / S3 trajectories | Same on real segments (outputs only) |
-| FigS1 d-sweep | Same |
-| FigS2 A13 | Same (within segment) |
-| FigS4 failure modes | Same with per-room centre |
-| FigS5 Phase-8 cell-type | **Replace** with a priori **region subsets** |
-| sorted vs GT | **Dropped** |
-| Replay / seed-isolation story | **Dropped** |
+Write only under an **ignored** dir (`analysis/real_quadrant/outputs/` or
+`outputs/real_quadrant/`). **Never commit** PDFs, NPZs, tidy CSVs, figures, or
+tables from real data.
 
-**Real-data-only sections**
+#### Figure story (RD1–RD9)
 
-1. Per-animal variability (sessions nested within animals), by room segment.
-2. Region-subset decoding (secondary).
-3. Valid-target drop fraction and exclusion manifest summary (counts/reasons
-   only in local outputs).
+| Figure | Content | Parallel |
+| ------ | ------- | -------- |
+| **RD1** The recording | Arena outline with the animal's path per room segment; occupancy maps; valid vs dropped frames; units by region and depth | Fig1 design |
+| **RD2** From spikes to features | Raster of example units aligned with position over ~1 min of behavior; methods panel comparing the source file's centred 250 ms window with our causal `[t−250 ms, t)` window, with the 125 ms lookahead marked | *(real-data only; no direct sim twin)* |
+| **RD3** What the neurons encode | Rate maps for example units computed on **training data only**; speed and head-direction context | *(real-data only)* |
+| **RD4** Representations | PCA, DM and LDS latent trajectories colored by position | Fig1 / Fig7 latent panels |
+| **RD5** Predictions | Decoded vs true path on the arena; x(t) and y(t) traces over a test block; error over time | Fig7 trajectories |
+| **RD6** Is it real? | Error distributions vs chance floor; time-shift null; split timeline showing train, test, purge gaps and the trimmed segment edges | Fig2 validity |
+| **RD7** The quadrant answer | Method contrasts across animals; room A primary, B and a as replications | Fig3 / Fig6 |
+| **RD8** Real vs simulated | Normalized error (error / chance floor) side by side with the published `quadrant_n5` aggregates | Fig4 mechanism (sim-vs-real role) |
+| **RD9** Region subsets | A priori region-subset decoding (supplementary) | Replaces FigS5 |
+
+Dropped from the sim set for real data (no RD twin): sorted-vs-GT, realtime
+replay / A9–A11 latency, A10 seed-isolation, A12 UI audit, deployability
+latency panels. Optional later supplements (not M4): d-sweeps (FigS1), full
+A13 strips (FigS2), spatial-error / centre-pull grids (FigS4).
+
+#### Figure data contract
+
+Each milestone must save enough under the ignored outputs directory that **M4
+can draw every figure without rerunning analyses**.
+
+**Per session and room segment**, save at least:
+
+| Artifact | Used by | Notes |
+| -------- | ------- | ----- |
+| `decode_times` | RD1–RD6 | Causal grid timestamps |
+| `y` (room-local cm) | RD1, RD3–RD6 | Position labels; origin at room centre |
+| `valid` mask | RD1, RD6 | Target validity; dropped-frame panels |
+| Trim boundaries | RD1, RD6 | First 60 s / last 10 s edges (§3.0b) |
+| Train / test / purge masks | RD5, RD6 | Split timeline; eval intersection |
+| Predictions per method and decoder | RD5–RD8 | Test-block traces and aggregate error |
+| Latents per method (or a documented subsample) | RD4 | If subsampled, document rule and seed |
+| Chance-floor predictions | RD6, RD8 | Train-mean position floor |
+| Per-fold metrics | RD6–RD8 | Errors, R², null stats as computed |
+| Example-unit spike times in the plotted window | RD2 | Only the units/window chosen by the fixed selection rule |
+
+**Session-level JSON** (alongside segment artifacts): provenance with git
+commit, config hash, and integrity-check result (centre-window rebuild vs
+`Cell_*`).
+
+**Milestone ownership:** M1 must start saving this contract for the `raw`
+method (and shared masks / times / `y` / floor). Later milestones extend the
+same layout with additional methods, latents, nulls, and cohort aggregates.
+M4 is render-only over these artifacts plus published `quadrant_n5`
+aggregates for RD8.
+
+#### Report rules
+
+1. Real-data figures and tables are written **only** to ignored outputs and
+   are **never committed**.
+2. Captions are filled in **at render time** (numbers from saved tidy
+   artifacts / CSVs only — same discipline as the sim story page).
+3. Example sessions and units are chosen by a **fixed rule** (e.g. median by a
+   stated criterion), not hand-picked for how good they look; the rule is
+   recorded in the report config / provenance JSON.
+4. Room A is primary in RD7; B and a appear as replications. Sim-vs-real
+   (RD8) uses normalized error (§3.0e).
 
 ### 3.6 Milestones
 
@@ -397,10 +442,10 @@ Mirror the sim figure set for side-by-side reading. Write only under an
 | -- | ----------- | --------- |
 | **Bin-edge** | Done (§3.0a): `Cell_*(t)` = centre 250 ms; causal rebuild `[t−0.250,t)` | Conclusion in PLAN; adapter must not use `Cell_*(t)` as features |
 | **Seam** | `analyze_source` accepts prepared bundle; sim tests byte-identical | Separate commit with tests (after this plan commit) |
-| **M1** | Adapter + `raw` on one 2-room **room-A** segment; within-segment split+purge; chance floor; target-only valid mask | Synthetic unit tests; local metrics JSON; error vs floor; `HIPPO_DATA_ROOT` only |
-| **M2** | All methods on that segment (GPFA optional if too slow) | Per-method JSON + d-selection; time-shift null; timings |
-| **M3** | Eligible 2-room cohort; room A primary, B/a replications; heavy methods per §3.4 | Local manifest (incl. exclusions); per-animal aggregates; nothing real in git |
-| **M4** | Offline side-by-side report | Fig1–6 parallels + real-only sections; ignored outputs only |
+| **M1** | Adapter + `raw` on one 2-room **room-A** segment; within-segment split+purge; chance floor; target-only valid mask; **start figure data contract** for raw | Synthetic unit tests; local metrics JSON; error vs floor; contract artifacts for raw; `HIPPO_DATA_ROOT` only |
+| **M2** | All methods on that segment (GPFA optional if too slow); extend data contract | Per-method JSON + d-selection; time-shift null; timings; predictions/latents per method |
+| **M3** | Eligible 2-room cohort; room A primary, B/a replications; heavy methods per §3.4; extend data contract | Local manifest (incl. exclusions); per-animal aggregates; nothing real in git |
+| **M4** | Offline RD1–RD9 report (style-matched to `quadrant_n5` figures) | RD1–RD9 from saved artifacts only; ignored outputs; fixed example-selection rule recorded |
 
 ---
 
