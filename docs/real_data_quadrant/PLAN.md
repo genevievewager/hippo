@@ -209,11 +209,18 @@ Checked on 3 sessions × 5 moderate-firing units by re-binning
 
 **Causal rule for the adapter (matches sim contract):** for a label at time
 `t`, use spike counts in the half-open window **`[t − 0.250, t)`** so the
-window contains **only spikes strictly before `t`**. Do **not** feed
-`Cell_*(t)` in as features — it includes **125 ms of future** spikes. Rebuild
-causal 250 ms counts from per-unit spike times (or an equivalent causal
-construction on the 50 ms grid). Position/valid/room still align to the
+window contains **only spikes strictly before `t`**. Rebuild causal 250 ms
+counts from per-unit spike times. Position/valid/room still align to the
 dataset timestamp `t` (label = right edge of the causal window).
+
+**Hard rule — never decoder features:** Do **not** use `dataset.csv` `Cell_*`
+columns, `spike_rate_dataset.csv`, or `dataset_polar.csv` as decoder / latent
+inputs unless a separate check has proven that series is strictly causal
+(no spikes at times `≥ t` in the feature for label `t`). `Cell_*(t)` is
+centre-aligned and leaks **125 ms** of future spikes; the other two files are
+treated as non-causal until proven otherwise. They may be used only for the
+load-time integrity check (rebuild centre window vs `Cell_*`) or for
+non-feature metadata.
 
 ### 3.0b Segment isolation
 

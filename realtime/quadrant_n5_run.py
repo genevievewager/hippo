@@ -39,6 +39,81 @@ METHOD_KEYS = ("raw", "raw_lag", "pca", "dm", "lds", "isomap", "gpfa")
 REDUCING_SWEEP = ("pca", "dm", "isomap", "lds", "gpfa")
 D_SWEEP_SELECTION_RULE = "phase3_per_fold_refit"
 
+# Real-data segment edge trims (fit/eval). Warm-up neural history uses segment start.
+SEGMENT_TRIM_START_S = 60.0
+SEGMENT_TRIM_END_S = 10.0
+
+
+def prepared_source_bundle(
+    *,
+    X_counts: np.ndarray,
+    y: np.ndarray,
+    decode_times: np.ndarray,
+    unit_ids: list[int] | np.ndarray,
+    units_df,
+    arena_cm: float,
+    segment_t0: float,
+    segment_t1: float,
+    target_valid: np.ndarray | None = None,
+    arena_width_cm: float | None = None,
+    arena_height_cm: float | None = None,
+    apply_segment_trims: bool = True,
+    y_is_room_local: bool = True,
+    meta: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Build the prepared-bundle dict accepted by ``analyze_source``."""
+    X_counts = np.asarray(X_counts, dtype=float)
+    y = np.asarray(y, dtype=float)
+    decode_times = np.asarray(decode_times, dtype=float)
+    if X_counts.ndim != 2 or y.ndim != 2 or y.shape[1] != 2:
+        raise ValueError("X_counts must be (T, U) and y (T, 2)")
+    if len(decode_times) != X_counts.shape[0] or len(decode_times) != y.shape[0]:
+        raise ValueError("decode_times, X_counts, and y length mismatch")
+    if float(segment_t1) <= float(segment_t0):
+        raise ValueError("segment_t1 must be > segment_t0")
+    out: dict[str, Any] = {
+        "X_counts": X_counts,
+        "y": y,
+        "decode_times": decode_times,
+        "unit_ids": [int(u) for u in np.asarray(unit_ids).tolist()],
+        "units_df": units_df,
+        "arena_cm": float(arena_cm),
+        "segment_t0": float(segment_t0),
+        "segment_t1": float(segment_t1),
+        "apply_segment_trims": bool(apply_segment_trims),
+        "y_is_room_local": bool(y_is_room_local),
+        "target_valid": (
+            np.ones(len(decode_times), dtype=bool)
+            if target_valid is None
+            else np.asarray(target_valid, dtype=bool)
+        ),
+        "arena_width_cm": float(
+            arena_width_cm if arena_width_cm is not None else arena_cm
+        ),
+        "arena_height_cm": float(
+            arena_height_cm if arena_height_cm is not None else arena_cm
+        ),
+        "meta": dict(meta or {}),
+    }
+    if out["target_valid"].shape != decode_times.shape:
+        raise ValueError("target_valid must match decode_times shape")
+    return out
+
+
+def segment_retained_mask(
+    decode_times: np.ndarray,
+    segment_t0: float,
+    segment_t1: float,
+    *,
+    trim_start_s: float = SEGMENT_TRIM_START_S,
+    trim_end_s: float = SEGMENT_TRIM_END_S,
+) -> np.ndarray:
+    """True on times kept for fit/eval after segment edge trims."""
+    t = np.asarray(decode_times, dtype=float)
+    return (t >= float(segment_t0) + float(trim_start_s)) & (
+        t < float(segment_t1) - float(trim_end_s)
+    )
+
 
 def _git_sha() -> str | None:
     try:
@@ -762,14 +837,94 @@ def record_a13(a13: dict[str, Any]) -> dict[str, Any]:
     return out
 
 
+def _load_arrays_for_analyze_source(
+    cfg: dict[str, Any],
+    sim_dir: Path | None,
+    spike_source: str,
+    *,
+    bundle: dict[str, Any] | None,
+) -> tuple[np.ndarray, np.ndarray, np.ndarray, Any, list[int], dict[str, Any]]:
+    """Return X_counts, y, decode_times, units_df, unit_ids, load_meta.
+
+    Sim path (bundle is None) matches the historical loader. Bundle path
+    supplies arrays directly and records segment warm-up bounds in load_meta.
+    """
+    if bundle is not None:
+        X_counts = np.asarray(bundle["X_counts"], dtype=float)
+        y = np.asarray(bundle["y"], dtype=float)
+        decode_times = np.asarray(bundle["decode_times"], dtype=float)
+        unit_ids = [int(u) for u in bundle["unit_ids"]]
+        units_df = bundle["units_df"]
+        meta = {
+            "source": "bundle",
+            "segment_t0": float(bundle["segment_t0"]),
+            "segment_t1": float(bundle["segment_t1"]),
+            "apply_segment_trims": bool(bundle.get("apply_segment_trims", True)),
+            "y_is_room_local": bool(bundle.get("y_is_room_local", True)),
+            "target_valid": np.asarray(bundle["target_valid"], dtype=bool),
+            "arena_cm": float(bundle["arena_cm"]),
+            "arena_width_cm": float(bundle["arena_width_cm"]),
+            "arena_height_cm": float(bundle["arena_height_cm"]),
+            "bundle_meta": dict(bundle.get("meta") or {}),
+        }
+        return X_counts, y, decode_times, units_df, unit_ids, meta
+
+    if sim_dir is None:
+        raise ValueError("analyze_source requires sim_dir or bundle")
+    data = load_simulation_data(
+        sim_dir, spike_source,
+        include_regions=list(cfg["unit_inclusion"]["regions"]),
+    )
+    behavior_times = extract_behavior_times(data["behavior_df"])
+    update_dt = float(cfg["features"]["update_dt"])
+    W = float(cfg["features"]["window_s"])
+    decode_times = make_decode_times(
+        data["session_duration"], W, update_dt, behavior_times=behavior_times,
+    )
+    X_counts = build_causal_spike_matrix(
+        data["spikes_df"], data["unit_ids"], decode_times, W,
+    )
+    from realtime.train_decoder import align_behavior_to_decoder_times
+    beh = align_behavior_to_decoder_times(data["behavior_df"], decode_times)
+    y = _position(beh)
+    meta = {
+        "source": "sim_dir",
+        "segment_t0": None,
+        "segment_t1": None,
+        "target_valid": np.ones(len(decode_times), dtype=bool),
+        "arena_cm": float(cfg["session"]["arena_size_cm"]),
+        "arena_width_cm": float(cfg["session"]["arena_size_cm"]),
+        "arena_height_cm": float(cfg["session"]["arena_size_cm"]),
+        "bundle_meta": {},
+    }
+    return (
+        X_counts, y, decode_times, data["units_df"],
+        list(int(u) for u in data["unit_ids"]), meta,
+    )
+
+
 def analyze_source(
     cfg: dict[str, Any],
-    sim_dir: Path,
+    sim_dir: Path | None,
     spike_source: str,
     streams: dict[str, int],
     seed_index: int,
+    *,
+    bundle: dict[str, Any] | None = None,
+    output_dir: Path | None = None,
+    method_keys: tuple[str, ...] | list[str] | None = None,
 ) -> dict[str, Any]:
-    out_dir = OUTPUT_ROOT / f"seed_{seed_index}" / spike_source
+    """Run the frozen method grid on a sim directory or a prepared bundle.
+
+    When ``bundle`` is provided, ``sim_dir`` may be ``None``. Segment edge
+    trims (60 s / 10 s) apply only on the bundle path; the sim path is
+    unchanged.
+    """
+    keys = tuple(method_keys) if method_keys is not None else METHOD_KEYS
+    if output_dir is not None:
+        out_dir = Path(output_dir)
+    else:
+        out_dir = OUTPUT_ROOT / f"seed_{seed_index}" / spike_source
     cached_source = source_summary_reusable(out_dir, cfg)
     if cached_source is not None:
         print(
@@ -782,34 +937,43 @@ def analyze_source(
     feat = cfg["features"]
     split = cfg["split"]
     dec = cfg["decoders"]
-    data = load_simulation_data(
-        sim_dir, spike_source,
-        include_regions=list(cfg["unit_inclusion"]["regions"]),
+    X_counts, y, decode_times, units_df, unit_ids, load_meta = (
+        _load_arrays_for_analyze_source(
+            cfg, sim_dir, spike_source, bundle=bundle,
+        )
     )
-    behavior_times = extract_behavior_times(data["behavior_df"])
-    update_dt = float(feat["update_dt"])
-    W = float(feat["window_s"])
-    decode_times = make_decode_times(
-        data["session_duration"], W, update_dt, behavior_times=behavior_times,
-    )
-    X_counts = build_causal_spike_matrix(
-        data["spikes_df"], data["unit_ids"], decode_times, W,
-    )
-    from realtime.train_decoder import align_behavior_to_decoder_times
-    beh = align_behavior_to_decoder_times(data["behavior_df"], decode_times)
-    y = _position(beh)
     train_mask, test_mask = causal_train_test_split(
         decode_times, float(split["train_frac"]), gap_s=float(split["gap_s"]),
     )
+    # Bundle-only (when enabled): drop settling / removal edges from fit/eval.
+    # Neural arrays still begin at segment start so LDS / raw_lag can warm up.
+    if load_meta["source"] == "bundle" and load_meta.get("apply_segment_trims", True):
+        retained = segment_retained_mask(
+            decode_times,
+            float(load_meta["segment_t0"]),
+            float(load_meta["segment_t1"]),
+        )
+        train_mask = train_mask & retained
+        test_mask = test_mask & retained
+        # Overlay session length for A13 shift scaling on this segment.
+        cfg = dict(cfg)
+        cfg["session"] = dict(cfg["session"])
+        cfg["session"]["session_s"] = float(
+            load_meta["segment_t1"] - load_meta["segment_t0"]
+        )
+    target_valid = np.asarray(load_meta["target_valid"], dtype=bool)
+    train_mask = train_mask & target_valid
+    test_mask = test_mask & target_valid
+
     X, _ = _sqrt_zscore_train(X_counts, train_mask)
     n = len(decode_times)
-    valid = {m: _valid_mask(m, n, cfg) for m in METHOD_KEYS}
+    valid = {m: _valid_mask(m, n, cfg) for m in keys}
     eval_mask = test_mask.copy()
-    for m in METHOD_KEYS:
+    for m in keys:
         eval_mask &= valid[m]
     # Identical training index set for every method (SPEC §4 / A1, A3).
     train_ok = train_mask.copy()
-    for m in METHOD_KEYS:
+    for m in keys:
         train_ok &= valid[m]
 
     alphas = np.logspace(
@@ -826,14 +990,20 @@ def analyze_source(
         "eval": hash_train_indices(eval_mask),
     }
 
-    unit_counts = _unit_counts(data["units_df"], data["unit_ids"])
+    unit_counts = _unit_counts(units_df, unit_ids)
+    arena_cm = float(load_meta["arena_cm"])
+    y_occ = np.asarray(y, dtype=float).copy()
+    if load_meta["source"] == "bundle" and load_meta.get("y_is_room_local", True):
+        # Room-local (centre origin) → occupancy bins in [0, arena_*].
+        y_occ[:, 0] = y_occ[:, 0] + 0.5 * float(load_meta["arena_width_cm"])
+        y_occ[:, 1] = y_occ[:, 1] + 0.5 * float(load_meta["arena_height_cm"])
     cov = _occupancy_coverage(
-        y[train_ok], y[eval_mask],
-        arena_cm=float(cfg["session"]["arena_size_cm"]),
+        y_occ[train_ok], y_occ[eval_mask],
+        arena_cm=arena_cm,
         n_bins=int(cfg["phase3"]["coverage"]["occupancy_n_bins"]),
     )
     _write_occupancy_maps(
-        out_dir / "occupancy_maps.png", cov, float(cfg["session"]["arena_size_cm"]),
+        out_dir / "occupancy_maps.png", cov, arena_cm,
     )
     y_floor = np.mean(y[train_ok], axis=0, keepdims=True)
     floor_err = _euclid(np.repeat(y_floor, int(eval_mask.sum()), axis=0), y[eval_mask])
@@ -844,7 +1014,7 @@ def analyze_source(
     sweep_rows: list[dict[str, Any]] = []
     computed_reducing: set[str] = set()
 
-    for key in METHOD_KEYS:
+    for key in keys:
         cached = reusable_result_json(out_dir / f"{key}.json", cfg)
         if cached is not None:
             row = method_row_from_payload(cached)
@@ -951,7 +1121,7 @@ def analyze_source(
             n_use = max(1, int(round(len(idx) * float(frac))))
             use = np.zeros(n, dtype=bool)
             use[idx[-n_use:]] = True
-            for key in METHOD_KEYS:
+            for key in keys:
                 t_lc = time.perf_counter()
                 reducing = key not in ("raw", "raw_lag")
                 rec = next(r for r in results if r["method"] == key)
@@ -974,7 +1144,7 @@ def analyze_source(
                     "elapsed_s": time.perf_counter() - t_lc,
                 })
 
-    payload = _result_payload(cfg, {
+    extra: dict[str, Any] = {
         "stage": "source",
         "seed_index": seed_index,
         "spike_source": spike_source,
@@ -1000,7 +1170,36 @@ def analyze_source(
             "occupancy_n_bins": cov["occupancy_n_bins"],
             "occupancy_map_png": str(out_dir / "occupancy_maps.png"),
         },
-    })
+    }
+    if load_meta["source"] == "bundle":
+        if load_meta.get("apply_segment_trims", True):
+            retained = segment_retained_mask(
+                decode_times,
+                float(load_meta["segment_t0"]),
+                float(load_meta["segment_t1"]),
+            )
+        else:
+            retained = np.ones(len(decode_times), dtype=bool)
+        extra["segment"] = {
+            "t0": load_meta["segment_t0"],
+            "t1": load_meta["segment_t1"],
+            "trim_start_s": (
+                SEGMENT_TRIM_START_S
+                if load_meta.get("apply_segment_trims", True)
+                else 0.0
+            ),
+            "trim_end_s": (
+                SEGMENT_TRIM_END_S
+                if load_meta.get("apply_segment_trims", True)
+                else 0.0
+            ),
+            "n_retained": int(retained.sum()),
+            "dropped_valid_fraction": float(
+                1.0 - np.mean(target_valid[retained])
+            ) if retained.any() else float("nan"),
+            "bundle_meta": load_meta.get("bundle_meta") or {},
+        }
+    payload = _result_payload(cfg, extra)
     _write_json(out_dir / "source_summary.json", payload)
     if set(REDUCING_SWEEP) <= computed_reducing:
         write_d_sweep_json(
@@ -1011,7 +1210,7 @@ def analyze_source(
             eval_index_hash=index_hashes["eval"],
             rows=sweep_rows,
         )
-    if len(pred_store) == 2 * len(METHOD_KEYS):
+    if len(pred_store) == 2 * len(keys):
         from agents.quadrant_n5.export_predictions import write_predictions_npz
 
         write_predictions_npz(
