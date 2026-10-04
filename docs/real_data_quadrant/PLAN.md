@@ -155,10 +155,11 @@ Per-session directory under `HIPPO_DATA_ROOT/<session>/` (path from env only):
 | `config.yaml` | Room time ranges (`map_rooms`), boundary polygons, project meta |
 | `clusters_dataset.csv` | Per-cell metadata (`Region`, `BClabel`, …); load with `usecols` only |
 
-Treat `Cell_*` as raw integer bin counts (confirm vs smoothed rates in the local
-survey). Room labels are time segments from `map_rooms` (e.g. `A`, `B`, `a`,
-`b` as present). Arena geometry comes from `preprocessing.boundary`, not a
-fixed square. Dataset-specific counts and ranges: see `SURVEY.local.md`.
+`Cell_*` is a centre-labeled 250 ms sliding count on the 50 ms grid (see §3.0a);
+rebuild causal windows for decoding. Room labels are time segments from
+`map_rooms` (e.g. `A`, `B`, `a`, `b` as present). Arena geometry comes from
+`preprocessing.boundary`, not a fixed square. Dataset-specific counts and
+ranges: see `SURVEY.local.md`.
 
 ---
 
@@ -188,13 +189,31 @@ fixed square. Dataset-specific counts and ranges: see `SURVEY.local.md`.
 8. **M4:** offline report only; no realtime replay arm.
 9. **`W=250 ms` locked** (5 × 50 ms bins). Window sweep is a later supplement.
 
-### 3.0a Bin-edge check (before M1)
+### 3.0a Bin-edge check (before M1) — conclusion
 
-Before building the adapter, determine whether `dataset.csv` timestamps mark
-bin **start**, **centre**, or **end** by comparing against spike times in
-`clusters_dataset.csv` for a few units. Report the conclusion only (no data in
-git or chat dumps). The window for label time `t` must contain **only spikes
-strictly before `t`** (causal half-open `[t−W, t)`).
+Checked on 3 sessions × 5 moderate-firing units by re-binning
+`clusters_dataset` spike times onto the `dataset.csv` timestamp grid.
+
+**Findings (aggregates only):**
+
+- Spike times (`clusters_dataset.timestamp` comma-lists) are in **seconds**,
+  on the **same clock** as `dataset.csv` timestamps (**constant offset = 0**).
+- `Cell_*` is **not** a raw 50 ms bin count. Each spike appears in **five**
+  consecutive rows (`sum(Cell_*) / n_spikes ≈ 5`), i.e. a **250 ms sliding
+  window** stepped at 50 ms.
+- That window is **centre-labeled**: `Cell_*(t)` = spike count in
+  `[t − 0.125, t + 0.125)`. Exact bin match fraction **1.0** on every
+  checked session under this rule; start- and end-aligned 250 ms windows
+  do not match. Re-binning as if `Cell_*` were 50 ms start/centre/end
+  counts does not match (and cannot, given the ×5 multiplicity).
+
+**Causal rule for the adapter (matches sim contract):** for a label at time
+`t`, use spike counts in the half-open window **`[t − 0.250, t)`** so the
+window contains **only spikes strictly before `t`**. Do **not** feed
+`Cell_*(t)` in as features — it includes **125 ms of future** spikes. Rebuild
+causal 250 ms counts from per-unit spike times (or an equivalent causal
+construction on the 50 ms grid). Position/valid/room still align to the
+dataset timestamp `t` (label = right edge of the causal window).
 
 ### 3.0b Segment isolation
 
@@ -249,7 +268,7 @@ outputs; never commit).
 | Known sim latents / cell types | `clusters_dataset.Region` (+ `BClabel`) | Region subsets secondary; no whole-session place-cell selection |
 | Region allow-list (sim anatomy) | All regions; drop NON-SOMA | Record rule in config hash |
 | Fixed 100 cm arena | Per-room boundary; **room-local** coords | Centre from boundary polygon |
-| `behavior_dt` / bin | Native **50 ms** bins | `W=250 ms` = 5 bins (after bin-edge check) |
+| `behavior_dt` / bin | Native **50 ms** timestamp grid | `Cell_*` is centre 250 ms (see §3.0a); rebuild causal `[t−W,t)` |
 | Seed streams / A10 | Session + segment identity; analysis RNG for methods | No trajectory/neural/noise streams |
 | Train/test + purge | Time-blocked **inside one segment** | Never cross segment boundaries |
 | Inner CV + purge | Keep, within segment | All fits train-fold only |
@@ -294,7 +313,8 @@ analysis/real_quadrant/outputs/…         # gitignored
 
 **Adapter duties (per segment)**
 
-1. Resolve bin-edge convention (§3.0a); build causal `X_counts` for `W=250 ms`.
+1. Build causal `X_counts` for `W=250 ms` as `[t−0.250, t)` per §3.0a (not
+   raw `Cell_*(t)`).
 2. Slice to the segment range from `map_rooms`; keep neural history from segment
    start; mark fit/eval indices after excluding the first 60 s and last 10 s
    (trim values in config hash).
@@ -368,7 +388,7 @@ Mirror the sim figure set for side-by-side reading. Write only under an
 
 | ID | Deliverable | Done when |
 | -- | ----------- | --------- |
-| **Bin-edge** | Conclusion: timestamps = start / centre / end | Written into local notes / this plan as a one-line result; causal window rule fixed before M1 |
+| **Bin-edge** | Done (§3.0a): `Cell_*(t)` = centre 250 ms; causal rebuild `[t−0.250,t)` | Conclusion in PLAN; adapter must not use `Cell_*(t)` as features |
 | **Seam** | `analyze_source` accepts prepared bundle; sim tests byte-identical | Separate commit with tests (after this plan commit) |
 | **M1** | Adapter + `raw` on one 2-room **room-A** segment; within-segment split+purge; chance floor; target-only valid mask | Synthetic unit tests; local metrics JSON; error vs floor; `HIPPO_DATA_ROOT` only |
 | **M2** | All methods on that segment (GPFA optional if too slow) | Per-method JSON + d-selection; time-shift null; timings |
