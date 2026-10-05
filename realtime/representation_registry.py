@@ -345,12 +345,16 @@ _IMPLEMENTED: tuple[RepresentationSpec, ...] = (
         "gpfa",
         linearity=LINEARITY_LINEAR,
         temporal_type=TEMPORAL_DYNAMIC,
-        display_name="GPFA (offline)",
-        description="Linear-Gaussian factor analysis with AR(1)/GP temporal priors.",
+        display_name="GPFA (offline reference, non-causal smoother)",
+        description=(
+            "Offline reference: linear-Gaussian factor analysis with AR(1)/GP "
+            "temporal priors; primary inference is acausal RTS smoothing."
+        ),
         notes=(
             "Classified linear_dynamic from the existing implementation: linear loadings C "
             "plus Gaussian latents. Primary inference is acausal RTS smoothing "
-            "(supports_realtime=False). This is not a nonlinear-dynamic method."
+            "(supports_realtime=False). Diagnostic causal filtering is available via "
+            "transform(causal=True) / gpfa_causal posthoc — not a nonlinear-dynamic method."
         ),
     ),
 )
