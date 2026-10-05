@@ -9,7 +9,7 @@ from pathlib import Path
 
 from analysis.real_quadrant.adapter import build_segment_bundle
 from realtime.quadrant_n5 import load_quadrant_n5_yaml
-from realtime.quadrant_n5_run import analyze_source
+from realtime.quadrant_n5_run import analyze_source, require_clean_git_for_real_data
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 OUT_ROOT = REPO_ROOT / "outputs" / "real_quadrant" / "m1"
@@ -26,6 +26,7 @@ def _pick_2room_session(data_root: Path) -> str:
 
 
 def main() -> int:
+    require_clean_git_for_real_data()
     data_root = Path(os.environ["HIPPO_DATA_ROOT"])
     session = _pick_2room_session(data_root)
     t0 = time.perf_counter()

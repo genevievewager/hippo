@@ -134,6 +134,16 @@ def _git_dirty() -> bool:
         return True
 
 
+def require_clean_git_for_real_data() -> None:
+    """Real-data runs must start from a clean tree so resume keys stay stable."""
+    if _git_dirty():
+        raise RuntimeError(
+            "Refusing real-data run: working tree is dirty. "
+            "Commit or stash first so resume keys "
+            "(config_sha256, git_sha, dirty_tree) cannot mix code versions."
+        )
+
+
 def _result_payload(cfg: dict[str, Any], extra: dict[str, Any]) -> dict[str, Any]:
     out = {
         "config_sha256": cfg["config_sha256"],
@@ -156,7 +166,8 @@ def _write_json(path: Path, payload: dict[str, Any]) -> None:
 
 _METHOD_ROW_KEYS = (
     "method", "primary_d", "ridge_alpha", "knn_k", "ridge", "knn",
-    "n_train", "n_eval", "index_hashes", "elapsed_s", "a13",
+    "n_train", "n_eval", "index_hashes", "elapsed_s", "fit_s", "transform_s",
+    "a13",
     "n_units", "n_units_by_cell_type", "n_units_by_region", "coverage",
     "inner_cv_ridge_median", "inner_cv_knn_median", "n_folds",
     "refit_representation",
@@ -164,7 +175,7 @@ _METHOD_ROW_KEYS = (
 
 
 def reusable_result_json(path: Path, cfg: dict[str, Any]) -> dict[str, Any] | None:
-    """Return payload if it exists and its config hash matches the frozen YAML."""
+    """Return payload if resume key matches (config hash + git SHA + dirty flag)."""
     if not path.is_file():
         return None
     try:
@@ -175,6 +186,10 @@ def reusable_result_json(path: Path, cfg: dict[str, Any]) -> dict[str, Any] | No
         return None
     if rec.get("config_sha256") != cfg.get("config_sha256"):
         return None
+    if rec.get("git_sha") != _git_sha():
+        return None
+    if bool(rec.get("dirty_tree")) != bool(_git_dirty()):
+        return None
     return rec
 
 
@@ -183,7 +198,7 @@ def method_row_from_payload(rec: dict[str, Any]) -> dict[str, Any]:
 
 
 def source_summary_reusable(out_dir: Path, cfg: dict[str, Any]) -> dict[str, Any] | None:
-    """Skip a whole source when every method JSON and the summary match the config hash."""
+    """Skip a whole source when every method JSON and the summary match the resume key."""
     summary = reusable_result_json(out_dir / "source_summary.json", cfg)
     if summary is None:
         return None
@@ -404,6 +419,22 @@ def fit_transform_representation(name: str, model, X, fit_mask):
     if name == "gpfa":
         return model.transform(X)
     return model.transform(X)
+
+
+def fit_transform_representation_timed(name: str, model, X, fit_mask):
+    """Same as ``fit_transform_representation`` with fit/transform wall times."""
+    X = np.asarray(X, dtype=float)
+    t0 = time.perf_counter()
+    model.fit(X[np.asarray(fit_mask, dtype=bool)])
+    fit_s = time.perf_counter() - t0
+    t1 = time.perf_counter()
+    if name == "lds":
+        Z = model.transform(X, causal=True, reset=True)
+        assert_readout_latents_are_filtered(model.model_, Z, X)
+    else:
+        Z = model.transform(X)
+    transform_s = time.perf_counter() - t1
+    return Z, float(fit_s), float(transform_s)
 
 
 def _valid_mask(name: str, n: int, cfg: dict[str, Any]) -> np.ndarray:
@@ -923,6 +954,93 @@ def _load_arrays_for_analyze_source(
     )
 
 
+def _write_figure_contract(
+    out_dir: Path,
+    *,
+    cfg: dict[str, Any],
+    decode_times: np.ndarray,
+    y: np.ndarray,
+    target_valid: np.ndarray,
+    train_mask: np.ndarray,
+    test_mask: np.ndarray,
+    train_ok: np.ndarray,
+    eval_mask: np.ndarray,
+    y_floor: np.ndarray,
+    pred_store: dict[str, np.ndarray],
+    latents: dict[str, np.ndarray],
+    load_meta: dict[str, Any],
+    keys: tuple[str, ...],
+    a13_by_method: dict[str, Any],
+) -> Path:
+    """Persist figure-data-contract arrays under out_dir/figure_contract/."""
+    dest = Path(out_dir) / "figure_contract"
+    dest.mkdir(parents=True, exist_ok=True)
+    retained = np.ones(len(decode_times), dtype=bool)
+    if load_meta.get("source") == "bundle" and load_meta.get("apply_segment_trims", True):
+        retained = segment_retained_mask(
+            decode_times,
+            float(load_meta["segment_t0"]),
+            float(load_meta["segment_t1"]),
+        )
+    # Floor prediction on eval indices only (broadcast train-mean).
+    floor_pred = np.repeat(np.asarray(y_floor, dtype=float), int(eval_mask.sum()), axis=0)
+    np.savez_compressed(
+        dest / "arrays.npz",
+        decode_times=np.asarray(decode_times, dtype=float),
+        y=np.asarray(y, dtype=float),
+        valid=np.asarray(target_valid, dtype=bool),
+        retained=np.asarray(retained, dtype=bool),
+        train_mask=np.asarray(train_mask, dtype=bool),
+        test_mask=np.asarray(test_mask, dtype=bool),
+        train_ok=np.asarray(train_ok, dtype=bool),
+        eval_mask=np.asarray(eval_mask, dtype=bool),
+        y_floor=np.asarray(y_floor, dtype=float),
+        floor_pred_eval=floor_pred,
+        segment_t0=np.asarray(
+            [load_meta.get("segment_t0")], dtype=float,
+        ) if load_meta.get("segment_t0") is not None else np.asarray([np.nan]),
+        segment_t1=np.asarray(
+            [load_meta.get("segment_t1")], dtype=float,
+        ) if load_meta.get("segment_t1") is not None else np.asarray([np.nan]),
+        trim_start_s=np.asarray([
+            SEGMENT_TRIM_START_S
+            if load_meta.get("source") == "bundle"
+            and load_meta.get("apply_segment_trims", True)
+            else 0.0
+        ]),
+        trim_end_s=np.asarray([
+            SEGMENT_TRIM_END_S
+            if load_meta.get("source") == "bundle"
+            and load_meta.get("apply_segment_trims", True)
+            else 0.0
+        ]),
+    )
+    pred_payload = {
+        "eval_mask": np.asarray(eval_mask, dtype=bool),
+        "decode_times": np.asarray(decode_times, dtype=float),
+        "y_true": np.asarray(y[eval_mask], dtype=float),
+    }
+    pred_payload.update({k: np.asarray(v, dtype=float) for k, v in pred_store.items()})
+    np.savez_compressed(dest / "predictions.npz", **pred_payload)
+    if latents:
+        # Subsample rule for large latents: keep every step (document in meta).
+        np.savez_compressed(
+            dest / "latents.npz",
+            **{f"Z_{k}": np.asarray(v, dtype=float) for k, v in latents.items()},
+            subsample_rule=np.asarray(["full_session_no_subsample"]),
+        )
+    _write_json(dest / "a13.json", {k: v for k, v in a13_by_method.items()})
+    _write_json(dest / "provenance.json", {
+        "config_sha256": cfg.get("config_sha256"),
+        "methods": list(keys),
+        "bundle_meta": load_meta.get("bundle_meta") or {},
+        "source": load_meta.get("source"),
+        "git_sha": _git_sha(),
+        "dirty_tree": _git_dirty(),
+    })
+    return dest
+
+
 def analyze_source(
     cfg: dict[str, Any],
     sim_dir: Path | None,
@@ -933,6 +1051,7 @@ def analyze_source(
     bundle: dict[str, Any] | None = None,
     output_dir: Path | None = None,
     method_keys: tuple[str, ...] | list[str] | None = None,
+    save_figure_contract: bool = False,
 ) -> dict[str, Any]:
     """Run the frozen method grid on a sim directory or a prepared bundle.
 
@@ -940,19 +1059,24 @@ def analyze_source(
     trims (60 s / 10 s) apply only on the bundle path; the sim path is
     unchanged.
     """
+    if spike_source == "real":
+        require_clean_git_for_real_data()
     keys = tuple(method_keys) if method_keys is not None else METHOD_KEYS
     if output_dir is not None:
         out_dir = Path(output_dir)
     else:
         out_dir = OUTPUT_ROOT / f"seed_{seed_index}" / spike_source
-    cached_source = source_summary_reusable(out_dir, cfg)
-    if cached_source is not None:
-        print(
-            f"  [{spike_source}] skip source "
-            f"(JSON exists, config_sha256={cfg['config_sha256'][:12]}…)",
-            flush=True,
-        )
-        return cached_source
+    # Partial method grids must not be skipped via the full-METHOD_KEYS cache.
+    if method_keys is None and bundle is None:
+        cached_source = source_summary_reusable(out_dir, cfg)
+        if cached_source is not None:
+            print(
+                f"  [{spike_source}] skip source "
+                f"(JSON exists, config_sha256={cfg['config_sha256'][:12]}…, "
+                f"git={(_git_sha() or '?')[:12]}…, dirty={_git_dirty()})",
+                flush=True,
+            )
+            return cached_source
 
     feat = cfg["features"]
     split = cfg["split"]
@@ -984,6 +1108,9 @@ def analyze_source(
     target_valid = np.asarray(load_meta["target_valid"], dtype=bool)
     train_mask = train_mask & target_valid
     test_mask = test_mask & target_valid
+    # Split masks after segment trims + target validity (before method history loss).
+    train_mask_split = train_mask.copy()
+    test_mask_split = test_mask.copy()
 
     X, _ = _sqrt_zscore_train(X_counts, train_mask)
     n = len(decode_times)
@@ -1034,6 +1161,41 @@ def analyze_source(
     sweep_rows: list[dict[str, Any]] = []
     computed_reducing: set[str] = set()
 
+    need_contract_arrays = bool(
+        save_figure_contract or load_meta.get("source") == "bundle"
+    )
+
+    def _final_fit_predict(
+        key: str,
+        primary_d: int | None,
+        alpha: float,
+        knn_k: int,
+    ) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, float, float]:
+        """Return (Z_all, Z_fit, pred_r, pred_k, fit_s, transform_s).
+
+        ``Z_fit`` is the un-sliced nested fit (or same as ``Z_all``).
+        """
+        reducing = key not in ("raw", "raw_lag")
+        d_final = int(primary_d) if reducing else 3
+        nested = bool((cfg["representations"].get(key) or {}).get("nested"))
+        d_fit = int(cfg["nested_fit_d"]) if (nested and reducing) else d_final
+        model = _make_rep(key, d_fit, cfg, methods_seed, n_fit=int(train_ok.sum()))
+        Z_fit, fit_s, transform_s = fit_transform_representation_timed(
+            key, model, X, train_ok,
+        )
+        Z_all = Z_fit[:, : int(primary_d)] if (nested and reducing) else Z_fit
+        Ztr, Zte = Z_all[train_ok], Z_all[eval_mask]
+        ytr = y[train_ok]
+        pred_r = _fit_predict_ridge(Ztr, ytr, Zte, alpha)
+        pred_k = _fit_predict_knn(Ztr, ytr, Zte, knn_k)
+        model_dir = OUTPUT_ROOT / "models" / f"seed_{seed_index}" / spike_source / key
+        if hasattr(model, "save"):
+            try:
+                model.save(model_dir)
+            except Exception:
+                pass
+        return Z_all, Z_fit, pred_r, pred_k, fit_s, transform_s
+
     for key in keys:
         cached = reusable_result_json(out_dir / f"{key}.json", cfg)
         if cached is not None:
@@ -1043,9 +1205,29 @@ def analyze_source(
             timings[key] = float(cached.get("elapsed_s") or 0.0)
             print(
                 f"  [{spike_source}] {key} skip "
-                f"(JSON exists, config_sha256={cfg['config_sha256'][:12]}…)",
+                f"(JSON exists, config_sha256={cfg['config_sha256'][:12]}…, "
+                f"git={(_git_sha() or '?')[:12]}…, dirty={_git_dirty()})",
                 flush=True,
             )
+            # Refit final latents/preds for the figure contract (no CV).
+            if need_contract_arrays:
+                reducing = key not in ("raw", "raw_lag")
+                Z_all, _Z_fit, pred_r, pred_k, fit_s, transform_s = (
+                    _final_fit_predict(
+                        key,
+                        cached.get("primary_d"),
+                        float(cached["ridge_alpha"]),
+                        int(cached["knn_k"]),
+                    )
+                )
+                pred_store[f"pred_{key}_ridge"] = pred_r
+                pred_store[f"pred_{key}_knn"] = pred_k
+                pred_source[key] = "phase3_contract_refit"
+                latents[key] = Z_all
+                row["fit_s"] = fit_s
+                row["transform_s"] = transform_s
+                if reducing:
+                    computed_reducing.add(key)
             continue
         print(f"  [{spike_source}] {key} …", flush=True)
         t_method = time.perf_counter()
@@ -1054,27 +1236,16 @@ def analyze_source(
             key, X, y, train_ok, decode_times, cfg, methods_seed, alphas,
             list(dec["knn_k"]),
         )
-        d_final = int(primary_d) if reducing else 3
-        nested = bool((cfg["representations"].get(key) or {}).get("nested"))
-        d_fit = int(cfg["nested_fit_d"]) if (nested and reducing) else d_final
-        model = _make_rep(key, d_fit, cfg, methods_seed, n_fit=int(train_ok.sum()))
-        Z_fit = fit_transform_representation(key, model, X, train_ok)
-        Z_all = Z_fit[:, : int(primary_d)] if (nested and reducing) else Z_fit
+        Z_all, Z_fit, pred_r, pred_k, fit_s, transform_s = _final_fit_predict(
+            key, primary_d, float(alpha), int(knn_k),
+        )
         Ztr, Zte = Z_all[train_ok], Z_all[eval_mask]
         ytr, yte = y[train_ok], y[eval_mask]
-        pred_r = _fit_predict_ridge(Ztr, ytr, Zte, alpha)
-        pred_k = _fit_predict_knn(Ztr, ytr, Zte, knn_k)
         # Stage 2b: these are the in-memory Phase 3 scores, not export reload.
         pred_store[f"pred_{key}_ridge"] = pred_r
         pred_store[f"pred_{key}_knn"] = pred_k
         pred_source[key] = "phase3_in_memory"
         latents[key] = Z_all
-        model_dir = OUTPUT_ROOT / "models" / f"seed_{seed_index}" / spike_source / key
-        if hasattr(model, "save"):
-            try:
-                model.save(model_dir)
-            except Exception:
-                pass
         a13 = _a13_null(
             Ztr, Zte, y, train_ok, eval_mask, cfg,
             ridge_alpha=float(alpha), knn_k=int(knn_k),
@@ -1090,6 +1261,7 @@ def analyze_source(
             )
         elapsed = time.perf_counter() - t_method
         timings[key] = elapsed
+        nested = bool((cfg["representations"].get(key) or {}).get("nested"))
         row = {
             "method": key,
             "primary_d": primary_d,
@@ -1101,6 +1273,8 @@ def analyze_source(
             "n_eval": int(eval_mask.sum()),
             "index_hashes": index_hashes,
             "elapsed_s": elapsed,
+            "fit_s": fit_s,
+            "transform_s": transform_s,
             "a13": {
                 "ridge_median_minus_floor": a13["ridge_median_minus_floor"],
                 "knn_median_minus_floor": a13["knn_median_minus_floor"],
@@ -1245,6 +1419,29 @@ def analyze_source(
             pred_store,
             method_source=pred_source,
         )
+    if save_figure_contract or load_meta.get("source") == "bundle":
+        # Only write contract when we actually computed predictions this run
+        # (skip-only resumes leave pred_store empty).
+        if pred_store:
+            contract_dir = _write_figure_contract(
+                out_dir,
+                cfg=cfg,
+                decode_times=decode_times,
+                y=y,
+                target_valid=target_valid,
+                train_mask=train_mask_split,
+                test_mask=test_mask_split,
+                train_ok=train_ok,
+                eval_mask=eval_mask,
+                y_floor=y_floor,
+                pred_store=pred_store,
+                latents=latents,
+                load_meta=load_meta,
+                keys=keys,
+                a13_by_method=a13_by_method,
+            )
+            payload["figure_contract_dir"] = str(contract_dir)
+            _write_json(out_dir / "source_summary.json", payload)
     return payload
 
 

@@ -181,6 +181,8 @@ def test_skip_if_json_exists_requires_matching_config_hash(tmp_path):
 
     from realtime.quadrant_n5_run import (
         METHOD_KEYS,
+        _git_dirty,
+        _git_sha,
         reusable_result_json,
         source_summary_reusable,
     )
@@ -191,19 +193,49 @@ def test_skip_if_json_exists_requires_matching_config_hash(tmp_path):
     assert reusable_result_json(src / "raw.json", cfg) is None
     (src / "raw.json").write_text(json.dumps({"config_sha256": "0" * 64, "method": "raw"}))
     assert reusable_result_json(src / "raw.json", cfg) is None
-    good = {"config_sha256": cfg["config_sha256"], "method": "raw", "elapsed_s": 1.0}
+    # Config hash alone is not enough — resume also requires git SHA + dirty.
+    good_cfg_only = {"config_sha256": cfg["config_sha256"], "method": "raw", "elapsed_s": 1.0}
+    (src / "raw.json").write_text(json.dumps(good_cfg_only))
+    assert reusable_result_json(src / "raw.json", cfg) is None
+    good = {
+        **good_cfg_only,
+        "git_sha": _git_sha(),
+        "dirty_tree": _git_dirty(),
+    }
     (src / "raw.json").write_text(json.dumps(good))
     rec = reusable_result_json(src / "raw.json", cfg)
     assert rec is not None and rec["method"] == "raw"
+    # Wrong git SHA must not resume.
+    wrong_git = {**good, "git_sha": "0" * 40}
+    (src / "raw.json").write_text(json.dumps(wrong_git))
+    assert reusable_result_json(src / "raw.json", cfg) is None
+    (src / "raw.json").write_text(json.dumps(good))
     (src / "source_summary.json").write_text(json.dumps({
-        "config_sha256": cfg["config_sha256"], "stage": "source",
+        "config_sha256": cfg["config_sha256"],
+        "git_sha": _git_sha(),
+        "dirty_tree": _git_dirty(),
+        "stage": "source",
     }))
     assert source_summary_reusable(src, cfg) is None
     for key in METHOD_KEYS:
         (src / f"{key}.json").write_text(json.dumps({
-            "config_sha256": cfg["config_sha256"], "method": key,
+            "config_sha256": cfg["config_sha256"],
+            "git_sha": _git_sha(),
+            "dirty_tree": _git_dirty(),
+            "method": key,
         }))
     assert source_summary_reusable(src, cfg) is not None
+
+
+def test_real_data_refuses_dirty_working_tree(monkeypatch):
+    from realtime.quadrant_n5_run import require_clean_git_for_real_data
+
+    monkeypatch.setattr(
+        "realtime.quadrant_n5_run._git_dirty", lambda: True,
+    )
+    with pytest.raises(RuntimeError, match="dirty"):
+        require_clean_git_for_real_data()
+
 
 
 def test_a13_failure_is_recorded_not_raised():

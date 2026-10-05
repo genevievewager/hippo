@@ -227,6 +227,7 @@ def test_segment_trims_and_warmup_in_analyze_source(tmp_path, monkeypatch):
     from realtime.quadrant_n5 import load_quadrant_n5_yaml
 
     monkeypatch.setattr(run, "OUTPUT_ROOT", tmp_path / "out")
+    monkeypatch.setattr(run, "_git_dirty", lambda: False)
     t0, t1 = 0.0, 200.0
     dt = 0.05
     times = np.arange(t0, t1, dt)
