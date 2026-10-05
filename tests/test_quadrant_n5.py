@@ -159,8 +159,9 @@ def test_seed_streams_and_versions():
     assert "numpy" in vers and "sklearn" in vers
 
 
-def test_a13_null_passes_on_uncorrelated_latents():
-    from realtime.quadrant_n5_run import _a13_null
+def test_a13_null_fails_when_observed_at_chance():
+    """Uncorrelated latents: null is OK but observed does not beat floor → FAIL."""
+    from realtime.quadrant_n5_run import _a13_null, _euclid, _fit_predict_ridge, _fit_predict_knn
 
     rng = np.random.default_rng(0)
     n = 400
@@ -170,10 +171,66 @@ def test_a13_null_passes_on_uncorrelated_latents():
     train[:320] = True
     ev = ~train
     cfg = load_quadrant_n5_yaml()
-    out = _a13_null(Z[train], Z[ev], y, train, ev, cfg, ridge_alpha=1.0, knn_k=5)
+    floor = _euclid(
+        np.repeat(np.mean(y[train], axis=0, keepdims=True), int(ev.sum()), axis=0),
+        y[ev],
+    )["median"]
+    obs_r = _euclid(
+        _fit_predict_ridge(Z[train], y[train], Z[ev], 1.0), y[ev],
+    )["median"]
+    obs_k = _euclid(
+        _fit_predict_knn(Z[train], y[train], Z[ev], 5), y[ev],
+    )["median"]
+    out = _a13_null(
+        Z[train], Z[ev], y, train, ev, cfg, ridge_alpha=1.0, knn_k=5,
+        observed_ridge_median=obs_r, observed_knn_median=obs_k, floor_median=floor,
+    )
+    assert out["null_pass_ridge"]
+    assert out["null_pass_knn"]
+    assert not out["observed_below_floor_ridge"]
+    assert not out["ridge_pass"]
+    assert not out["knn_pass"]
+    assert out["n_shifts"] == 20
+
+
+def test_a13_null_passes_when_observed_beats_floor():
+    """Place-like latents on a random-walk path: beat floor, null near chance."""
+    from realtime.quadrant_n5_run import _a13_null, _euclid, _fit_predict_ridge, _fit_predict_knn
+
+    rng = np.random.default_rng(4)
+    n = 800
+    # Non-periodic walk so circular shifts destroy the mapping.
+    steps = rng.normal(scale=2.0, size=(n, 2))
+    y = np.cumsum(steps, axis=0)
+    y = y - y.min(axis=0)
+    train = np.zeros(n, dtype=bool)
+    train[:640] = True
+    ev = ~train
+    centres = rng.uniform(y.min(0), y.max(0), size=(16, 2))
+    d2 = ((y[:, None, :] - centres[None, :, :]) ** 2).sum(axis=-1)
+    Z = np.exp(-0.5 * d2 / (6.0 ** 2)) + rng.normal(scale=0.15, size=(n, 16))
+    cfg = load_quadrant_n5_yaml()
+    floor = _euclid(
+        np.repeat(np.mean(y[train], axis=0, keepdims=True), int(ev.sum()), axis=0),
+        y[ev],
+    )["median"]
+    obs_r = _euclid(
+        _fit_predict_ridge(Z[train], y[train], Z[ev], 1.0), y[ev],
+    )["median"]
+    obs_k = _euclid(
+        _fit_predict_knn(Z[train], y[train], Z[ev], 5), y[ev],
+    )["median"]
+    assert obs_r < floor and obs_k < floor
+    out = _a13_null(
+        Z[train], Z[ev], y, train, ev, cfg, ridge_alpha=1.0, knn_k=5,
+        observed_ridge_median=obs_r, observed_knn_median=obs_k, floor_median=floor,
+    )
+    assert out["null_pass_ridge"]
+    assert out["null_pass_knn"]
     assert out["ridge_pass"]
     assert out["knn_pass"]
-    assert out["n_shifts"] == 20
+    assert out["observed_below_floor_ridge"]
+    assert out["observed_below_floor_knn"]
 
 
 def test_skip_if_json_exists_requires_matching_config_hash(tmp_path):
@@ -253,7 +310,7 @@ def test_a13_failure_is_recorded_not_raised():
 
 
 def test_a13_fails_when_latents_are_the_labels():
-    from realtime.quadrant_n5_run import _a13_null
+    from realtime.quadrant_n5_run import _a13_null, _euclid, _fit_predict_ridge, _fit_predict_knn
 
     n = 400
     t = np.linspace(0, 2 * np.pi, n, endpoint=False)
@@ -263,8 +320,24 @@ def test_a13_fails_when_latents_are_the_labels():
     train[:320] = True
     ev = ~train
     cfg = load_quadrant_n5_yaml()
-    out = _a13_null(Z[train], Z[ev], y, train, ev, cfg, ridge_alpha=1e-6, knn_k=5)
+    floor = _euclid(
+        np.repeat(np.mean(y[train], axis=0, keepdims=True), int(ev.sum()), axis=0),
+        y[ev],
+    )["median"]
+    obs_r = _euclid(
+        _fit_predict_ridge(Z[train], y[train], Z[ev], 1e-6), y[ev],
+    )["median"]
+    obs_k = _euclid(
+        _fit_predict_knn(Z[train], y[train], Z[ev], 5), y[ev],
+    )["median"]
+    out = _a13_null(
+        Z[train], Z[ev], y, train, ev, cfg, ridge_alpha=1e-6, knn_k=5,
+        observed_ridge_median=obs_r, observed_knn_median=obs_k, floor_median=floor,
+    )
     assert not out["ridge_pass"]
+    # Observed does beat floor; the null check is what fails.
+    assert out["observed_below_floor_ridge"]
+    assert not out["null_pass_ridge"]
 
 
 def test_occupancy_coverage_counts_unseen_test_bins():

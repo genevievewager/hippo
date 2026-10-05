@@ -160,6 +160,7 @@ def test_integrity_passes_and_causal_differs_from_cell(tmp_path):
         min_valid_frac=0.5,
         trim_start_s=60.0,
         trim_end_s=10.0,
+        require_ratemap_stability=False,
     )
     assert bundle["meta"]["integrity_match_fraction"] == pytest.approx(1.0)
     assert bundle["meta"]["target_source"] == "postions_dataset.csv"
@@ -206,6 +207,7 @@ def test_extent_check_rejects_shrunken_path_in_adapter(tmp_path):
             cache_root=tmp_path / "cache",
             min_units=30,
             min_valid_frac=0.5,
+            require_ratemap_stability=False,
         )
 
 
@@ -219,6 +221,23 @@ def test_integrity_fails_on_corrupted_spikes(tmp_path):
             cache_root=tmp_path / "cache",
             min_units=30,
             min_valid_frac=0.5,
+            require_ratemap_stability=False,
+        )
+
+
+def test_ratemap_stability_refuses_unstable_synthetic(tmp_path):
+    from analysis.real_quadrant.adapter import RateMapStabilityError
+
+    sess = _write_synthetic_session(tmp_path / "synth_unstable")
+    with pytest.raises(RateMapStabilityError, match="rate-map"):
+        build_segment_bundle(
+            sess.name,
+            room="A",
+            data_root=sess.parent,
+            cache_root=tmp_path / "cache",
+            min_units=30,
+            min_valid_frac=0.5,
+            require_ratemap_stability=True,
         )
 
 

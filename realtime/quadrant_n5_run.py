@@ -813,8 +813,16 @@ def _a13_null(
     *,
     ridge_alpha: float,
     knn_k: int,
+    observed_ridge_median: float | None = None,
+    observed_knn_median: float | None = None,
+    floor_median: float | None = None,
 ) -> dict[str, Any]:
-    """Circular-shift null; representation latents are fixed (decoder-only refit)."""
+    """Circular-shift null; representation latents are fixed (decoder-only refit).
+
+    Pass requires both:
+    1. median(null_error − floor) ≥ pass_min_cm (null does not beat chance), and
+    2. observed (unshifted) error strictly below the chance floor when provided.
+    """
     a13 = cfg["phase3"]["a13"]
     session_s = float(cfg["session"]["session_s"])
     update_dt = float(cfg["features"]["update_dt"])
@@ -863,19 +871,43 @@ def _a13_null(
             "pass_min_cm": float(a13["pass_min_cm"]),
             "n_shifts": 0,
             "unshifted_n": {"n_train": int(len(ytr0)), "n_eval": int(len(yte0))},
+            "observed_below_floor_ridge": False,
+            "observed_below_floor_knn": False,
         })
     pass_min = float(a13["pass_min_cm"])
     ridge_delta = float(np.median([r["ridge_minus_floor"] for r in rows]))
     knn_delta = float(np.median([r["knn_minus_floor"] for r in rows]))
+    ridge_null_ok = ridge_delta >= pass_min
+    knn_null_ok = knn_delta >= pass_min
+    # Observed-below-floor gate (required when callers provide the medians).
+    if observed_ridge_median is None or floor_median is None:
+        ridge_obs_ok = True
+    else:
+        ridge_obs_ok = float(observed_ridge_median) < float(floor_median)
+    if observed_knn_median is None or floor_median is None:
+        knn_obs_ok = True
+    else:
+        knn_obs_ok = float(observed_knn_median) < float(floor_median)
     return record_a13({
         "shifts": rows,
         "ridge_median_minus_floor": ridge_delta,
         "knn_median_minus_floor": knn_delta,
-        "ridge_pass": ridge_delta >= pass_min,
-        "knn_pass": knn_delta >= pass_min,
+        "ridge_pass": bool(ridge_null_ok and ridge_obs_ok),
+        "knn_pass": bool(knn_null_ok and knn_obs_ok),
         "pass_min_cm": pass_min,
         "n_shifts": n_shifts,
         "unshifted_n": {"n_train": int(len(ytr0)), "n_eval": int(len(yte0))},
+        "observed_ridge_median": (
+            None if observed_ridge_median is None else float(observed_ridge_median)
+        ),
+        "observed_knn_median": (
+            None if observed_knn_median is None else float(observed_knn_median)
+        ),
+        "floor_median": None if floor_median is None else float(floor_median),
+        "observed_below_floor_ridge": bool(ridge_obs_ok),
+        "observed_below_floor_knn": bool(knn_obs_ok),
+        "null_pass_ridge": bool(ridge_null_ok),
+        "null_pass_knn": bool(knn_null_ok),
     })
 
 
@@ -1246,9 +1278,14 @@ def analyze_source(
         pred_store[f"pred_{key}_knn"] = pred_k
         pred_source[key] = "phase3_in_memory"
         latents[key] = Z_all
+        ridge_stats = _euclid(pred_r, yte)
+        knn_stats = _euclid(pred_k, yte)
         a13 = _a13_null(
             Ztr, Zte, y, train_ok, eval_mask, cfg,
             ridge_alpha=float(alpha), knn_k=int(knn_k),
+            observed_ridge_median=float(ridge_stats["median"]),
+            observed_knn_median=float(knn_stats["median"]),
+            floor_median=float(floor_err["median"]),
         )
         a13_by_method[key] = a13
         if a13.get("status") == "FAIL":
@@ -1256,7 +1293,10 @@ def analyze_source(
                 f"  A13 FAIL {key} on {spike_source}: "
                 f"ridge Δ={a13['ridge_median_minus_floor']:.3f} "
                 f"knn Δ={a13['knn_median_minus_floor']:.3f} "
-                f"(pass ≥ {a13['pass_min_cm']}; marked unreliable, continuing)",
+                f"(null ≥ {a13['pass_min_cm']}; obs<floor "
+                f"r={a13.get('observed_below_floor_ridge')} "
+                f"k={a13.get('observed_below_floor_knn')}; "
+                f"marked unreliable, continuing)",
                 flush=True,
             )
         elapsed = time.perf_counter() - t_method
@@ -1267,8 +1307,8 @@ def analyze_source(
             "primary_d": primary_d,
             "ridge_alpha": alpha,
             "knn_k": knn_k,
-            "ridge": _euclid(pred_r, yte),
-            "knn": _euclid(pred_k, yte),
+            "ridge": ridge_stats,
+            "knn": knn_stats,
             "n_train": int(train_ok.sum()),
             "n_eval": int(eval_mask.sum()),
             "index_hashes": index_hashes,

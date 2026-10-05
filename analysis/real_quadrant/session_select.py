@@ -16,11 +16,17 @@ from analysis.real_quadrant.adapter import (
     DEFAULT_MANIFEST_PATH,
     MIN_UNITS,
     MIN_VALID_FRAC,
+    RATEMAP_CORR_THRESH,
+    RATEMAP_MIN_FRAC_ABOVE,
+    RATEMAP_MIN_SAMPLES_PER_BIN,
+    RATEMAP_N_BINS,
+    TRAIN_FRAC_FOR_STABILITY,
     _room_boundary,
     assert_path_extent_matches_boundary,
     load_units_and_spikes,
+    split_half_rate_map_stability,
 )
-from realtime.quadrant_n5_run import segment_retained_mask
+from realtime.quadrant_n5_run import causal_train_test_split, segment_retained_mask
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 
@@ -28,8 +34,10 @@ M1_RULE = "lexicographically first directory name among 2rooms sessions"
 M2_RULE = (
     "2rooms sessions with room A that pass pre-registered exclusions "
     "(min 30 units after NON-SOMA, min 0.7 valid fraction on retained, "
-    "path extent 50–110% of boundary); choose the session whose unit "
-    "count is closest to the median; ties → lexicographically first name"
+    "path extent 50–110% of boundary, train split-half rate-map stability "
+    f"frac>{RATEMAP_CORR_THRESH} ≥ {RATEMAP_MIN_FRAC_ABOVE} on dataset "
+    "Cell_* + postions); choose the session whose unit count is closest "
+    "to the median; ties → lexicographically first name"
 )
 
 
@@ -92,6 +100,47 @@ def _passes_room_a_exclusions(
             return False, n_u, "min_valid_frac"
         _cx, _cy, w, h, _xmin, _ymin = _room_boundary(cfg, "A")
         assert_path_extent_matches_boundary(x[m], y[m], w, h)
+        # Cheap place-field proxy for selection: dataset Cell_* vs postions.
+        # Adapter still enforces the same threshold on causal features at load.
+        ds = pd.read_csv(
+            session_dir / "dataset.csv",
+            usecols=["timestamp"] + [f"Cell_{u}" for u in unit_ids],
+        )
+        joined = g[["timestamp", "X", "Y", "valid"]].merge(
+            ds, on="timestamp", how="inner",
+        )
+        if len(joined) < 100:
+            return False, n_u, "ratemap_stability"
+        X_cell = np.column_stack([
+            joined[f"Cell_{u}"].to_numpy(dtype=float) for u in unit_ids
+        ])
+        y_cm = np.column_stack([
+            joined["X"].to_numpy(dtype=float),
+            joined["Y"].to_numpy(dtype=float),
+        ])
+        t_j = joined["timestamp"].to_numpy(dtype=float)
+        vv_j = joined["valid"].to_numpy()
+        if vv_j.dtype != bool:
+            vv_j = pd.to_numeric(joined["valid"], errors="coerce").fillna(0).to_numpy() != 0
+        retained_j = segment_retained_mask(t_j, t0, t1)
+        train_mask, _ = causal_train_test_split(
+            t_j, TRAIN_FRAC_FOR_STABILITY, gap_s=1.0,
+        )
+        train_part = (
+            retained_j & vv_j & train_mask & np.isfinite(y_cm).all(axis=1)
+        )
+        stab = split_half_rate_map_stability(
+            X_cell,
+            y_cm,
+            train_part,
+            n_bins=RATEMAP_N_BINS,
+            min_samples=RATEMAP_MIN_SAMPLES_PER_BIN,
+            corr_thresh=RATEMAP_CORR_THRESH,
+        )
+        frac = stab.get("frac_gt_thresh")
+        frac_f = float(frac) if frac is not None and np.isfinite(frac) else 0.0
+        if frac_f < float(RATEMAP_MIN_FRAC_ABOVE):
+            return False, n_u, "ratemap_stability"
         return True, n_u, None
     except Exception as exc:
         return False, None, type(exc).__name__

@@ -49,9 +49,22 @@ class ExtentError(RuntimeError):
     """Retained path extent is not comparable to the room boundary polygon."""
 
 
+class RateMapStabilityError(RuntimeError):
+    """Train split-half rate-map stability is below the load-time threshold."""
+
+
 # Retained tracking bbox must be this fraction of the boundary width/height.
 EXTENT_FRAC_LO = 0.50
 EXTENT_FRAC_HI = 1.10
+
+# Load-time place-field sanity: on the training part of a segment, split-half
+# rate-map stability (8×8 bins, ≥40 samples/bin) must clear this fraction of
+# scored units with Pearson corr > 0.5. Below → warn, flag, refuse decode.
+RATEMAP_N_BINS = 8
+RATEMAP_MIN_SAMPLES_PER_BIN = 40
+RATEMAP_CORR_THRESH = 0.5
+RATEMAP_MIN_FRAC_ABOVE = 0.05
+TRAIN_FRAC_FOR_STABILITY = 0.80
 
 
 def _require_data_root() -> Path:
@@ -225,6 +238,81 @@ def _room_boundary(
     )
 
 
+def split_half_rate_map_stability(
+    X: np.ndarray,
+    y: np.ndarray,
+    mask: np.ndarray,
+    *,
+    n_bins: int = RATEMAP_N_BINS,
+    min_samples: int = RATEMAP_MIN_SAMPLES_PER_BIN,
+    corr_thresh: float = RATEMAP_CORR_THRESH,
+) -> dict[str, float | int]:
+    """Per-unit Pearson corr of rate maps between first/second half of ``mask``.
+
+    Bins are an ``n_bins``×``n_bins`` grid over the finite extent of ``y[mask]``.
+    A bin contributes only when both halves have ≥ ``min_samples`` visits.
+    """
+    X = np.asarray(X, dtype=float)
+    y = np.asarray(y, dtype=float)
+    mask = np.asarray(mask, dtype=bool)
+    idx = np.where(mask)[0]
+    empty = {
+        "n_scored_units": 0,
+        "n_stable_units": 0,
+        "median_corr": float("nan"),
+        "frac_gt_thresh": float("nan"),
+        "corr_thresh": float(corr_thresh),
+    }
+    if idx.size < 2 * int(min_samples):
+        return empty
+    mid = idx.size // 2
+    halves = [idx[:mid], idx[mid:]]
+    yf = y[mask]
+    yf = yf[np.isfinite(yf).all(axis=1)]
+    if len(yf) < int(min_samples):
+        return empty
+    xedges = np.linspace(float(yf[:, 0].min()), float(yf[:, 0].max()), int(n_bins) + 1)
+    yedges = np.linspace(float(yf[:, 1].min()), float(yf[:, 1].max()), int(n_bins) + 1)
+    maps: list[np.ndarray] = []
+    for h in halves:
+        yh = y[h]
+        Xh = X[h]
+        finite = np.isfinite(yh).all(axis=1)
+        yh, Xh = yh[finite], Xh[finite]
+        if len(yh) < int(min_samples):
+            return empty
+        xi = np.clip(np.digitize(yh[:, 0], xedges) - 1, 0, int(n_bins) - 1)
+        yi = np.clip(np.digitize(yh[:, 1], yedges) - 1, 0, int(n_bins) - 1)
+        rmap = np.full((Xh.shape[1], int(n_bins), int(n_bins)), np.nan)
+        for bx in range(int(n_bins)):
+            for by in range(int(n_bins)):
+                m = (xi == bx) & (yi == by)
+                if int(m.sum()) >= int(min_samples):
+                    rmap[:, bx, by] = Xh[m].mean(axis=0)
+        maps.append(rmap)
+    corrs: list[float] = []
+    for u in range(maps[0].shape[0]):
+        a = maps[0][u].ravel()
+        b = maps[1][u].ravel()
+        m = np.isfinite(a) & np.isfinite(b)
+        if int(m.sum()) < 4:
+            continue
+        if float(np.std(a[m])) < 1e-12 or float(np.std(b[m])) < 1e-12:
+            continue
+        corrs.append(float(np.corrcoef(a[m], b[m])[0, 1]))
+    if not corrs:
+        return empty
+    arr = np.asarray(corrs, dtype=float)
+    n_stable = int(np.sum(arr > float(corr_thresh)))
+    return {
+        "n_scored_units": int(arr.size),
+        "n_stable_units": n_stable,
+        "median_corr": float(np.median(arr)),
+        "frac_gt_thresh": float(n_stable / arr.size),
+        "corr_thresh": float(corr_thresh),
+    }
+
+
 def assert_path_extent_matches_boundary(
     x_cm: np.ndarray,
     y_cm: np.ndarray,
@@ -286,11 +374,15 @@ def build_segment_bundle(
     trim_end_s: float = SEGMENT_TRIM_END_S,
     min_units: int = MIN_UNITS,
     min_valid_frac: float = MIN_VALID_FRAC,
+    require_ratemap_stability: bool = True,
+    min_ratemap_frac_above: float = RATEMAP_MIN_FRAC_ABOVE,
 ) -> dict[str, Any]:
     """Build a prepared analyze_source bundle for one room segment.
 
     Raises IntegrityError if the centre-window rebuild ≠ Cell_* (exact).
     Raises RuntimeError for pre-registered exclusions (logged to manifest).
+    Raises RateMapStabilityError when train split-half rate-map stability is
+    below ``min_ratemap_frac_above`` (logged + flagged; decode refused).
     """
     root = Path(data_root) if data_root is not None else _require_data_root()
     session_dir = root / session_name
@@ -461,6 +553,46 @@ def build_segment_bundle(
         _append_manifest(reason)
         raise
 
+    # Load-time place-field sanity on the training part of the retained segment.
+    from realtime.quadrant_n5_run import causal_train_test_split
+
+    train_mask, _test_mask = causal_train_test_split(
+        grid, TRAIN_FRAC_FOR_STABILITY, gap_s=max(float(window_s), 1.0),
+    )
+    train_part = (
+        retained & target_valid & train_mask & np.isfinite(y).all(axis=1)
+    )
+    ratemap = split_half_rate_map_stability(X_counts, y, train_part)
+    frac = ratemap.get("frac_gt_thresh")
+    frac_f = float(frac) if frac is not None and np.isfinite(frac) else 0.0
+    ratemap_flagged = frac_f < float(min_ratemap_frac_above)
+    if ratemap_flagged:
+        warn = {
+            "session": session_name,
+            "room": room,
+            "status": "ratemap_stability_flag",
+            "frac_gt_thresh": frac_f,
+            "min_frac": float(min_ratemap_frac_above),
+            "median_corr": ratemap.get("median_corr"),
+            "n_scored_units": ratemap.get("n_scored_units"),
+            "n_stable_units": ratemap.get("n_stable_units"),
+        }
+        _append_manifest(warn)
+        print(
+            f"WARNING: rate-map stability low for {session_name} room={room}: "
+            f"frac_gt_{RATEMAP_CORR_THRESH}={frac_f:.4f} "
+            f"(min={min_ratemap_frac_above}); n_stable="
+            f"{ratemap.get('n_stable_units')}/"
+            f"{ratemap.get('n_scored_units')}",
+            flush=True,
+        )
+        if require_ratemap_stability:
+            raise RateMapStabilityError(
+                f"refusing decode for {session_name} room={room}: "
+                f"train split-half rate-map frac_gt_{RATEMAP_CORR_THRESH}="
+                f"{frac_f:.4f} < {min_ratemap_frac_above}"
+            )
+
     arena_cm = float(max(width, height))
     bundle = prepared_source_bundle(
         X_counts=X_counts,
@@ -490,6 +622,12 @@ def build_segment_bundle(
             "target_source": "postions_dataset.csv",
             "target_units": "cm",
             "extent": extent_stats,
+            "ratemap_stability": {
+                **ratemap,
+                "min_frac_above": float(min_ratemap_frac_above),
+                "flagged": bool(ratemap_flagged),
+                "train_frac": float(TRAIN_FRAC_FOR_STABILITY),
+            },
         },
     )
     _append_manifest({
@@ -501,5 +639,7 @@ def build_segment_bundle(
         "valid_frac_retained": valid_frac,
         "integrity_match_fraction": match_frac,
         "cache_key": key,
+        "ratemap_stability_frac_gt_thresh": frac_f,
+        "ratemap_stability_flagged": bool(ratemap_flagged),
     })
     return bundle
