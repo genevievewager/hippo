@@ -190,3 +190,101 @@ def append_selection_manifest(
     path.parent.mkdir(parents=True, exist_ok=True)
     with path.open("a") as f:
         f.write(json.dumps({"kind": "session_selection", **record}, default=str) + "\n")
+
+
+def animal_id_from_session(session_name: str) -> str:
+    """Animal ID = first underscore-separated token of the session directory name."""
+    return str(session_name).split("_", 1)[0]
+
+
+M3_RULE = (
+    "Per animal among 2rooms sessions that pass all M2 exclusions (min units, "
+    "valid frac, path extent, train split-half rate-map stability): select the "
+    "2 sessions whose unit counts are closest to that animal's median eligible "
+    "unit count; ties → lexicographically first session name. If an animal has "
+    "fewer than 2 eligible sessions, use all eligible and record the shortfall. "
+    "Room A only."
+)
+
+
+def select_m3_cohort(
+    data_root: Path | None = None,
+    *,
+    n_per_animal: int = 2,
+) -> dict[str, Any]:
+    """Apply M3_RULE; return cohort record (local use only — never commit)."""
+    root = _data_root(data_root)
+    sessions = list_2room_sessions(root)
+    by_animal: dict[str, list[tuple[int, str]]] = {}
+    excluded_by_animal: dict[str, list[dict[str, Any]]] = {}
+    for name in sessions:
+        animal = animal_id_from_session(name)
+        ok, n_u, reason = _passes_room_a_exclusions(root / name)
+        if ok and n_u is not None:
+            by_animal.setdefault(animal, []).append((int(n_u), name))
+        else:
+            excluded_by_animal.setdefault(animal, []).append({
+                "session": name,
+                "reason": reason or "unknown",
+                "n_units": n_u,
+            })
+
+    selected: list[dict[str, Any]] = []
+    animals_out: list[dict[str, Any]] = []
+    for animal in sorted(by_animal.keys() | excluded_by_animal.keys()):
+        eligible = by_animal.get(animal, [])
+        excluded = excluded_by_animal.get(animal, [])
+        reason_counts = dict(Counter(e["reason"] for e in excluded))
+        if not eligible:
+            animals_out.append({
+                "animal": animal,
+                "n_eligible": 0,
+                "n_selected": 0,
+                "n_excluded": len(excluded),
+                "exclude_reason_counts": reason_counts,
+                "median_units": None,
+                "selected": [],
+                "note": "no eligible sessions",
+            })
+            continue
+        units = np.asarray([n for n, _ in eligible], dtype=float)
+        med = float(np.median(units))
+        ranked = sorted(eligible, key=lambda x: (abs(x[0] - med), x[1]))
+        pick = ranked[: int(n_per_animal)]
+        note = None
+        if len(eligible) < int(n_per_animal):
+            note = (
+                f"fewer than {n_per_animal} eligible "
+                f"({len(eligible)}); using all"
+            )
+        animal_rec = {
+            "animal": animal,
+            "n_eligible": len(eligible),
+            "n_selected": len(pick),
+            "n_excluded": len(excluded),
+            "exclude_reason_counts": reason_counts,
+            "median_units": med,
+            "unit_count_range": [int(units.min()), int(units.max())],
+            "selected": [
+                {"session": name, "n_units": int(n_u)} for n_u, name in pick
+            ],
+            "note": note,
+        }
+        animals_out.append(animal_rec)
+        for n_u, name in pick:
+            selected.append({
+                "animal": animal,
+                "session": name,
+                "n_units": int(n_u),
+                "animal_median_units": med,
+            })
+
+    return {
+        "rule": M3_RULE,
+        "n_per_animal": int(n_per_animal),
+        "n_2rooms": len(sessions),
+        "n_animals": len(animals_out),
+        "n_selected_sessions": len(selected),
+        "animals": animals_out,
+        "selected_sessions": selected,
+    }

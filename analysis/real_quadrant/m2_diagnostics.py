@@ -91,11 +91,10 @@ def _plot_series_gapless(ax, t, y, *, color, lw, label=None) -> None:
 
 
 def _best_causal_method(methods: list[dict]) -> dict:
-    """Best causal method for path/trace panels — excludes GPFA family."""
-    excluded = set(OFFLINE_METHODS) | {"gpfa_causal"}
+    """Best causal method for path/trace panels — excludes offline GPFA only."""
     causal = [
         m for m in methods
-        if m["method"] not in excluded
+        if m["method"] not in OFFLINE_METHODS
         and m.get("causal", m["method"] != "gpfa")
         and m.get("ridge_median_cm") is not None
     ]
@@ -170,6 +169,7 @@ def build_table(report: dict, outline: np.ndarray, preds, y_true: np.ndarray) ->
             "causal": bool(m.get("causal", name != "gpfa")),
             "normalized_error": m.get("normalized_error"),
             "ridge_median_cm": m.get("ridge_median_cm"),
+            "effective_lag_s": m.get("effective_lag_s"),
             "frac_outside_boundary": frac_out,
             "ema_tau_s": m.get("ema_tau_s"),
             "a13_status": m.get("a13_status"),
@@ -205,18 +205,20 @@ def main() -> int:
     (M2_DIR / "m2_table.json").write_text(json.dumps({"rows": table}, indent=2) + "\n")
     # Human-readable markdown table
     lines = [
-        "| method | causal | normalized_error | frac_outside_boundary | ema_tau_s |",
-        "| --- | --- | --- | --- | --- |",
+        "| method | causal | normalized_error | effective_lag_s | frac_outside_boundary | ema_tau_s |",
+        "| --- | --- | --- | --- | --- | --- |",
     ]
     for r in table:
         tau = r["ema_tau_s"]
         tau_s = "" if tau is None else f"{tau:g}"
         ne = r["normalized_error"]
         ne_s = "" if ne is None else f"{ne:.3f}"
+        lag = r.get("effective_lag_s")
+        lag_s = "" if lag is None or not np.isfinite(lag) else f"{float(lag):.2f}"
         fo = r["frac_outside_boundary"]
         fo_s = "" if fo is None or not np.isfinite(fo) else f"{fo:.3f}"
         lines.append(
-            f"| {r['display_name']} | {str(r['causal']).lower()} | {ne_s} | {fo_s} | {tau_s} |"
+            f"| {r['display_name']} | {str(r['causal']).lower()} | {ne_s} | {lag_s} | {fo_s} | {tau_s} |"
         )
     (PLOT_DIR / "m2_table.md").write_text("\n".join(lines) + "\n")
     print("\n".join(lines), flush=True)

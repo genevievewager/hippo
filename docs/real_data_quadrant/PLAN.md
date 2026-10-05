@@ -57,8 +57,11 @@ supplement, not M1–M4.
 | `pca` | Linear–static quadrant | Train PCA; nested fit at d=20, slice | `(n, d)`, d∈{2,3,5,10,20} |
 | `dm` | Nonlinear–static | Diffusion maps + Nyström OOS; landmarks if n_fit>12k | `(n, d)` |
 | `lds` | Linear–dynamic | EM on train; **Kalman filter only** (no RTS on eval); continuous from session start | `(n, d)`; refit per d |
+| `lds_smooth` | Smoothing control on LDS | Causal EMA on LDS Ridge predictions; τ from train blocked CV | Same as LDS + EMA |
 | `isomap` | Baseline | Global Isomap (+ optional pre-PCA); OOS transform | `(n, d)` |
-| `gpfa` | Baseline (expect offline) | GPFA; smoother-style inference | `(n, d)`; refit per d; A9 typically offline-only |
+| `gpfa` | Offline reference (non-causal smoother) | GPFA; RTS smoother-style inference | `(n, d)`; not a causal method |
+| `gpfa_causal` | Linear–dynamic (verified causal) | Same GPFA params (train-only); **Kalman filter only**, forward from segment start | `(n, d)`; leakage-tested |
+| `raw_smooth` / `pca_smooth` / `dm_smooth` | Smoothing controls | Causal EMA on Ridge predictions; τ∈{0.1,0.25,0.5,1,2}s by train CV | No representation refit |
 | nonlinear–dynamic | Empty cell | Not implemented | Drawn empty in figures |
 
 Primary `d` per method: lowest inner-CV median Ridge error; ties → smaller d.
@@ -71,8 +74,12 @@ Not spatial arena quadrants. The **representation quadrant** is the 2×2:
 
 |            | Static | Dynamic        |
 | ---------- | ------ | -------------- |
-| Linear     | PCA    | LDS (filter)   |
+| Linear     | PCA    | LDS / gpfa_causal (filters) |
 | Nonlinear  | DM     | *(empty)*      |
+
+Smoothing controls (`*_smooth`) are post-hoc causal EMA on Ridge predictions
+(same τ rule for every base, including `lds_smooth`). They are not a fifth
+quadrant cell; they equalize post-processing across contrast arms.
 
 **Arena geometry (sim):** fixed square, `arena_size_cm=100`, origin-aligned
 occupancy bins for coverage / spatial error maps / centre-pull (distance from
@@ -92,6 +99,11 @@ Per (seed, spike source, method, d, decoder):
 Across seeds (N=5): per-seed values, mean, SD, **paired contrasts** with sign
 counts (no p-values): `dm−pca`, `lds−pca`, `raw_lag−raw`, `lds−raw_lag`,
 each method − `raw`, kNN−Ridge, `sorted−gt`.
+
+**Effective lag (causal methods):** shift in 50 ms steps within ±3 s that
+maximizes mean axis-wise Pearson correlation of prediction vs truth. Reported
+next to normalized error (sim posthoc rows and real M2/M3 tables). Positive lag
+means the prediction leads the truth.
 
 ### 1.5 Seeds and aggregation
 
@@ -249,6 +261,31 @@ eval labels dropped for invalid targets.
 
 Per room segment, contrasts across animals with sessions nested within animals.
 Report room `A` as primary; `B` and `a` in the same tables as replications.
+
+**M3 planned contrasts (locked before any M3 results):**
+
+Primary (normalized error; sign counts across animals, N≤6):
+
+- `lds − raw_smooth`
+- `gpfa_causal − raw_smooth` (included: leakage + train-only fit verified)
+- `pca_smooth − raw_smooth`
+- `dm_smooth − pca_smooth`
+- `raw_smooth − raw`
+
+Secondary (original unsmoothed sim-report contrasts):
+
+- `dm − pca`, `lds − pca`, `raw_lag − raw`, `lds − raw_lag`
+- each base method − `raw` (`pca`, `dm`, `lds`, `isomap`, `gpfa_causal`)
+
+Both arms of every primary contrast have the same post-processing option
+(`lds_smooth` exists so LDS can be compared under EMA when needed).
+
+**M3 cohort rule (recorded in local manifest before run):** 2 sessions per
+animal closest to that animal's median eligible unit count among sessions
+passing all exclusions (incl. rate-map stability); ties → lexicographic. If an
+animal has fewer than 2 eligible, use what exists and record the shortfall.
+Room A only. Parallel: one process per session, max 6, BLAS threads = 8.
+Resume keyed on config hash + git SHA; refuse dirty tree.
 
 ### 3.0e Sim-vs-real metric
 
@@ -446,7 +483,7 @@ aggregates for RD8.
 | **Seam** | `analyze_source` accepts prepared bundle; sim tests byte-identical | Separate commit with tests (after this plan commit) |
 | **M1** | Adapter + `raw` on one 2-room **room-A** segment; within-segment split+purge; chance floor; target-only valid mask; **start figure data contract** for raw | Synthetic unit tests; local metrics JSON; error vs floor; contract artifacts for raw; `HIPPO_DATA_ROOT` only |
 | **M2** | All methods on that segment (GPFA optional if too slow); extend data contract | Per-method JSON + d-selection; time-shift null; timings; predictions/latents per method |
-| **M3** | Eligible 2-room cohort; room A primary, B/a replications; heavy methods per §3.4; extend data contract | Local manifest (incl. exclusions); per-animal aggregates; nothing real in git |
+| **M3** | Eligible 2-room cohort (2/animal near median units); room A; all methods + smooth / gpfa_causal; planned contrasts above | Local manifest (excl. reasons); per-animal means; primary/secondary contrasts; nothing real in git |
 | **M4** | Offline RD1–RD9 report (style-matched to `quadrant_n5` figures) | RD1–RD9 from saved artifacts only; ignored outputs; fixed example-selection rule recorded |
 
 ---
