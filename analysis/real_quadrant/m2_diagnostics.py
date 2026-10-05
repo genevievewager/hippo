@@ -121,7 +121,7 @@ def main() -> int:
         err = np.linalg.norm(preds[f"pred_{m}_ridge"] - y_true, axis=1)
         data.append(err)
         labels.append(m)
-    ax.boxplot(data, labels=labels, showfliers=False)
+    ax.boxplot(data, tick_labels=labels, showfliers=False)
     ax.axhline(floor_med, color="0.3", ls="--", lw=1.2, label=f"chance floor med={floor_med:.1f} cm")
     ax.set_ylabel("Euclidean error (cm)")
     ax.set_title("M2 Ridge error distribution (eval)")
