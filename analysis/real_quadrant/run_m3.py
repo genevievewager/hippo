@@ -62,6 +62,23 @@ PRIMARY_CONTRASTS = (
     ("dm_smooth", "pca_smooth"),
     ("raw_smooth", "raw"),
 )
+# Secondary: original unsmoothed sim-report contrasts.
+SECONDARY_CONTRASTS = (
+    ("dm", "pca"),
+    ("lds", "pca"),
+    ("raw_lag", "raw"),
+    ("lds", "raw_lag"),
+    ("pca", "raw"),
+    ("dm", "raw"),
+    ("lds", "raw"),
+    ("isomap", "raw"),
+    ("gpfa_causal", "raw"),
+)
+
+ISOMAP_FAILURE_NOTE = (
+    "isomap failed on 1 session (disconnected neighbor graph, "
+    "largest component 99.3%); isomap is a baseline, not a quadrant cell."
+)
 
 # Commits known equivalent (fallback if git diff unavailable).
 M3_ANALYSIS_EQUIVALENT_GIT_SHAS = (
@@ -146,18 +163,6 @@ def retarget_method_resume_keys(
         path.write_text(json.dumps(rec, indent=2, default=str) + "\n")
         touched.append(method)
     return touched
-# Secondary: original unsmoothed sim-report contrasts.
-SECONDARY_CONTRASTS = (
-    ("dm", "pca"),
-    ("lds", "pca"),
-    ("raw_lag", "raw"),
-    ("lds", "raw_lag"),
-    ("pca", "raw"),
-    ("dm", "raw"),
-    ("lds", "raw"),
-    ("isomap", "raw"),
-    ("gpfa_causal", "raw"),
-)
 
 
 def _set_blas_threads(n: int = BLAS_THREADS) -> None:
