@@ -68,6 +68,16 @@ Primary `d` per method: lowest inner-CV median Ridge error; ties → smaller d.
 Each method also produces Ridge/kNN test errors, A13 null stats, optional
 d-sweep rows, and (when complete) predictions for trajectory panels.
 
+**Latent-d grid (sim frozen; real may extend):** sim keeps
+`latent_dims: [2, 3, 5, 10, 20]` and `nested_fit_d: 20` in
+`configs/quadrant_n5.yaml`. Real-data rule (recorded before extending):
+if the selected `d` equals the grid max on most sessions, extend the grid by
+doubling until the mode selected `d` is strictly below the max or
+`d` reaches `⌊n_units / 2⌋`. Nested methods set `nested_fit_d = max(grid)`.
+Sim N=5 selections also sat at 20 for most methods (pca/dm/isomap/gpfa 9/10,
+lds 10/10); the sim grid is left unchanged by design (sim ≈ 86 units; real
+sessions often ≫ 100 units).
+
 ### 1.3 What “quadrant” means here
 
 Not spatial arena quadrants. The **representation quadrant** is the 2×2:
@@ -286,6 +296,12 @@ passing all exclusions (incl. rate-map stability); ties → lexicographic. If an
 animal has fewer than 2 eligible, use what exists and record the shortfall.
 Room A only. Parallel: one process per session, max 6, BLAS threads = 8.
 Resume keyed on config hash + git SHA; refuse dirty tree.
+
+**Latent-d grid extension (pre-registered before extended-grid results):**
+If selected `d` equals the grid max on most cohort sessions, extend by
+doubling (`…, 20 → 40 → 80 → …`) until the mode selected `d` is below the
+max or `d = ⌊n_units/2⌋`. Apply to real-data pca/lds (and their smooth
+controls) first; archive prior `grid20` rows alongside. Sim grid unchanged.
 
 ### 3.0e Sim-vs-real metric
 

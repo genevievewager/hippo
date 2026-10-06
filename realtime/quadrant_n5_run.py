@@ -1435,15 +1435,34 @@ def analyze_source(
         }
     payload = _result_payload(cfg, extra)
     _write_json(out_dir / "source_summary.json", payload)
-    if set(REDUCING_SWEEP) <= computed_reducing:
-        write_d_sweep_json(
-            out_dir / "d_sweep.json",
-            cfg,
-            seed_index=seed_index,
-            spike_source=spike_source,
-            eval_index_hash=index_hashes["eval"],
-            rows=sweep_rows,
-        )
+    if computed_reducing and sweep_rows:
+        d_sweep_path = out_dir / "d_sweep.json"
+        if set(REDUCING_SWEEP) <= computed_reducing:
+            write_d_sweep_json(
+                d_sweep_path,
+                cfg,
+                seed_index=seed_index,
+                spike_source=spike_source,
+                eval_index_hash=index_hashes["eval"],
+                rows=sweep_rows,
+            )
+        elif method_keys is not None:
+            # Partial method grid: replace only the methods just computed.
+            old_rows: list[dict[str, Any]] = []
+            if d_sweep_path.is_file():
+                try:
+                    old_rows = list(json.loads(d_sweep_path.read_text()).get("rows") or [])
+                except Exception:
+                    old_rows = []
+            kept = [r for r in old_rows if r.get("method") not in computed_reducing]
+            write_d_sweep_json(
+                d_sweep_path,
+                cfg,
+                seed_index=seed_index,
+                spike_source=spike_source,
+                eval_index_hash=index_hashes["eval"],
+                rows=kept + list(sweep_rows),
+            )
     if len(pred_store) == 2 * len(keys):
         from agents.quadrant_n5.export_predictions import write_predictions_npz
 
