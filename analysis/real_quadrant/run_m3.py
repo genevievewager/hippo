@@ -57,9 +57,15 @@ M3_BASE_METHODS = ("raw", "raw_lag", "pca", "dm", "lds", "isomap", "gpfa")
 PRIMARY_CONTRASTS = (
     ("lds", "raw_smooth"),
     ("gpfa_causal", "raw_smooth"),  # omitted in aggregate if not verified / missing
+    ("lds_smooth", "raw_smooth"),
     ("pca_smooth", "raw_smooth"),
     ("dm_smooth", "pca_smooth"),
     ("raw_smooth", "raw"),
+)
+
+ISOMAP_FAILURE_NOTE = (
+    "isomap failed on 1 session (disconnected neighbor graph, "
+    "largest component 99.3%); isomap is a baseline, not a quadrant cell."
 )
 # Secondary: original unsmoothed sim-report contrasts.
 SECONDARY_CONTRASTS = (
@@ -102,15 +108,163 @@ def _streams(seed_index: int) -> dict[str, int]:
     }
 
 
+def _method_status_path(out_dir: Path, method: str) -> Path:
+    return out_dir / f"{method}.json"
+
+
+def write_method_failure(out_dir: Path, method: str, exc: BaseException) -> dict[str, Any]:
+    """Record a per-method failure without resume keys (so it is never reused)."""
+    payload = {
+        "status": "failed",
+        "error": f"{type(exc).__name__}: {exc}",
+        "method": method,
+    }
+    _method_status_path(out_dir, method).write_text(
+        json.dumps(payload, indent=2, default=str) + "\n"
+    )
+    return payload
+
+
+def write_method_skipped(
+    out_dir: Path, method: str, *, reason: str,
+) -> dict[str, Any]:
+    payload = {
+        "status": "skipped",
+        "reason": reason,
+        "method": method,
+    }
+    _method_status_path(out_dir, method).write_text(
+        json.dumps(payload, indent=2, default=str) + "\n"
+    )
+    return payload
+
+
+def _is_failed_or_skipped(rec: dict[str, Any] | None) -> bool:
+    if not isinstance(rec, dict):
+        return False
+    return rec.get("status") in ("failed", "skipped")
+
+
+def _load_method_rec(out_dir: Path, method: str) -> dict[str, Any] | None:
+    path = _method_status_path(out_dir, method)
+    if not path.is_file():
+        return None
+    try:
+        return json.loads(path.read_text())
+    except Exception:
+        return None
+
+
+def run_methods_fault_tolerant(
+    *,
+    cfg: dict[str, Any],
+    bundle: dict[str, Any],
+    streams: dict[str, int],
+    seed_index: int,
+    out_dir: Path,
+    methods: tuple[str, ...],
+    analyze_fn=analyze_source,
+    log=None,
+) -> tuple[list[str], dict[str, dict[str, Any]], dict[str, Any] | None]:
+    """Run each method independently; failures are recorded and skipped.
+
+    Returns ``(succeeded, failures, summary)``. ``summary`` is from a final
+    resume pass over succeeded methods that rebuilds the figure contract.
+
+    When ``raw_lag`` is among planned methods it is included in every
+    single-method call so train/eval masks match the full-grid intersection
+    (raw_lag is the only method that drops leading samples).
+    """
+    failures: dict[str, dict[str, Any]] = {}
+    include_raw_lag_anchor = "raw_lag" in methods
+
+    for method in methods:
+        keys: list[str] = []
+        if include_raw_lag_anchor and method != "raw_lag":
+            keys.append("raw_lag")
+        keys.append(method)
+        try:
+            if log:
+                log(f"method={method} keys={tuple(keys)} …")
+            analyze_fn(
+                cfg,
+                None,
+                "real",
+                streams,
+                seed_index,
+                bundle=bundle,
+                output_dir=out_dir,
+                method_keys=tuple(keys),
+                save_figure_contract=False,
+            )
+            rec = _load_method_rec(out_dir, method)
+            if _is_failed_or_skipped(rec):
+                raise RuntimeError(
+                    f"method {method} left a non-success status on disk"
+                )
+            if log:
+                log(f"method={method} ok")
+        except Exception as exc:
+            payload = write_method_failure(out_dir, method, exc)
+            failures[method] = payload
+            if log:
+                log(f"method={method} FAILED {payload['error']}")
+
+    succeeded = [
+        m for m in methods
+        if m not in failures and not _is_failed_or_skipped(_load_method_rec(out_dir, m))
+    ]
+
+    summary: dict[str, Any] | None = None
+    if succeeded:
+        summary = analyze_fn(
+            cfg,
+            None,
+            "real",
+            streams,
+            seed_index,
+            bundle=bundle,
+            output_dir=out_dir,
+            method_keys=tuple(succeeded),
+            save_figure_contract=True,
+        )
+    return succeeded, failures, summary
+
+
+def _lag_behind_truth(
+    pred: np.ndarray,
+    y_true: np.ndarray,
+) -> dict[str, float]:
+    """Effective lag with positive = prediction behind truth.
+
+    Wraps ``effective_lag_s`` and flips the sign: the underlying search defines
+    positive step as pred[t] ↔ y[t+step] (prediction leads). Causal EMA delay
+    should appear as positive under this convention.
+    """
+    lag = effective_lag_s(pred, y_true)
+    lag_s = lag["lag_s"]
+    if lag_s is not None and np.isfinite(lag_s):
+        lag = dict(lag)
+        lag["lag_s"] = float(-lag_s)
+        lag["lag_steps"] = float(-lag["lag_steps"]) if np.isfinite(lag.get("lag_steps", np.nan)) else float("nan")
+    lag["sign_convention"] = "positive_means_prediction_behind_truth"
+    return lag
+
+
 def _apply_session_posthoc(
     out_dir: Path,
     *,
     seed_index: int,
     session: str,
     include_gpfa_causal: bool,
+    failures: dict[str, dict[str, Any]] | None = None,
+    git_sha_run: str | None = None,
 ) -> dict[str, Any]:
     """Add smoothed rows, optional gpfa_causal, and effective lag to session report."""
+    failures = dict(failures or {})
     summary_path = out_dir / "source_summary.json"
+    if not summary_path.is_file():
+        raise RuntimeError(f"missing source_summary.json under {out_dir}")
     summary = json.loads(summary_path.read_text())
     floor_med = float(summary["floor"]["median"])
     cfg = load_quadrant_n5_yaml()
@@ -119,7 +273,9 @@ def _apply_session_posthoc(
 
     contract = out_dir / "figure_contract"
     arrays = np.load(contract / "arrays.npz")
-    latents = np.load(contract / "latents.npz")
+    latents = np.load(contract / "latents.npz") if (contract / "latents.npz").is_file() else {}
+    if hasattr(latents, "files"):
+        latents = {k: latents[k] for k in latents.files}
     preds = dict(np.load(contract / "predictions.npz"))
     times = np.asarray(arrays["decode_times"], dtype=float)
     y = np.asarray(arrays["y"], dtype=float)
@@ -133,6 +289,7 @@ def _apply_session_posthoc(
         ridge_med = float(m["ridge"]["median"])
         method_rows[name] = {
             "method": name,
+            "status": "ok",
             "selected_d": m.get("primary_d"),
             "ridge_median_cm": ridge_med,
             "normalized_error": ridge_med / floor_med if floor_med > 0 else None,
@@ -147,12 +304,61 @@ def _apply_session_posthoc(
             )
             method_rows[name]["role"] = "offline_reference"
 
+    # Disk failures (including methods not in summary).
+    for method, payload in failures.items():
+        method_rows[method] = {
+            "method": method,
+            "status": "failed",
+            "error": payload.get("error"),
+            "normalized_error": None,
+            "ridge_median_cm": None,
+            "causal": method != "gpfa",
+            "ema_tau_s": None,
+        }
+    for method in M3_BASE_METHODS:
+        rec = _load_method_rec(out_dir, method)
+        if _is_failed_or_skipped(rec) and method not in method_rows:
+            method_rows[method] = {
+                "method": method,
+                "status": rec.get("status"),
+                "error": rec.get("error"),
+                "reason": rec.get("reason"),
+                "normalized_error": None,
+                "ridge_median_cm": None,
+                "causal": method != "gpfa",
+                "ema_tau_s": None,
+            }
+            if rec.get("status") == "failed":
+                failures[method] = rec
+
     for base in SMOOTH_BASES:
+        name = f"{base}_smooth"
+        if base in failures or (
+            _load_method_rec(out_dir, base) or {}
+        ).get("status") == "failed":
+            reason = (
+                f"base method {base} failed: "
+                f"{(failures.get(base) or _load_method_rec(out_dir, base) or {}).get('error')}"
+            )
+            write_method_skipped(out_dir, name, reason=reason)
+            method_rows[name] = {
+                "method": name,
+                "base_method": base,
+                "status": "skipped",
+                "reason": reason,
+                "normalized_error": None,
+                "ridge_median_cm": None,
+                "causal": True,
+                "ema_tau_s": None,
+            }
+            continue
         if not (out_dir / f"{base}.json").is_file():
             continue
         if f"Z_{base}" not in latents:
             continue
         rec = json.loads((out_dir / f"{base}.json").read_text())
+        if _is_failed_or_skipped(rec):
+            continue
         Z = np.asarray(latents[f"Z_{base}"], dtype=float)
         primary_d = rec.get("primary_d")
         if primary_d is not None and Z.shape[1] > int(primary_d):
@@ -161,11 +367,11 @@ def _apply_session_posthoc(
             Z, y, times, train_ok, eval_mask, float(rec["ridge_alpha"]),
             n_blocks=n_blocks, gap_s=gap_s,
         )
-        name = f"{base}_smooth"
         ridge_med = float(out["ridge"]["median"])
         method_rows[name] = {
             "method": name,
             "base_method": base,
+            "status": "ok",
             "selected_d": primary_d,
             "ridge_median_cm": ridge_med,
             "normalized_error": ridge_med / floor_med if floor_med > 0 else None,
@@ -177,22 +383,45 @@ def _apply_session_posthoc(
         }
         preds[f"pred_{name}_ridge"] = np.asarray(out["pred_eval"], dtype=float)
 
-    if include_gpfa_causal and GPFA_CAUSAL_VERIFIED and (out_dir / "gpfa.json").is_file():
+    gpfa_failed = (
+        "gpfa" in failures
+        or (_load_method_rec(out_dir, "gpfa") or {}).get("status") == "failed"
+    )
+    if (
+        include_gpfa_causal
+        and GPFA_CAUSAL_VERIFIED
+        and (out_dir / "gpfa.json").is_file()
+        and not gpfa_failed
+        and not _is_failed_or_skipped(_load_method_rec(out_dir, "gpfa"))
+    ):
         row = _score_gpfa_causal(
             session, seed_index, arrays, times, y, train_ok, eval_mask,
             floor_med, out_dir,
         )
         if row is not None:
-            method_rows["gpfa_causal"] = row["row"]
+            method_rows["gpfa_causal"] = {**row["row"], "status": "ok"}
             preds["pred_gpfa_causal_ridge"] = row["pred_eval"]
+    elif include_gpfa_causal and gpfa_failed:
+        reason = f"base method gpfa failed: {(failures.get('gpfa') or {}).get('error')}"
+        write_method_skipped(out_dir, "gpfa_causal", reason=reason)
+        method_rows["gpfa_causal"] = {
+            "method": "gpfa_causal",
+            "status": "skipped",
+            "reason": reason,
+            "normalized_error": None,
+            "causal": True,
+        }
 
     for name, row in list(method_rows.items()):
+        if row.get("status") not in (None, "ok"):
+            continue
         key = f"pred_{name}_ridge"
         if key not in preds:
             continue
-        lag = effective_lag_s(np.asarray(preds[key]), y_true)
+        lag = _lag_behind_truth(np.asarray(preds[key]), y_true)
         row["effective_lag_s"] = lag["lag_s"]
         row["effective_lag_corr"] = lag["corr"]
+        row["lag_sign_convention"] = lag["sign_convention"]
 
     np.savez_compressed(contract / "predictions.npz", **{
         k: np.asarray(v) for k, v in preds.items()
@@ -217,16 +446,19 @@ def _apply_session_posthoc(
         "n_eval": int(summary["n_eval"]),
         "floor_median_cm": floor_med,
         "methods": ordered,
+        "failed_methods": failures,
         "gpfa_causal_verified": bool(GPFA_CAUSAL_VERIFIED),
         "posthoc_smooth_taus_s": list(EMA_TAUS_S),
         "effective_lag_search": {
             "dt_s": UPDATE_DT_S,
             "max_lag_s": LAG_MAX_S,
             "rule": "argmax mean axis-wise Pearson corr of pred vs truth",
+            "sign_convention": "positive_means_prediction_behind_truth",
         },
         "figure_contract_dir": str(contract),
         "config_sha256": summary.get("config_sha256"),
         "git_sha": summary.get("git_sha") or _git_sha(),
+        "git_sha_run": git_sha_run or _git_sha(),
     }
     (out_dir / "session_report.json").write_text(
         json.dumps(report, indent=2, default=str) + "\n"
@@ -320,17 +552,21 @@ def _run_one_session(job: dict[str, Any]) -> dict[str, Any]:
         cfg = dict(load_quadrant_n5_yaml())
         cfg["phase3"] = dict(cfg["phase3"], learning_curve_source="__skip__")
         streams = _streams(seed_index)
-        summary = analyze_source(
-            cfg,
-            None,
-            "real",
-            streams,
-            seed_index,
+        analyze_fn = analyze_source
+        succeeded, failures, summary = run_methods_fault_tolerant(
+            cfg=cfg,
             bundle=bundle,
-            output_dir=out_dir,
-            method_keys=methods,
-            save_figure_contract=True,
+            streams=streams,
+            seed_index=seed_index,
+            out_dir=out_dir,
+            methods=methods,
+            analyze_fn=analyze_fn,
+            log=_log,
         )
+        if not succeeded:
+            raise RuntimeError(
+                f"all methods failed: {[f.get('error') for f in failures.values()]}"
+            )
         report = None
         if job.get("posthoc", True):
             report = _apply_session_posthoc(
@@ -338,18 +574,25 @@ def _run_one_session(job: dict[str, Any]) -> dict[str, Any]:
                 seed_index=seed_index,
                 session=session,
                 include_gpfa_causal=bool(job.get("include_gpfa_causal", True)),
+                failures=failures,
+                git_sha_run=_git_sha(),
             )
         wall = time.perf_counter() - t0
-        _log(f"done wall_s={wall:.1f}")
+        _log(
+            f"done wall_s={wall:.1f} succeeded={succeeded} "
+            f"failed={list(failures)}"
+        )
         return {
             "ok": True,
             "session": session,
             "animal": animal,
             "seed_index": seed_index,
             "wall_s": wall,
-            "n_units": int(summary["n_units"]),
-            "methods": list(methods),
+            "n_units": int((summary or {}).get("n_units") or 0),
+            "methods": list(succeeded),
+            "failed_methods": failures,
             "report_path": str(out_dir / "session_report.json") if report else None,
+            "git_sha": _git_sha(),
         }
     except Exception as exc:
         wall = time.perf_counter() - t0
@@ -362,6 +605,7 @@ def _run_one_session(job: dict[str, Any]) -> dict[str, Any]:
             "seed_index": seed_index,
             "wall_s": wall,
             "error": err,
+            "git_sha": _git_sha(),
         }
 
 
@@ -396,27 +640,49 @@ def aggregate_m3(
     *,
     include_gpfa_causal: bool = True,
 ) -> dict[str, Any]:
-    """Per-animal means (sessions nested), then planned contrasts with sign counts."""
+    """Per-animal means (sessions nested), then planned contrasts with sign counts.
+
+    A contrast that requires a failed/skipped method drops that animal for that
+    contrast only. ``n_animals`` on each contrast is the count retained.
+    """
     session_rows = []
+    method_failures: list[dict[str, Any]] = []
+    git_shas: set[str] = set()
     for sel in cohort["selected_sessions"]:
         session = sel["session"]
         path = _session_out_dir(session) / "session_report.json"
         if not path.is_file():
             continue
         report = json.loads(path.read_text())
+        sha = report.get("git_sha") or report.get("git_sha_run")
+        if sha:
+            git_shas.add(str(sha))
+        run_sha = report.get("git_sha_run")
+        if run_sha:
+            git_shas.add(str(run_sha))
         by_m = {m["method"]: m for m in report["methods"]}
+        for m in report["methods"]:
+            if m.get("status") == "failed":
+                method_failures.append({
+                    "session": session,
+                    "animal": sel["animal"],
+                    "method": m["method"],
+                    "error": m.get("error"),
+                })
         session_rows.append({
             "animal": sel["animal"],
             "session": session,
+            "git_sha": report.get("git_sha"),
+            "git_sha_run": report.get("git_sha_run"),
             "methods": {
                 name: {
                     "normalized_error": m.get("normalized_error"),
                     "effective_lag_s": m.get("effective_lag_s"),
                     "ridge_median_cm": m.get("ridge_median_cm"),
                     "causal": m.get("causal"),
+                    "status": m.get("status", "ok"),
                 }
                 for name, m in by_m.items()
-                if m.get("normalized_error") is not None
             },
         })
 
@@ -426,11 +692,15 @@ def aggregate_m3(
 
     animal_means: dict[str, dict[str, float]] = {}
     animal_lag_means: dict[str, dict[str, float]] = {}
+    animal_n_sessions: dict[str, int] = {}
     for animal, rows in by_animal.items():
+        animal_n_sessions[animal] = len(rows)
         method_vals: dict[str, list[float]] = {}
         lag_vals: dict[str, list[float]] = {}
         for row in rows:
             for name, rec in row["methods"].items():
+                if rec.get("status") not in (None, "ok"):
+                    continue
                 ne = rec.get("normalized_error")
                 if ne is not None and np.isfinite(ne):
                     method_vals.setdefault(name, []).append(float(ne))
@@ -451,9 +721,17 @@ def aggregate_m3(
     if not include_gpfa_causal or not GPFA_CAUSAL_VERIFIED:
         secondary = [c for c in secondary if "gpfa_causal" not in c]
 
+    notes = []
+    isomap_fails = [
+        f for f in method_failures if f["method"] == "isomap"
+    ]
+    if isomap_fails:
+        notes.append(ISOMAP_FAILURE_NOTE)
+
     out = {
         "n_sessions_completed": len(session_rows),
         "n_animals": len(animal_means),
+        "animal_n_sessions": animal_n_sessions,
         "animal_means_normalized_error": animal_means,
         "animal_means_effective_lag_s": animal_lag_means,
         "primary_contrasts": [_contrast_pair(a, b, animal_means) for a, b in primary],
@@ -463,6 +741,9 @@ def aggregate_m3(
         "planned_primary": [f"{a} - {b}" for a, b in primary],
         "planned_secondary": [f"{a} - {b}" for a, b in secondary],
         "gpfa_causal_verified": bool(GPFA_CAUSAL_VERIFIED),
+        "method_failures": method_failures,
+        "notes": notes,
+        "git_shas": sorted(git_shas),
         "sessions": session_rows,
     }
     (OUT_ROOT / "m3_aggregate.json").write_text(
