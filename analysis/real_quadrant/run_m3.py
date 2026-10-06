@@ -63,12 +63,41 @@ PRIMARY_CONTRASTS = (
     ("raw_smooth", "raw"),
 )
 
-# Commits whose realtime/analysis path for method fits is identical to HEAD for
-# M3 resume purposes (only run_m3.py / tests changed after the cohort run).
+# Commits known equivalent (fallback if git diff unavailable).
 M3_ANALYSIS_EQUIVALENT_GIT_SHAS = (
     "b68606eb9e154f0aa8b319ac151130fc6b8c0697",  # cohort run before fault-tolerance
-    "c2dfb7c4ccce7e578ad0db00fec8da881df673e8",  # fault-tolerance before resume retarget
+    "c2dfb7c4ccce7e578ad0db00fec8da881df673e8",
+    "7dd98685f67657d24fa2f9950c0422207e99f156",
 )
+
+
+def _paths_analysis_equivalent(old_sha: str, new_sha: str | None = None) -> bool:
+    """True if old→new only touches run_m3.py and its tests."""
+    if not old_sha:
+        return False
+    new_sha = new_sha or _git_sha()
+    if not new_sha or old_sha == new_sha:
+        return True
+    if old_sha in M3_ANALYSIS_EQUIVALENT_GIT_SHAS:
+        return True
+    try:
+        out = subprocess.check_output(
+            ["git", "diff", "--name-only", f"{old_sha}..{new_sha}"],
+            cwd=str(REPO_ROOT),
+            text=True,
+        )
+    except Exception:
+        return False
+    for line in out.splitlines():
+        path = line.strip()
+        if not path:
+            continue
+        if path == "analysis/real_quadrant/run_m3.py":
+            continue
+        if path.startswith("tests/") and "run_m3" in path:
+            continue
+        return False
+    return True
 
 
 def retarget_method_resume_keys(
@@ -87,7 +116,6 @@ def retarget_method_resume_keys(
     current = _git_sha()
     if not current:
         return []
-    allowed = set(equivalent_shas) | {current}
     touched: list[str] = []
     for method in methods:
         path = _method_status_path(out_dir, method)
@@ -100,13 +128,13 @@ def retarget_method_resume_keys(
         if _is_failed_or_skipped(rec):
             continue
         old = rec.get("git_sha")
-        if old not in allowed:
+        if not old or old == current:
             continue
         if cfg_sha is not None and rec.get("config_sha256") not in (None, cfg_sha):
             continue
         if bool(rec.get("dirty_tree", False)):
             continue
-        if old == current:
+        if old not in equivalent_shas and not _paths_analysis_equivalent(str(old), current):
             continue
         rec["git_sha_original"] = old
         rec["git_sha"] = current
