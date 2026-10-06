@@ -67,6 +67,7 @@ PRIMARY_CONTRASTS = (
 # M3 resume purposes (only run_m3.py / tests changed after the cohort run).
 M3_ANALYSIS_EQUIVALENT_GIT_SHAS = (
     "b68606eb9e154f0aa8b319ac151130fc6b8c0697",  # cohort run before fault-tolerance
+    "c2dfb7c4ccce7e578ad0db00fec8da881df673e8",  # fault-tolerance before resume retarget
 )
 
 
