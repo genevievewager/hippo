@@ -139,3 +139,23 @@ def test_contrast_drops_animal_missing_method():
     assert out["n_animals"] == 2
     assert set(out["per_animal"]) == {"A", "C"}
     assert out["n_a_better"] == 2  # negative diffs
+
+
+def test_retarget_method_resume_keys(tmp_path, monkeypatch):
+    out = tmp_path / "sess"
+    out.mkdir()
+    monkeypatch.setattr(run_m3, "_git_sha", lambda: "newsha")
+    (out / "lds.json").write_text(json.dumps({
+        "method": "lds",
+        "ridge": {"median": 1.0},
+        "config_sha256": "cfg",
+        "git_sha": run_m3.M3_ANALYSIS_EQUIVALENT_GIT_SHAS[0],
+        "dirty_tree": False,
+    }) + "\n")
+    touched = run_m3.retarget_method_resume_keys(
+        out, ("lds",), cfg_sha="cfg",
+    )
+    assert touched == ["lds"]
+    rec = json.loads((out / "lds.json").read_text())
+    assert rec["git_sha"] == "newsha"
+    assert rec["git_sha_original"] == run_m3.M3_ANALYSIS_EQUIVALENT_GIT_SHAS[0]

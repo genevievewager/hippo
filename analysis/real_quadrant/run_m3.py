@@ -63,10 +63,60 @@ PRIMARY_CONTRASTS = (
     ("raw_smooth", "raw"),
 )
 
-ISOMAP_FAILURE_NOTE = (
-    "isomap failed on 1 session (disconnected neighbor graph, "
-    "largest component 99.3%); isomap is a baseline, not a quadrant cell."
+# Commits whose realtime/analysis path for method fits is identical to HEAD for
+# M3 resume purposes (only run_m3.py / tests changed after the cohort run).
+M3_ANALYSIS_EQUIVALENT_GIT_SHAS = (
+    "b68606eb9e154f0aa8b319ac151130fc6b8c0697",  # cohort run before fault-tolerance
 )
+
+
+def retarget_method_resume_keys(
+    out_dir: Path,
+    methods: tuple[str, ...] | list[str],
+    *,
+    equivalent_shas: tuple[str, ...] = M3_ANALYSIS_EQUIVALENT_GIT_SHAS,
+    cfg_sha: str | None = None,
+) -> list[str]:
+    """Rewrite git_sha on success JSONs from analysis-equivalent commits to HEAD.
+
+    The resume key includes git_sha; when only run_m3/tests changed, retargeting
+    lets completed method scores be reused without touching realtime/.
+    Returns list of methods retargeted.
+    """
+    current = _git_sha()
+    if not current:
+        return []
+    allowed = set(equivalent_shas) | {current}
+    touched: list[str] = []
+    for method in methods:
+        path = _method_status_path(out_dir, method)
+        if not path.is_file():
+            continue
+        try:
+            rec = json.loads(path.read_text())
+        except Exception:
+            continue
+        if _is_failed_or_skipped(rec):
+            continue
+        old = rec.get("git_sha")
+        if old not in allowed:
+            continue
+        if cfg_sha is not None and rec.get("config_sha256") not in (None, cfg_sha):
+            continue
+        if bool(rec.get("dirty_tree", False)):
+            continue
+        if old == current:
+            continue
+        rec["git_sha_original"] = old
+        rec["git_sha"] = current
+        rec["dirty_tree"] = False
+        rec["resume_retarget_note"] = (
+            "git_sha retargeted: analysis path unchanged "
+            "(diff limited to run_m3.py + tests)"
+        )
+        path.write_text(json.dumps(rec, indent=2, default=str) + "\n")
+        touched.append(method)
+    return touched
 # Secondary: original unsmoothed sim-report contrasts.
 SECONDARY_CONTRASTS = (
     ("dm", "pca"),
@@ -552,6 +602,14 @@ def _run_one_session(job: dict[str, Any]) -> dict[str, Any]:
         cfg = dict(load_quadrant_n5_yaml())
         cfg["phase3"] = dict(cfg["phase3"], learning_curve_source="__skip__")
         streams = _streams(seed_index)
+        retargeted = retarget_method_resume_keys(
+            out_dir, methods, cfg_sha=cfg.get("config_sha256"),
+        )
+        if retargeted:
+            _log(
+                f"retargeted resume git_sha→{_git_sha()[:12]} for {retargeted} "
+                f"(analysis-equivalent prior commit)"
+            )
         analyze_fn = analyze_source
         succeeded, failures, summary = run_methods_fault_tolerant(
             cfg=cfg,
