@@ -740,7 +740,10 @@ def write_all(out_dir: Path, *, anon: bool = False) -> dict[str, Any]:
         example_session=sess_codes[ex_session],
         example_session_raw=None if anon else ex_session,
         example_session_rule=example["rule"],
-        cohort_rule=cohort.get("rule", ""),
+        cohort_rule=(
+            "Per animal among eligible room-A sessions (fixed M3 rule)."
+            if anon else cohort.get("rule", "")
+        ),
         plateau=r2.get("plateau_check"),
         anon=anon,
         unit_label="animal",
