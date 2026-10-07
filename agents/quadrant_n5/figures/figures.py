@@ -148,12 +148,22 @@ def load(here):
     return D
 
 
-def wide(E, src, dec):
-    return E[E.source == src].pivot(index="seed", columns="rep", values=dec)[REPS]
+def wide(E, src, dec, reps=None):
+    reps = list(reps) if reps is not None else REPS
+    return E[E.source == src].pivot(index="seed", columns="rep", values=dec)[reps]
+
+
+
+def _dispatch_real(name, D, out, kwargs):
+    """Optional real-data path; sim callers never hit this (domain default sim)."""
+    from agents.quadrant_n5.figures import figures_real as FR
+    return getattr(FR, name)(D, out, **kwargs)
 
 
 # ================================================================= FIG 1
-def fig1(D, out):
+def fig1(D, out, domain="sim", **kwargs):
+    if domain == "real":
+        return _dispatch_real("fig1", D, out, kwargs)
     E, F, P, B = D["E"], D["F"], D["P"], D["B"]
     FW, FH = W_FULL, 118 * MM
     fig = plt.figure(figsize=(FW, FH))
@@ -277,7 +287,9 @@ AUD = [("A1", "Split identity"), ("A2", "Same preprocessing"), ("A3", "Same samp
        ("A15", "Predictions + d-sweep")]
 
 
-def fig2(D, out):
+def fig2(D, out, domain="sim", **kwargs):
+    if domain == "real":
+        return _dispatch_real("fig2", D, out, kwargs)
     E, A, R = D["E"], D["A"], D["R"]
     fig = plt.figure(figsize=(W_FULL, 112 * MM))
 
@@ -398,7 +410,9 @@ def slope(ax, X, F, ylab=True, ylim=(0, 58)):
     if ylab: ax.set_ylabel("Median position error (cm)")
 
 
-def fig3(D, out):
+def fig3(D, out, domain="sim", **kwargs):
+    if domain == "real":
+        return _dispatch_real("fig3", D, out, kwargs)
     E, F = D["E"], D["F"]
     Xr, Xk = wide(E, "sorted", "ridge"), wide(E, "sorted", "knn")
     fig = plt.figure(figsize=(W_FULL, 76 * MM))
@@ -440,7 +454,9 @@ def fig3(D, out):
 
 
 # ================================================================= FIG 4
-def fig4(D, out):
+def fig4(D, out, domain="sim", **kwargs):
+    if domain == "real":
+        return _dispatch_real("fig4", D, out, kwargs)
     E = D["E"]
     Xr, Xk = wide(E, "sorted", "ridge"), wide(E, "sorted", "knn")
     Gr, Gk = wide(E, "ground_truth", "ridge"), wide(E, "ground_truth", "knn")
@@ -505,7 +521,9 @@ def fig4(D, out):
 
 
 # ================================================================= FIG 5
-def fig5(D, out):
+def fig5(D, out, domain="sim", **kwargs):
+    if domain == "real":
+        return _dispatch_real("fig5", D, out, kwargs)
     E, R, F, LC = D["E"], D["R"], D["F"], D["LC"]
     fig = plt.figure(figsize=(W_FULL, 118 * MM))
 
@@ -620,7 +638,9 @@ def _fmt_signed_cm(v: float) -> str:
 
 
 # ================================================================= FIG 6
-def fig6(D, out):
+def fig6(D, out, domain="sim", **kwargs):
+    if domain == "real":
+        return _dispatch_real("fig6", D, out, kwargs)
     E = D["E"]
     Xr, Xk = wide(E, "sorted", "ridge"), wide(E, "sorted", "knn")
     fig = plt.figure(figsize=(W_FULL, 90 * MM))
@@ -720,7 +740,9 @@ def _fig7_seed(E):
 
 
 # ================================================================= FIG 7
-def fig7(D, out):
+def fig7(D, out, domain="sim", **kwargs):
+    if domain == "real":
+        return _dispatch_real("fig7", D, out, kwargs)
     if "predictions_window" not in D:
         print("Fig7 skipped (no predictions_window)")
         return
@@ -824,7 +846,9 @@ def fig7(D, out):
 
 
 # ================================================================= FIG S1
-def figS1(D, out):
+def figS1(D, out, domain="sim", **kwargs):
+    if domain == "real":
+        return _dispatch_real("figS1", D, out, kwargs)
     if "d_sweep" not in D:
         print("FigS1 skipped (no d_sweep)")
         return
@@ -872,7 +896,9 @@ def figS1(D, out):
 
 
 # ================================================================= FIG S2
-def figS2(D, out):
+def figS2(D, out, domain="sim", **kwargs):
+    if domain == "real":
+        return _dispatch_real("figS2", D, out, kwargs)
     SH = D["SH"]
     fig = plt.figure(figsize=(W_FULL, 110 * MM))
     head_fig(fig, 0.0, 0.955, "", "Full time-shift null (20 shifts × 5 seeds)")
@@ -910,7 +936,9 @@ def figS2(D, out):
 
 
 # ================================================================= FIG S3
-def figS3(D, out):
+def figS3(D, out, domain="sim", **kwargs):
+    if domain == "real":
+        return _dispatch_real("figS3", D, out, kwargs)
     if "predictions_window" not in D:
         print("FigS3 skipped (no predictions_window)")
         return
@@ -944,7 +972,9 @@ def figS3(D, out):
 
 
 # ================================================================= FIG S4
-def figS4(D, out):
+def figS4(D, out, domain="sim", **kwargs):
+    if domain == "real":
+        return _dispatch_real("figS4", D, out, kwargs)
     if not all(k in D for k in ("error_maps", "center_pull", "error_cdf")):
         print("FigS4 skipped (missing failure-mode tables)")
         return
@@ -1085,7 +1115,9 @@ def figS4(D, out):
 
 
 # ================================================================= FIG S5
-def figS5(D, out):
+def figS5(D, out, domain="sim", **kwargs):
+    if domain == "real":
+        return _dispatch_real("figS5", D, out, kwargs)
     need = ("knn_exclusion", "knn_strata", "control_d_sweep", "criterion_4prime_report")
     if not all(k in D for k in need):
         print("FigS5 skipped (missing Phase 8 tables)")
