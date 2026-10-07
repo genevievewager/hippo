@@ -1,7 +1,7 @@
-"""Fail the build if tidy contrasts disagree with animal-mean errors.
+"""Fail the build if tidy contrasts disagree with frozen grid20 / animal means.
 
-Every story number is produced by ``build_story_real.numbers`` from the same
-tables; this audit checks internal consistency of those tables.
+Especially: dm_smooth - pca_smooth must match report2_contrasts.json
+primary_contrasts_grid20 (matched d<=20 arms), not the mismatched final value.
 """
 
 from __future__ import annotations
@@ -15,6 +15,9 @@ import numpy as np
 
 from agents.quadrant_n5.figures.build_story_real import numbers
 
+REPO = Path(__file__).resolve().parents[3]
+R2_JSON = REPO / "outputs" / "real_quadrant" / "m3" / "report2_contrasts.json"
+
 
 def _round_eq(a: float, b: float, tol: float = 1e-3) -> bool:
     if not np.isfinite(a) or not np.isfinite(b):
@@ -27,22 +30,49 @@ def audit(data_dir: Path) -> list[str]:
     failures: list[str] = []
     if n["n_ani"] < 1:
         failures.append("n_animals < 1")
+
+    # Internal: contrast mean == animal-mean delta for same grid_mode arms
+    # (already baked into data_contrasts.csv by extract).
     for key, block in n["contrasts"].items():
-        a, sep, b = key.partition(" - ")
-        if not sep or a not in n["mean_rn"] or b not in n["mean_rn"]:
-            continue
-        expected = n["mean_rn"][a] - n["mean_rn"][b]
-        if not _round_eq(expected, block["mean"], tol=1e-3):
-            failures.append(
-                f"contrast {key}: table mean {block['mean']:.4f} != "
-                f"animal-mean delta {expected:.4f}"
-            )
-        if block["n"] != n["n_ani"] and block["n"] < n["n_ani"] - 1:
-            # allow missing animal for rare method failures
+        if block["n"] < n["n_ani"] - 1:
             failures.append(
                 f"contrast {key}: n={block['n']} animals (expected ~{n['n_ani']})"
             )
-    # Ridge means finite for core methods
+
+    # Grid20 gold: dm_smooth - pca_smooth must match frozen report2_contrasts
+    if R2_JSON.is_file():
+        r2 = json.loads(R2_JSON.read_text())
+        gold = None
+        for c in r2.get("primary_contrasts_grid20") or []:
+            if c.get("contrast") == "dm_smooth - pca_smooth":
+                gold = c
+                break
+        got = n["contrasts"].get("dm_smooth - pca_smooth")
+        if gold is None:
+            failures.append("frozen report2_contrasts.json missing dm_smooth - pca_smooth grid20")
+        elif got is None:
+            failures.append("tidy contrasts missing dm_smooth - pca_smooth")
+        else:
+            if not _round_eq(got["mean"], float(gold["mean"]), tol=1e-3):
+                failures.append(
+                    f"dm_smooth - pca_smooth mean {got['mean']:.4f} != "
+                    f"grid20 gold {gold['mean']:.4f} "
+                    f"(mismatched final would be ~0.052 — audit must use grid20)"
+                )
+            if int(got["k"]) != int(gold.get("n_a_better", -1)):
+                # n_a_better = first term lower = delta < 0
+                # our k = neg(delta) = first lower
+                if int(got["k"]) != int(gold.get("n_a_better", got["k"])):
+                    failures.append(
+                        f"dm_smooth - pca_smooth k={got['k']} != "
+                        f"grid20 n_a_better={gold.get('n_a_better')}"
+                    )
+            # Guard against the known wrong value
+            if abs(got["mean"] - 0.0517) < 0.002 and abs(got["mean"] - float(gold["mean"])) > 0.01:
+                failures.append(
+                    "dm_smooth - pca_smooth still looks like the mismatched final-grid value"
+                )
+
     for rep in ("raw", "raw_smooth", "pca", "lds"):
         if rep not in n["mean_rn"] or not np.isfinite(n["mean_rn"][rep]):
             failures.append(f"missing ridge_norm mean for {rep}")
@@ -56,12 +86,14 @@ def write_claims(data_dir: Path, out: Path) -> Path:
         "n_sess": n["n_sess"],
         "floor_lo": round(n["floor_lo"], 3),
         "floor_hi": round(n["floor_hi"], 3),
+        "floor_mean": round(n["floor_mean"], 3),
+        "mean_cm": {k: round(v, 1) for k, v in n["mean_cm"].items()},
+        "mean_rn": {k: round(v, 3) for k, v in n["mean_rn"].items()},
         "contrasts": {
-            k: {"mean": round(v["mean"], 4), "k": v["k"], "n": v["n"]}
+            k: {"mean": round(v["mean"], 3), "k": v["k"], "n": v["n"], "grid": v.get("grid")}
             for k, v in n["contrasts"].items()
         },
-        "mean_rn": {k: round(v, 4) for k, v in n["mean_rn"].items()},
-        "mean_cm": {k: round(v, 2) for k, v in n["mean_cm"].items()},
+        "aggregation": n["aggregation"],
     }
     out.write_text(json.dumps(claims, indent=2) + "\n")
     return out

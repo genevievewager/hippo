@@ -57,11 +57,40 @@ if _REPO not in sys.path:
 
 from agents.quadrant_n5.figures import figures as _F  # noqa: E402  (registers font + rcParams)
 from agents.quadrant_n5.figures.figures import (  # noqa: E402
-    head, head_fig, save, neg, INK, INK2, MUTED, GRID, FAILC, W_FULL, MM,
+    head, head_fig, save as _save_sim, neg, INK, INK2, MUTED, GRID, FAILC, W_FULL, MM,
     FancyBboxPatch, Rectangle,
     SHORT as _SHORT, COL as _COL, EDGE as _EDGE, MRK as _MRK, TINT as _TINT,
     QUAD as _QUAD, AUD,
 )
+
+
+def save(fig, out, name):
+    """Save PDF+PNG; fail if any artist bbox exceeds the figure area."""
+    fig.canvas.draw()
+    renderer = fig.canvas.get_renderer()
+    fw, fh = fig.get_size_inches()
+    # Fail on clear overflows past the figure; small pad for tick labels / AA.
+    pad = 0.08
+    offenders = []
+    for i, ax in enumerate(fig.axes):
+        try:
+            bb = ax.get_tightbbox(renderer)
+        except Exception:
+            continue
+        if bb is None:
+            continue
+        bb_fig = bb.transformed(fig.transFigure.inverted())
+        if (bb_fig.x0 < -pad or bb_fig.y0 < -pad
+                or bb_fig.x1 > 1 + pad or bb_fig.y1 > 1 + pad):
+            offenders.append(
+                f"ax{i} bbox=({bb_fig.x0:.3f},{bb_fig.y0:.3f})-({bb_fig.x1:.3f},{bb_fig.y1:.3f})"
+            )
+    if offenders:
+        raise RuntimeError(
+            f"{name}: artist bbox exceeds figure area (clipped content): "
+            + "; ".join(offenders[:6])
+        )
+    _save_sim(fig, out, name)
 
 # ------------------------------------------------------------------ methods
 REPS_REAL = ["raw", "raw_smooth", "raw_lag", "pca", "pca_smooth", "dm", "dm_smooth",
@@ -176,20 +205,79 @@ def _wide_cm(D, dec, reps=REPS_REAL):
     return X.reindex(columns=reps)
 
 
+# Methods with a saved latent-d sweep (kNN-best d is defined only for these).
+KNN_BEST_METHODS = ("pca", "dm", "lds", "isomap", "gpfa")
+
+
+def _knn_best_wide(D, reps=REPS_REAL, value="norm"):
+    """Animal x method: kNN error at each method's own kNN-best d (test-chosen).
+
+    From the saved d_sweep only (no refit). Per session: argmin knn_median,
+    tie-break lower d (Report 1). Per animal: mean of session values. Cohort
+    aggregation matches elsewhere. Empty columns for methods without a sweep.
+    """
+    DS = D.get("d_sweep")
+    seeds = _seeds(D)
+    out = pd.DataFrame(index=seeds, columns=list(reps), dtype=float)
+    if DS is None or DS.empty:
+        return out
+    ds = DS.copy()
+    if "grid" in ds.columns:
+        ds = ds[ds.grid == "final"]
+    col = "knn_norm" if value == "norm" and "knn_norm" in ds.columns else "knn_median"
+    if col not in ds.columns:
+        return out
+    for method in KNN_BEST_METHODS:
+        if method not in reps:
+            continue
+        sub = ds[ds.method == method]
+        if sub.empty:
+            continue
+        animal_vals = {}
+        for seed, gseed in sub.groupby("seed"):
+            sess_vals = []
+            groups = gseed.groupby("session") if "session" in gseed.columns else [(None, gseed)]
+            for _, g in groups:
+                g = g.dropna(subset=[col, "knn_median"] if col != "knn_median" else [col])
+                if g.empty:
+                    continue
+                best = g.sort_values(["knn_median", "d"]).iloc[0]
+                sess_vals.append(float(best[col]))
+            if sess_vals:
+                animal_vals[int(seed)] = float(np.mean(sess_vals))
+        for s, v in animal_vals.items():
+            if s in out.index:
+                out.loc[s, method] = v
+    return out
+
+
 def _ylab(D):
     return NORM_LAB if _is_norm(D) else "Median position error (cm)"
 
 
 def cm_summary(D):
-    """Per-method numbers for captions: normalized mean/SD and median cm."""
+    """Per-method numbers: mean over animals of per-animal session-mean medians.
+
+    Same aggregation everywhere (story, Fig3 footer, Fig6): animal = mean of its
+    session medians; cohort = mean over animals. Reported as ``ridge_cm_mean``.
+    """
     out = {}
     Xr, Xk = _wide(D, "ridge"), _wide(D, "knn")
     Cr, Ck = _wide_cm(D, "ridge"), _wide_cm(D, "knn")
     for r in REPS_REAL:
-        out[r] = dict(ridge_mean=float(Xr[r].mean()), ridge_sd=float(Xr[r].std(ddof=1)),
-                      knn_mean=float(Xk[r].mean()), knn_sd=float(Xk[r].std(ddof=1)),
-                      ridge_cm_median=float(Cr[r].median()), knn_cm_median=float(Ck[r].median()))
-    out["chance_cm_median"] = float(D["F"].floor_median.median())
+        out[r] = dict(
+            ridge_mean=float(Xr[r].mean()) if r in Xr and Xr[r].notna().any() else float("nan"),
+            ridge_sd=float(Xr[r].std(ddof=1)) if r in Xr and Xr[r].notna().sum() > 1 else 0.0,
+            knn_mean=float(Xk[r].mean()) if r in Xk and Xk[r].notna().any() else float("nan"),
+            knn_sd=float(Xk[r].std(ddof=1)) if r in Xk and Xk[r].notna().sum() > 1 else 0.0,
+            ridge_cm_mean=float(Cr[r].mean()) if r in Cr and Cr[r].notna().any() else float("nan"),
+            knn_cm_mean=float(Ck[r].mean()) if r in Ck and Ck[r].notna().any() else float("nan"),
+            # aliases kept for older call sites
+            ridge_cm_median=float(Cr[r].mean()) if r in Cr and Cr[r].notna().any() else float("nan"),
+            knn_cm_median=float(Ck[r].mean()) if r in Ck and Ck[r].notna().any() else float("nan"),
+        )
+    out["chance_cm_median"] = float(D["F"].floor_median.mean())
+    out["chance_cm_mean"] = float(D["F"].floor_median.mean())
     return out
 
 
@@ -277,10 +365,11 @@ def _pick_session(D, s, meta):
 
 
 def _coverage(D, s, meta, bin_cm=10.0):
-    """Fraction of the room covered by the test path (10 cm bins).
+    """Fraction of in-polygon ``bin_cm`` bins visited by the test path.
 
-    Room = bins whose centre is inside the room polygon; without a polygon, bins
-    visited by the whole path (train + test)."""
+    Prefers tidy ``F.coverage`` (extract_tidy writes room coverage). Falls back
+    to a polygon computation from behavior paths.
+    """
     F = D["F"]
     if "coverage" in F.columns:
         v = F[F.seed == s].coverage.values
@@ -713,27 +802,25 @@ def fig2(D, out, **kw):
     axd.set_yticks([]); axd.spines["left"].set_visible(False)
     axd.set_xticks([-0.25, -0.125, 0, 0.125]); axd.set_xticklabels(["-250", "-125", "0", "+125"], fontsize=5.5)
     axd.set_xlabel("time relative to t (ms)", fontsize=5.8, labelpad=1)
-    if cf is not None:
+    if cf is not None and len(cf):
         tc, cc, kc = _feat_cols(cf)
         axt = fig.add_axes([0.70, 0.10, 0.29, 0.15])
-        sub = cf
-        if "unit_id" in cf.columns:
-            uid = cf.groupby("unit_id")[kc].sum().idxmax()
-            sub = cf[cf.unit_id == uid]
-        sub = sub.sort_values(tc)
-        t = sub[tc].values
-        dt = float(np.median(np.diff(t))) if len(t) > 1 else 0.05
-        wl = max(int(round(5.0 / dt)), 2)
-        cs = np.convolve(sub[kc].values, np.ones(wl), mode="valid")
-        i0 = int(np.argmax(cs)) if len(cs) else 0
-        seg = sub.iloc[i0:i0 + wl]
-        axt.step(seg[tc] - seg[tc].iloc[0], seg[cc], where="post", color=FAILC, lw=0.8, label="centred Cell_*")
-        axt.step(seg[tc] - seg[tc].iloc[0], seg[kc], where="post", color=INK, lw=0.8, label="causal")
-        axt.set_xlim(0, 5); axt.set_xlabel("Time (s; 5 s window with most spikes, one unit)", fontsize=5.8)
-        axt.set_ylim(0, max(float(seg[[cc, kc]].values.max()), 1.0) * 1.45)
-        axt.set_title("centred trace leads causal by 125 ms", fontsize=5.2, color=INK2, pad=1.5)
+        sub = cf.sort_values(tc)
+        t0 = float(sub[tc].iloc[0])
+        t = sub[tc].values - t0
+        centred = sub[cc].values.astype(float)
+        causal = sub[kc].values.astype(float)
+        axt.plot(t, centred, color=FAILC, lw=1.2, label="centred Cell_*", zorder=3)
+        axt.plot(t, causal, color=INK, lw=1.2, label="causal [t-250,t)", zorder=2)
+        ymax = max(float(np.nanmax(np.r_[centred, causal])), 1.0)
+        axt.set_xlim(0, max(float(t[-1]) if len(t) else 5.0, 1.0))
+        axt.set_ylim(0, ymax * 1.35)
+        axt.set_xlabel("Time in window (s)", fontsize=5.8)
         axt.set_ylabel("Spike count\n(250 ms)", fontsize=6)
+        uid = int(sub["unit_id"].iloc[0]) if "unit_id" in sub.columns else "?"
+        axt.set_title(f"unit {uid}: centred leads causal by 125 ms", fontsize=5.2, color=INK2, pad=1.5)
         axt.legend(loc="upper right", ncol=2, fontsize=5.4, handlelength=1.2, columnspacing=0.8)
+        axt.tick_params(labelsize=5.5)
     else:
         axd.text(0.5, -0.62, "feature series not supplied (D['causal_features'])",
                  transform=axd.transAxes, ha="center", fontsize=5.2, color=MUTED, fontstyle="italic")
@@ -802,7 +889,14 @@ def fig3(D, out, **kw):
     nA = len(seeds)
     norm = _is_norm(D)
     Xr, Xk = _wide(D, "ridge"), _wide(D, "knn")
+    Xkb = _knn_best_wide(D, value="norm" if norm else "cm")
     ylim = _ylim_norm(D)
+    # include knn-best in ylim so second markers are not clipped
+    kb_vals = Xkb.values.ravel().astype(float)
+    kb_vals = kb_vals[np.isfinite(kb_vals)]
+    if len(kb_vals):
+        ylim = (min(ylim[0], max(0.0, np.floor(kb_vals.min() * 10 - 1) / 10)),
+                max(ylim[1], np.ceil(kb_vals.max() * 10 + 0.5) / 10))
     fig = plt.figure(figsize=(W_FULL, 124 * MM))
     a = fig.add_axes([0.07, 0.585, 0.52, 0.31])
     _slope_real(a, Xr, REPS_REAL, norm, ylim, _ylab(D))
@@ -810,14 +904,35 @@ def fig3(D, out, **kw):
     head_fig(fig, 0.0, 0.955, "a", "Ridge readout (primary)")
     b = fig.add_axes([0.07, 0.14, 0.52, 0.31], sharey=a)
     _slope_real(b, Xk, REPS_REAL, norm, ylim, _ylab(D))
+    # second marker: kNN at kNN-best d (descriptive, chosen on test)
+    for j, rep in enumerate(REPS_REAL):
+        if rep not in KNN_BEST_METHODS or rep not in Xkb.columns:
+            continue
+        v = Xkb[rep].dropna().values
+        if len(v) == 0:
+            continue
+        b.scatter(np.full(len(v), j), v, s=9, marker="D", facecolor="white",
+                  edgecolor=EDGE[rep], lw=0.7, zorder=4)
+        b.plot([j - 0.3, j + 0.3], [v.mean()] * 2, color=EDGE[rep], lw=1.0,
+               ls=(0, (2, 1.5)), solid_capstyle="round", zorder=4)
     head_fig(fig, 0.0, 0.505, "b", "kNN readout (sensitivity; EMA is Ridge-only)")
     a.text(0.995, 0.03, "lines join animals; bar = mean over animals", transform=a.transAxes, ha="right",
            fontsize=5.2, color=MUTED)
+    hs_b = [
+        Line2D([], [], marker="o", ls="", mfc=GREY_PT, mec="none", ms=3.2,
+               label="kNN @ Ridge-selected d (primary)"),
+        Line2D([], [], marker="D", ls="", mfc="white", mec=INK2, ms=3.2,
+               label="kNN-best d (descriptive, chosen on test)"),
+    ]
+    # lower-left: avoid overlap with chance label at y=1
+    b.legend(handles=hs_b, loc="lower left", fontsize=4.8, frameon=True, fancybox=False,
+             framealpha=0.92, edgecolor="#e8e6e1", handletextpad=0.25, borderaxespad=0.2,
+             borderpad=0.3)
 
-    # c -- planned contrasts
+    # c -- planned contrasts (leave room on the right for k/N)
     rows = PRIMARY + SECONDARY
     n = len(rows)
-    ax = fig.add_axes([0.80, 0.14, 0.15, 0.755])
+    ax = fig.add_axes([0.78, 0.16, 0.14, 0.735])
     head_fig(fig, 0.615, 0.955, "c", "Planned paired contrasts (animal level)")
     allv = []
     for a_, b_, _ in rows:
@@ -836,7 +951,7 @@ def fig3(D, out, **kw):
     ax.set_xlim(lo, hi); ax.set_ylim(ypos[-1] - 0.6, n - 0.4)
     ax.spines["left"].set_visible(False)
     ax.set_xlabel(f"Paired difference ({'normalized error' if norm else 'cm'})\n<- first term lower error")
-    ax.text(1.03, 1.0, f"k/{nA} < 0", transform=ax.transAxes, ha="left", va="bottom", fontsize=5.5, color=INK2)
+    ax.text(1.02, 1.0, f"k/{nA} < 0", transform=ax.transAxes, ha="left", va="bottom", fontsize=5.5, color=INK2)
     ysep = n - 1 - len(PRIMARY) + 0.1
     ax.axhline(ysep, color=INK2, lw=0.5, ls=(0, (2, 2)))
     ax.text(lo, ysep + 0.12, "primary (pre-registered)", fontsize=5.0, color=MUTED, va="bottom")
@@ -845,13 +960,16 @@ def fig3(D, out, **kw):
           Line2D([], [], marker="o", ls="", mfc="white", mec=INK2, ms=3.3, label="kNN")]
     ax.legend(handles=hs, loc="upper left", ncol=1, handletextpad=0.1, borderaxespad=0.2)
     cs = cm_summary(D)
-    _note(fig, 0.0, 0.035,
-          f"N = {nA} animals (mean of 1-2 sessions each); sign counts, no p-values. EMA = causal moving average on Ridge outputs. "
-          f"{GRID20_NOTE}.\n"
-          f"Median cm (across animals): chance {cs['chance_cm_median']:.1f}; Raw {cs['raw']['ridge_cm_median']:.1f}; "
-          f"Raw+EMA {cs['raw_smooth']['ridge_cm_median']:.1f}; LDS {cs['lds']['ridge_cm_median']:.1f}; "
-          f"LDS+EMA {cs['lds_smooth']['ridge_cm_median']:.1f}; GPFA-c {cs['gpfa_causal']['ridge_cm_median']:.1f} (Ridge).",
-          fs=5.3)
+    # two short lines so footer stays inside figure width
+    _note(fig, 0.02, 0.055,
+          f"N = {nA} animals (mean over animals of per-animal session means); sign counts, no p-values. "
+          f"EMA = causal moving average on Ridge outputs (Ridge-only). {GRID20_NOTE}.",
+          fs=5.0)
+    _note(fig, 0.02, 0.028,
+          f"Mean cm: chance {cs['chance_cm_mean']:.1f}; Raw {cs['raw']['ridge_cm_mean']:.1f}; "
+          f"Raw+EMA {cs['raw_smooth']['ridge_cm_mean']:.1f}; LDS {cs['lds']['ridge_cm_mean']:.1f}; "
+          f"LDS+EMA {cs['lds_smooth']['ridge_cm_mean']:.1f}; GPFA-c {cs['gpfa_causal']['ridge_cm_mean']:.1f} (Ridge).",
+          fs=5.0)
     save(fig, out, "Fig3_quadrant_answer")
 
 
@@ -861,33 +979,54 @@ def fig4(D, out, **kw):
     nA = len(_seeds(D))
     norm = _is_norm(D)
     Xr, Xk = _wide(D, "ridge"), _wide(D, "knn")
+    Xkb = _knn_best_wide(D, value="norm" if norm else "cm")
     reps = [r for r in REPS_REAL if not r.endswith("_smooth") and r != "gpfa_causal"]
     fig = plt.figure(figsize=(W_FULL, 80 * MM))
 
-    # a -- Ridge vs kNN
-    ax = fig.add_axes([0.07, 0.17, 0.30, 0.68])
+    # a -- Ridge vs kNN (filled = Ridge-selected d; open diamond = kNN-best d)
+    ax = fig.add_axes([0.08, 0.18, 0.28, 0.66])
     head_fig(fig, 0.0, 0.93, "a", "Readout: linear (Ridge) vs nonlinear (kNN)")
-    vals = np.concatenate([Xr[reps].values.ravel(), Xk[reps].values.ravel()])
+    vals = np.concatenate([
+        Xr[reps].values.ravel(), Xk[reps].values.ravel(), Xkb[reps].values.ravel(),
+    ])
     vals = vals[np.isfinite(vals)]
     lo, hi = (np.floor(vals.min() * 20) / 20 - 0.03, np.ceil(vals.max() * 20) / 20 + 0.03) if len(vals) else (0, 1)
     ax.plot([lo, hi], [lo, hi], color=MUTED, lw=0.6, ls=(0, (3, 2)), zorder=0)
     for rep in reps:
-        ax.scatter(Xr[rep], Xk[rep], s=10, marker=MRK[rep], facecolor=_mfc(rep), edgecolor=EDGE[rep], lw=0.55, zorder=3)
+        ax.scatter(Xr[rep], Xk[rep], s=10, marker=MRK[rep], facecolor=_mfc(rep),
+                   edgecolor=EDGE[rep], lw=0.55, zorder=3)
+        if rep in KNN_BEST_METHODS and rep in Xkb.columns and Xkb[rep].notna().any():
+            ax.scatter(Xr[rep], Xkb[rep], s=12, marker="D", facecolor="white",
+                       edgecolor=EDGE[rep], lw=0.7, zorder=4)
     ax.set_xlim(lo, hi); ax.set_ylim(lo, hi); ax.set_aspect("equal")
     unit = "normalized error" if norm else "cm"
     ax.set_xlabel(f"Ridge ({unit})"); ax.set_ylabel(f"kNN ({unit})")
     ax.text(hi - 0.01 * (hi - lo), lo + 0.03 * (hi - lo), "below diagonal: kNN lower", fontsize=5.4, color=INK2,
             ha="right")
     g = (Xr - Xk)
-    gtxt = "; ".join(f"{SHORT[r]} {g[r].mean():+.2f}" for r in ("raw", "pca", "dm", "lds") if r in g)
-    ax.text(0.03, 0.97, f"Ridge - kNN, mean over animals:\n{gtxt}", transform=ax.transAxes, fontsize=5.2,
-            color=INK2, va="top", linespacing=1.3)
+    gb = (Xr - Xkb)
+    show = [r for r in ("raw", "pca", "dm", "lds") if r in g]
+    gtxt = "; ".join(f"{SHORT[r]} {g[r].mean():+.3f}" for r in show)
+    gbtxt = "; ".join(
+        f"{SHORT[r]} {gb[r].mean():+.3f}" for r in show if r in KNN_BEST_METHODS and gb[r].notna().any()
+    )
+    ax.text(0.03, 0.97,
+            f"Ridge - kNN @ Ridge-sel d:\n{gtxt}\n"
+            f"Ridge - kNN-best d (descriptive):\n{gbtxt}",
+            transform=ax.transAxes, fontsize=4.8, color=INK2, va="top", linespacing=1.25)
     hs = [Line2D([], [], marker=MRK[r], ls="", mfc=_mfc(r), mec=EDGE[r], ms=3.6, label=SHORT[r]) for r in reps]
-    fig.legend(handles=hs, loc="center left", bbox_to_anchor=(0.385, 0.5), fontsize=5.8, handletextpad=0.2,
-               labelspacing=0.5)
+    hs += [
+        Line2D([], [], marker="o", ls="", mfc=INK2, mec=INK2, ms=3.2,
+               label="kNN @ Ridge-selected d"),
+        Line2D([], [], marker="D", ls="", mfc="white", mec=INK2, ms=3.2,
+               label="kNN-best d (descriptive, chosen on test)"),
+    ]
+    # gap between panels: keep clear of axes
+    fig.legend(handles=hs, loc="center left", bbox_to_anchor=(0.40, 0.52), fontsize=5.2,
+               handletextpad=0.2, labelspacing=0.35, frameon=False)
 
-    # c -- LDS - Raw+hist by readout
-    ax = fig.add_axes([0.66, 0.17, 0.30, 0.68])
+    # b -- LDS - Raw+hist by readout
+    ax = fig.add_axes([0.68, 0.18, 0.28, 0.66])
     head_fig(fig, 0.60, 0.93, "b", "Dynamics beyond history: LDS - Raw+hist")
     allv = []
     for xpos, (dec, X) in enumerate((("Ridge", Xr), ("kNN", Xk))):
@@ -903,9 +1042,11 @@ def fig4(D, out, **kw):
     ax.set_xticks([0, 1], ["Ridge", "kNN"]); ax.set_xlim(-0.6, 1.6)
     pad = 0.04
     ax.set_ylim(min(allv + [0]) - pad, max(allv + [0]) + pad)
-    ax.set_ylabel(f"LDS - Raw+hist ({unit})\n<- LDS lower error")
-    _note(fig, 0.0, 0.055, f"N = {nA} animals; DM, Isomap, GPFA-off on d <= 20 grid. The simulated ground-truth vs sorted "
-          "comparison has no real-data counterpart (single spike source).", fs=5.3)
+    ax.set_ylabel(f"LDS - Raw+hist ({unit})")
+    ax.text(-0.22, 0.5, "<- LDS lower", transform=ax.transAxes, rotation=90,
+            va="center", ha="center", fontsize=5.5, color=INK2)
+    _note(fig, 0.02, 0.045, f"N = {nA} animals; DM, Isomap, GPFA-off on d <= 20 grid. The simulated ground-truth vs sorted "
+          "comparison has no real-data counterpart (single spike source).", fs=5.2)
     save(fig, out, "Fig4_mechanism")
 
 
@@ -980,24 +1121,38 @@ def fig5(D, out, **kw):
     unit_lab = "session" if ES is not None else "animal"
     ax.set_ylabel(f"d (count of {unit_lab}s)")
 
-    # c -- spread vs test coverage
-    ax = fig.add_axes([0.80, 0.20, 0.17, 0.64])
-    head_fig(fig, 0.725, 0.92, "c", "Spread tracks test coverage")
+    # c -- spread vs test coverage (drop if uninformative)
+    ax = fig.add_axes([0.80, 0.22, 0.17, 0.62])
+    head_fig(fig, 0.725, 0.92, "c", "Spread vs test coverage")
     cov = pd.Series({s: _coverage(D, s, meta) for s in seeds})
-    if cov.notna().sum() >= 3:
-        xx = np.array([cov.min() - 0.03, cov.max() + 0.03])
+    ok = cov.notna()
+    informative = ok.sum() >= 3 and float(cov[ok].max() - cov[ok].min()) >= 0.05
+    if informative:
+        xx = np.array([cov[ok].min() - 0.02, cov[ok].max() + 0.02])
+        ys_all = []
         for rep in ("raw", "pca", "lds"):
-            y = Xr[rep].reindex(cov.index)
-            ax.scatter(cov, y, s=10, marker=MRK[rep], facecolor=COL[rep], edgecolor=EDGE[rep], lw=0.55, zorder=3)
-            b1, b0 = np.polyfit(cov.values, y.values, 1)
+            y = Xr[rep].reindex(cov.index)[ok]
+            ys_all.extend(y.dropna().values.tolist())
+            ax.scatter(cov[ok], y, s=10, marker=MRK[rep], facecolor=COL[rep], edgecolor=EDGE[rep], lw=0.55, zorder=3)
+            b1, b0 = np.polyfit(cov[ok].values, y.values, 1)
             ax.plot(xx, b0 + b1 * xx, color=EDGE[rep], lw=0.7)
-            r = np.corrcoef(cov.values, y.values)[0, 1]
-            ax.text(0.03, {"raw": 0.20, "pca": 0.13, "lds": 0.06}[rep], f"{SHORT[rep]} r = {r:.2f}",
-                    transform=ax.transAxes, fontsize=5.5, color=EDGE[rep], va="top")
-        ax.set_xlabel("Test coverage (room fraction)")
+            r = np.corrcoef(cov[ok].values, y.values)[0, 1]
+            ax.text(0.03, {"raw": 0.22, "pca": 0.14, "lds": 0.06}[rep], f"{SHORT[rep]} r = {r:.3f}",
+                    transform=ax.transAxes, fontsize=5.3, color=EDGE[rep], va="top")
+        ylo, yhi = min(ys_all), max(ys_all)
+        pad_y = 0.04 * (yhi - ylo + 1e-9)
+        ax.set_ylim(ylo - pad_y - 0.06 * (yhi - ylo + 1e-9), yhi + pad_y)
+        ax.set_xlim(xx[0], xx[1])
+        # animal letters (A..) just below points, not overlapping axes label
+        y_lab = ax.get_ylim()[0] + 0.015 * (ax.get_ylim()[1] - ax.get_ylim()[0])
+        for s in cov[ok].index:
+            letter = chr(ord("A") + int(s))
+            ax.text(cov[s], y_lab, letter, ha="center", va="bottom", fontsize=5.5,
+                    color=INK2, fontweight="bold", zorder=5)
+        ax.set_xlabel("Test coverage\n(fraction of room bins)")
         ax.set_ylabel(f"Ridge, {'normalized error' if norm else 'cm'}")
     else:
-        _empty_panel(ax, "test coverage not available\n(needs polygons or F.coverage)")
+        _empty_panel(ax, "panel dropped: test-room coverage\nvaries too little across animals\nto be informative")
     save(fig, out, "Fig5_deployability")
 
 
@@ -1017,7 +1172,7 @@ def fig6(D, out, **kw):
 
     def ms(X, r):
         v = X[r].dropna()
-        return f"{v.mean():.2f} +/- {v.std(ddof=1):.2f}" if len(v) > 1 else "n/a"
+        return f"{v.mean():.3f} +/- {v.std(ddof=1):.3f}" if len(v) > 1 else "n/a"
 
     cw, chh = 46, 33
 
@@ -1082,10 +1237,10 @@ def fig6(D, out, **kw):
         for line in textwrap.wrap(body, 52):
             ax.text(tx + 2.5, y, line, fontsize=5.9, va="top", color=INK2); y -= 3.0
         y -= 2.2
-    cmtxt = (f"Median error (cm, median over animals): chance {cs['chance_cm_median']:.1f}; Raw {cs['raw']['ridge_cm_median']:.1f}; "
-             f"Raw+EMA {cs['raw_smooth']['ridge_cm_median']:.1f}; PCA+EMA {cs['pca_smooth']['ridge_cm_median']:.1f}; "
-             f"DM+EMA {cs['dm_smooth']['ridge_cm_median']:.1f}; LDS+EMA {cs['lds_smooth']['ridge_cm_median']:.1f}; "
-             f"GPFA-c {cs['gpfa_causal']['ridge_cm_median']:.1f}.")
+    cmtxt = (f"Mean cm (mean over animals): chance {cs['chance_cm_mean']:.1f}; Raw {cs['raw']['ridge_cm_mean']:.1f}; "
+             f"Raw+EMA {cs['raw_smooth']['ridge_cm_mean']:.1f}; PCA+EMA {cs['pca_smooth']['ridge_cm_mean']:.1f}; "
+             f"DM+EMA {cs['dm_smooth']['ridge_cm_mean']:.1f}; LDS+EMA {cs['lds_smooth']['ridge_cm_mean']:.1f}; "
+             f"GPFA-c {cs['gpfa_causal']['ridge_cm_mean']:.1f}.")
     ax.text(tx, 21, "\n".join(textwrap.wrap(cmtxt, 62)), fontsize=5.3, color=INK2, va="top", linespacing=1.3)
     ax.text(X0 - 8, 1.8, f"Normalized error = error / chance (chance = 1.0); mean +/- SD over {nA} animals (each the mean of 1-2 "
             "sessions); k/N = animals with the stated sign; no p-values. Room A.\n"
@@ -1136,39 +1291,43 @@ def fig7(D, out, **kw):
     meta = _meta(D, kw)
     seed, ses = _example_seed(D, meta)
     floor = _floor_for(D, ses, seed)
-    decs = [d for d in ("ridge", "knn") if (W.decoder == d).any()]
-    nd = len(decs)
-    dec0 = "ridge" if "ridge" in decs else decs[0]
-    # GPFA-off (offline smoother) is excluded by construction: _best_causal only ranks causal methods
-    mdec = {d: _best_causal(D, d, 3, set(W[W.decoder == d].method)) for d in decs}
-    methods = mdec[dec0]
+    # Same three methods in a/b/c/d: best causal by Ridge; kNN row uses unsmoothed aliases.
+    methods_ridge = _best_causal(D, "ridge", 3, set(W[W.decoder == "ridge"].method))
+    if not methods_ridge:
+        print("Fig7 skipped (no causal methods)")
+        return
+    methods_knn = [m.replace("_smooth", "") for m in methods_ridge]
+    methods = methods_ridge
     poly = _poly(D, seed)
     L = _lims(D, [seed], extra=W[["x_true", "y_true"]].values.ravel())
     msk = (W.session == ses) if "session" in W.columns else (W.seed == seed)
     t0 = float(W[msk].t_s.min())
     wmap = 0.27 * 180.0
+    nd = 2
     H = 10 + 56 * nd + 58 + 46 + 12
     fig = plt.figure(figsize=(W_FULL, H * MM))
     hf = lambda y_mm: 1 - (y_mm - 1.5) / H
 
     head_fig(fig, 0.0, hf(5), "a", "Arena view (first 60 s of test)")
-    for ri, dec in enumerate(decs):
-        for ci, m in enumerate(mdec[dec]):
+    for ri, (dec, mlist) in enumerate((("ridge", methods_ridge), ("knn", methods_knn))):
+        for ci, m in enumerate(mlist):
             ax = _mm_axes(fig, H, 0.085 + ci * 0.30, 10 + ri * 56, 0.27, wmap)
             sub = _pw(W, m, dec, ses, seed)
             if not len(sub):
-                _empty_panel(ax, f"{SHORT[m]}: no {'kNN' if dec == 'knn' else 'Ridge'} predictions\n(EMA is Ridge-only)")
+                _empty_panel(ax, f"{SHORT.get(m, m)}: no {dec} predictions")
                 continue
             _draw_poly(ax, poly)
             ax.plot(sub.x_true, sub.y_true, color=INK, lw=0.8, zorder=2)
-            ax.scatter(sub.x_pred, sub.y_pred, s=1.5, c=COL[m] if m != "raw_smooth" else "#7a7872", alpha=0.4,
+            ax.scatter(sub.x_pred, sub.y_pred, s=1.5, c=COL.get(m, MUTED), alpha=0.4,
                        linewidths=0, zorder=3, rasterized=True)
             ax.plot(sub.x_true.iloc[0], sub.y_true.iloc[0], "o", mfc="none", mec=INK, ms=4, mew=0.7, zorder=4)
             med = float(sub.err_cm.median())
-            ax.text(0.04, 0.96, f"{SHORT[m]}  {med / floor:.2f}  ({med:.1f} cm)", transform=ax.transAxes, fontsize=5.6,
-                    va="top", color=EDGE[m], fontweight="bold", bbox=dict(fc="white", ec="none", alpha=0.85, pad=0.6))
+            ax.text(0.04, 0.96, f"{SHORT.get(m, m)}  {med / floor:.3f}  ({med:.1f} cm)",
+                    transform=ax.transAxes, fontsize=5.6, va="top", color=EDGE.get(m, INK),
+                    fontweight="bold", bbox=dict(fc="white", ec="none", alpha=0.85, pad=0.6))
             ax.set_xlim(-L, L); ax.set_ylim(-L, L); ax.set_aspect("equal"); _style_box(ax)
-            ax.set_xticks([-round(L, -1), 0, round(L, -1)]); ax.set_yticks(ax.get_xticks()); ax.tick_params(labelsize=5.5)
+            ax.set_xticks([-round(L, -1), 0, round(L, -1)]); ax.set_yticks(ax.get_xticks())
+            ax.tick_params(labelsize=5.5)
             if ri == nd - 1:
                 ax.set_xlabel("x (cm)")
             else:
@@ -1179,15 +1338,16 @@ def fig7(D, out, **kw):
                 ax.set_yticklabels([])
 
     yb = 10 + 56 * nd + 4
-    head_fig(fig, 0.0, hf(yb), "b", f"Coordinates over the same window ({'Ridge' if dec0 == 'ridge' else 'kNN'})")
+    head_fig(fig, 0.0, hf(yb), "b", "Coordinates over the same window (Ridge)")
     for yi, coord in enumerate(("x", "y")):
         ax = _mm_axes(fig, H, 0.08, yb + 5 + yi * 24, 0.60, 17)
-        true = _pw(W, methods[0], dec0, ses, seed)
+        true = _pw(W, methods[0], "ridge", ses, seed)
         ax.plot(true.t_s - t0, true[f"{coord}_true"], color=INK, lw=1.0, zorder=2)
         for m in methods:
-            sub = _pw(W, m, dec0, ses, seed)
+            sub = _pw(W, m, "ridge", ses, seed)
             ax.plot(sub.t_s - t0, sub[f"{coord}_pred"], color=EDGE[m], lw=0.8, zorder=3)
-        ax.set_xlim(0, 60); ax.set_ylim(-L, L); ax.set_ylabel(f"{coord} (cm)"); ax.tick_params(labelsize=5.5)
+        ax.set_xlim(0, 60); ax.set_ylim(-L, L); ax.set_ylabel(f"{coord} (cm)")
+        ax.tick_params(labelsize=5.5)
         if yi:
             ax.set_xlabel("Time in window (s)")
         else:
@@ -1196,19 +1356,20 @@ def fig7(D, out, **kw):
         fig.text(0.72, hf(yb + 7 + i * 3.6), lab, fontsize=5.8, color=col, va="top", fontweight="bold")
 
     yc = yb + 58
-    head_fig(fig, 0.0, hf(yc), "c", "Normalized error (2 s rolling median)")
+    head_fig(fig, 0.0, hf(yc), "c", "Normalized error (2 s rolling median, Ridge)")
     ax = _mm_axes(fig, H, 0.08, yc + 5, 0.50, 26)
     for m in methods:
-        sub = _pw(W, m, dec0, ses, seed)
+        sub = _pw(W, m, "ridge", ses, seed)
         dt = float(np.median(np.diff(sub.t_s))) if len(sub) > 1 else 0.05
         roll = sub.err_cm.rolling(max(int(round(2.0 / dt)), 1), center=True, min_periods=1).median() / floor
         ax.plot(sub.t_s - t0, roll, color=EDGE[m], lw=0.9, label=SHORT[m])
     ax.axhline(1.0, color=MUTED, lw=0.8, ls=(0, (3, 2)))
     ax.text(0.5, 1.03, "chance", fontsize=5.5, color=INK2, va="bottom")
     ax.set_xlim(0, 60); ax.set_xlabel("Time in window (s)"); ax.set_ylabel("Error / chance")
-    ax.legend(loc="upper right", fontsize=5.4, ncol=3, frameon=True, fancybox=False, edgecolor="none", framealpha=0.9)
+    ax.legend(loc="upper right", fontsize=5.4, ncol=3, frameon=True, fancybox=False,
+              edgecolor="none", framealpha=0.9)
 
-    head_fig(fig, 0.64, hf(yc), "d", "Whole test block, all sessions")
+    head_fig(fig, 0.64, hf(yc), "d", "Whole test block, all sessions (Ridge)")
     ax = _mm_axes(fig, H, 0.68, yc + 5, 0.30, 26)
     ES = D.get("ES")
     for j, m in enumerate(methods):
@@ -1217,16 +1378,20 @@ def fig7(D, out, **kw):
         for _, r in ES[ES.rep == m].iterrows():
             is_ex = r.get("session") == ses
             jit = 0.0 if is_ex else np.random.RandomState(int(r.get("session_index", 0))).uniform(-0.18, 0.18)
-            ax.scatter(j + jit, r.ridge_norm, s=20 if is_ex else 9, facecolor=COL[m] if is_ex else "white",
+            ax.scatter(j + jit, r.ridge_norm, s=20 if is_ex else 9,
+                       facecolor=COL[m] if is_ex else "white",
                        edgecolor=EDGE[m], lw=0.7, zorder=4 if is_ex else 3)
     ax.axhline(1.0, color=MUTED, lw=0.6, ls=(0, (3, 2)))
     ax.set_xticks(range(len(methods)), [SHORT[m] for m in methods], fontsize=5.8)
     ax.set_ylabel("Error / chance"); ax.set_xlim(-0.5, len(methods) - 0.5)
-    ax.text(0.5, 1.07, "filled = example session", transform=ax.transAxes, fontsize=5.2, color=INK2, ha="center")
+    ax.text(0.5, 1.07, "filled = example session", transform=ax.transAxes, fontsize=5.2,
+            color=INK2, ha="center")
     rule = meta.get("example_session_rule", "fixed rule in meta")
-    _note(fig, 0.0, 1 - (H - 9) / H, _wrap(f"Example session: {rule} Methods shown: the three causal methods with the lowest median "
-          "Ridge normalized error across animals (per readout row in a); GPFA-off (offline smoother) is excluded. Numbers in a: window median error / "
-          "chance (median cm).", 165), fs=5.0)
+    _note(fig, 0.0, 1 - (H - 9) / H, _wrap(
+        f"Example session: {rule} Same three methods in a-d: best causal by median Ridge "
+        f"normalized error ({', '.join(SHORT[m] for m in methods)}); kNN row uses unsmoothed "
+        f"aliases (EMA is Ridge-only). GPFA-off excluded. Panel a: window median / chance (cm).",
+        165), fs=5.0)
     save(fig, out, "Fig7_trajectories")
 
 
@@ -1386,11 +1551,15 @@ def figS3(D, out, **kw):
                 continue
             floor = _floor_for(D, u if by_session else None, seed)
             L = _lims(D, [seed], extra=Wd[["x_true", "y_true"]].values.ravel())
+            # animal+session label (e.g. F·S9)
+            animal_lab = _code(meta, seed)
+            sess_lab = str(u) if by_session else ""
+            # prefer S# codes from meta.session_codes values / animal map
+            row_lab = f"{animal_lab}\u00b7{sess_lab}" if by_session else animal_lab
             for ci, m in enumerate(methods):
                 ax = fig.add_axes([0.06 + ci * 0.32, 1 - (12 + rowh * (ri + 1) - 3) / H, 0.28, (rowh - 4) / H])
                 sub = Wd[(Wd.session == u) if by_session else (Wd.seed == u)]
                 sub = sub[sub.method == m].sort_values("t_s")
-                # first 60 s of test for readability
                 if len(sub):
                     t0 = float(sub.t_s.min())
                     sub = sub[sub.t_s < t0 + 60.0]
@@ -1400,7 +1569,7 @@ def figS3(D, out, **kw):
                            linewidths=0, zorder=3, rasterized=True)
                 if len(sub):
                     med = float(sub.err_cm.median())
-                    ax.text(0.04, 0.95, f"{_code(meta, seed)} {SHORT[m]}  {med / floor:.2f} ({med:.0f} cm)",
+                    ax.text(0.04, 0.95, f"{row_lab} {SHORT[m]}  {med / floor:.3f} ({med:.1f} cm)",
                             transform=ax.transAxes, fontsize=5.0, va="top", color=EDGE[m],
                             bbox=dict(fc="white", ec="none", alpha=0.85, pad=0.5))
                 ax.set_xlim(-L, L); ax.set_ylim(-L, L); ax.set_aspect("equal"); _style_box(ax, 0.4)
@@ -1446,52 +1615,51 @@ def figS4(D, out, **kw):
     # a -- spatial error maps, example session only
     head_fig(fig, 0.0, hf(5), "a", "Spatial error maps (example session only)")
     if has_w:
-        methods = _best_causal(D, "ridge", 3, set(W.method.unique()))
+        methods_r = _best_causal(D, "ridge", 3, set(W.method.unique()))
+        # kNN row: unsmoothed aliases only (EMA is Ridge-only)
+        methods_k = [m.replace("_smooth", "") for m in methods_r]
         EM = D.get("error_maps")
         use_em = EM is not None and {"x_lo", "y_lo", "bin_cm", "median_err", "method", "decoder"} <= set(EM.columns)
         L = _lims(D, [seed], extra=W[["x_true", "y_true"]].values.ravel())
-        bin_cm = float(EM.bin_cm.iloc[0]) if use_em else 15.0
+        bin_cm = float(EM.bin_cm.iloc[0]) if use_em else 10.0
         edges = np.arange(-L, L + bin_cm, bin_cm)
         nb = len(edges) - 1
         cmap = mpl.colors.LinearSegmentedColormap.from_list("err", ["#ffffff", "#3a3936"])
         grids = {}
-        for dec in decs:
+        for dec, methods in (("ridge", methods_r), ("knn", methods_k)):
+            if dec not in decs:
+                continue
             for m in methods:
                 g = np.full((nb, nb), np.nan)
                 if use_em:
-                    for r in EM[(EM.method == m) & (EM.decoder == dec)].itertuples():
-                        ix, iy = int((r.x_lo + L) // bin_cm), int((r.y_lo + L) // bin_cm)
-                        if 0 <= ix < nb and 0 <= iy < nb:
-                            g[iy, ix] = r.median_err / floor
-                else:
-                    sub = _pw(W, m, dec, ses, seed)
-                    ix = np.clip(np.digitize(sub.x_true, edges) - 1, 0, nb - 1)
-                    iy = np.clip(np.digitize(sub.y_true, edges) - 1, 0, nb - 1)
-                    for a_ in range(nb):
-                        for b_ in range(nb):
-                            sel = (iy == a_) & (ix == b_)
-                            if sel.sum() >= 5:
-                                g[a_, b_] = float(np.median(sub.err_cm.values[sel])) / floor
+                    sub_em = EM[(EM.method == m) & (EM.decoder == dec)]
+                    for r in sub_em.itertuples():
+                        ix = int((float(r.x_lo) + L) // bin_cm)
+                        iy = int((float(r.y_lo) + L) // bin_cm)
+                        if 0 <= ix < nb and 0 <= iy < nb and r.n >= 5:
+                            g[iy, ix] = float(r.median_err) / floor
                 grids[(dec, m)] = g
         allv = np.concatenate([g[np.isfinite(g)] for g in grids.values()]) if grids else np.array([1.0])
         vmax = float(np.nanpercentile(allv, 95)) if len(allv) else 1.0
         im = None
-        for ri, dec in enumerate(decs):
+        for ri, (dec, methods) in enumerate((("ridge", methods_r), ("knn", methods_k))):
+            if dec not in decs:
+                continue
             for ci, m in enumerate(methods):
                 ax = _mm_axes(fig, H, 0.06 + ci * 0.22, 12 + ri * rowh, 0.18, 0.18 * 180)
                 im = ax.imshow(np.ma.masked_invalid(grids[(dec, m)]), origin="lower", extent=[-L, L, -L, L], cmap=cmap,
                                vmin=0, vmax=max(vmax, 1e-6), interpolation="nearest")
                 _draw_poly(ax, _poly(D, seed), lw=0.6, color="#c83a39")
                 ax.set_xlim(-L, L); ax.set_ylim(-L, L); ax.set_aspect("equal"); ax.set_xticks([]); ax.set_yticks([])
-                ax.set_title(f"{'Ridge' if dec == 'ridge' else 'kNN'} | {SHORT[m]}", fontsize=6, color=EDGE[m], pad=2)
+                ax.set_title(f"{'Ridge' if dec == 'ridge' else 'kNN'} | {SHORT.get(m, m)}", fontsize=6,
+                             color=EDGE.get(m, INK), pad=2)
                 _style_box(ax, 0.4)
         if im is not None:
             cax = _mm_axes(fig, H, 0.72, 14, 0.012, 40)
             cb = fig.colorbar(im, cax=cax); cb.set_label("Median error / chance", fontsize=6); cb.ax.tick_params(labelsize=5.5)
-        if not use_em:
-            _note(fig, 0.06, 1 - (ya_h - 6) / H,
-                  f"Computed from the first 60 s of the test block only ({bin_cm:.0f} cm bins, >= 5 frames per bin; "
-                  "blank = not visited); red outline = room polygon.", fs=5.1)
+        _note(fig, 0.06, 1 - (ya_h - 6) / H,
+              f"Whole test block ({bin_cm:.0f} cm bins, >= 5 frames/bin; blank = not visited). "
+              "kNN row uses unsmoothed methods (EMA is Ridge-only). Red outline = room polygon.", fs=5.1)
     else:
         ax = _mm_axes(fig, H, 0.06, 12, 0.6, 30)
         _empty_panel(ax, "no predictions for the example session")
@@ -1567,28 +1735,46 @@ def figS5(D, out, **kw):
     if not lat or pos is None:
         print("FigS5 skipped (no latents / positions supplied)")
         return
-    methods = [m for m in ("pca", "dm", "lds", "gpfa_causal") if m in lat]
-    if not methods:
-        print("FigS5 skipped (no PCA/DM/LDS/GPFA-c latents)")
+    # Prefer gpfa_causal when present; else offline GPFA (figure_contract has Z_gpfa only).
+    methods = []
+    for m in ("pca", "dm", "lds"):
+        if m in lat:
+            methods.append(m)
+    if "gpfa_causal" in lat:
+        methods.append("gpfa_causal")
+    elif "gpfa" in lat:
+        methods.append("gpfa")
+    if len(methods) < 2:
+        print("FigS5 skipped (need at least two latent methods)")
         return
     pos = np.asarray(pos, float)
-    fig = plt.figure(figsize=(W_FULL, 100 * MM))
+    n_m = len(methods)
+    fig = plt.figure(figsize=(W_FULL, 105 * MM))
     head_fig(fig, 0.0, 0.965, "", "Latent trajectories coloured by position (first two dimensions)")
     cmaps = ["viridis", "magma"]
-    for ri, (lab, k) in enumerate((("x position", 0), ("y position", 1))):
+    for ri, (lab, k) in enumerate((("x (cm)", 0), ("y (cm)", 1))):
+        sc = None
         for ci, m in enumerate(methods):
-            ax = fig.add_axes([0.06 + ci * 0.235, 0.52 - ri * 0.43, 0.20, 0.38])
+            ax = fig.add_axes([0.05 + ci * (0.88 / n_m), 0.52 - ri * 0.43, 0.88 / n_m - 0.03, 0.36])
             Z = np.asarray(lat[m], float)
             ok = np.isfinite(Z[:, :2]).all(1) & np.isfinite(pos).all(1)
-            sc = ax.scatter(Z[ok, 0], Z[ok, 1], c=pos[ok, k], s=0.6, cmap=cmaps[ri], linewidths=0, rasterized=True)
+            sc = ax.scatter(Z[ok, 0], Z[ok, 1], c=pos[ok, k], s=0.6, cmap=cmaps[ri],
+                            linewidths=0, rasterized=True)
             ax.set_xticks([]); ax.set_yticks([]); _style_box(ax, 0.4)
-            if ri == 0:
-                ax.set_title(SHORT[m], fontsize=6.5, color=EDGE[m], fontweight="bold")
-            ax.set_xlabel("dim 1", fontsize=5.8, labelpad=1)
+            ax.set_title(SHORT[m], fontsize=7, color=EDGE.get(m, INK), fontweight="bold", pad=3)
+            ax.set_xlabel("latent dim 1", fontsize=5.8, labelpad=1)
             if ci == 0:
-                ax.set_ylabel("dim 2", fontsize=5.8)
-        cax = fig.add_axes([0.97, 0.52 - ri * 0.43, 0.01, 0.38])
-        cb = fig.colorbar(sc, cax=cax); cb.set_label(f"{lab} (cm)", fontsize=5.8); cb.ax.tick_params(labelsize=5)
+                ax.set_ylabel("latent dim 2", fontsize=5.8)
+        if sc is not None:
+            cax = fig.add_axes([0.94, 0.52 - ri * 0.43, 0.012, 0.36])
+            cb = fig.colorbar(sc, cax=cax)
+            cb.set_label(f"position {lab}", fontsize=6)
+            cb.ax.tick_params(labelsize=5)
+    gpfa_note = ("GPFA-c" if "gpfa_causal" in methods else "GPFA-off (causal GPFA latents not in figure_contract)")
+    _note(fig, 0.05, 0.04,
+          f"Example session (fixed rule). Eval samples; colour = room-local position. "
+          f"Columns: {', '.join(SHORT[m] for m in methods)} ({gpfa_note}).",
+          fs=5.3)
     save(fig, out, "FigS5_phase8")
 
 

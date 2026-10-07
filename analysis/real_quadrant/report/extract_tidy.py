@@ -76,6 +76,33 @@ def _room_polygon(session: str) -> np.ndarray:
     return _room_outline_local(session, "A")
 
 
+def test_room_coverage(session: str, *, bin_cm: float = 10.0) -> float:
+    """Fraction of in-polygon ``bin_cm`` bins visited by the test path."""
+    from matplotlib.path import Path as MplPath
+
+    a = _arrays(session)
+    y = np.asarray(a["y"], float)
+    test = np.asarray(a["test_mask"], bool)
+    yt = y[test]
+    yt = yt[np.isfinite(yt).all(axis=1)]
+    if len(yt) == 0:
+        return float("nan")
+    poly = _room_polygon(session)
+    lo = poly.min(0) - bin_cm
+    hi = poly.max(0) + bin_cm
+    gx = np.arange(lo[0], hi[0], bin_cm)
+    gy = np.arange(lo[1], hi[1], bin_cm)
+    cx, cy = np.meshgrid(gx + bin_cm / 2, gy + bin_cm / 2, indexing="ij")
+    room = MplPath(poly).contains_points(np.c_[cx.ravel(), cy.ravel()]).reshape(cx.shape)
+    if not room.any():
+        return float("nan")
+    ix = np.floor((yt - lo) / bin_cm).astype(int)
+    vis = np.zeros_like(room, dtype=bool)
+    ok = (ix[:, 0] >= 0) & (ix[:, 0] < len(gx)) & (ix[:, 1] >= 0) & (ix[:, 1] < len(gy))
+    vis[ix[ok, 0], ix[ok, 1]] = True
+    return float((vis & room).sum() / room.sum())
+
+
 def build_errors_and_floor(
     cohort: dict[str, Any], animals: list[str],
 ) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame, pd.DataFrame]:
@@ -87,13 +114,16 @@ def build_errors_and_floor(
         summary = json.loads((ROOM / session / "source_summary.json").read_text())
         cov = summary.get("coverage") or {}
         floor = float(report["floor_median_cm"])
+        room_cov = test_room_coverage(session, bin_cm=10.0)
         floor_sess.append(dict(
             seed=animal_ix[animal], source="real", session=session,
             session_index=si, animal=animal,
             floor_median=floor, floor_mean=floor,
             test_bins=cov.get("n_test_occupied_bins"),
             train_bins=cov.get("n_train_occupied_bins"),
-            coverage=cov.get("fraction_test_in_train_occupied_bins"),
+            # fraction of in-polygon 10 cm bins visited by the test path
+            coverage=room_cov,
+            coverage_train_overlap=cov.get("fraction_test_in_train_occupied_bins"),
             n_units=report.get("n_units"),
         ))
         by = {m["method"]: m for m in report["methods"]}
@@ -314,34 +344,71 @@ def build_d_sweep(cohort: dict[str, Any], animals: list[str]) -> pd.DataFrame:
     return pd.DataFrame(rows)
 
 
-def build_contrasts(sess_df: pd.DataFrame, animals: list[str]) -> pd.DataFrame:
+def _json_method_key(logical: str, grid_mode: str) -> str:
+    """Map logical method name to the session_report JSON row for a contrast arm."""
+    if grid_mode == "grid20":
+        # Matched d<=20: pca/lds family use *_grid20; dm/isomap/gpfa already grid20.
+        g20 = {
+            "pca": "pca_grid20", "pca_smooth": "pca_smooth_grid20",
+            "lds": "lds_grid20", "lds_smooth": "lds_smooth_grid20",
+        }
+        return g20.get(logical, logical)
+    return logical
+
+
+def build_contrasts(cohort: dict[str, Any], animals: list[str]) -> pd.DataFrame:
+    """Planned contrasts from session reports with matched grid arms.
+
+    For ``grid_mode=grid20``, both arms resolve to grid20 JSON rows (e.g.
+    dm_smooth vs pca_smooth_grid20). Animal value = mean over that animal's
+    sessions of (error / floor).
+    """
     from analysis.real_quadrant.report2_contrasts_spec import CONTRASTS_R2, CONTRASTS_MECH
 
-    means: dict[int, dict[str, dict[str, float]]] = {}
-    for seed, g in sess_df.groupby("seed"):
-        means[int(seed)] = {}
-        for rep, gg in g.groupby("rep"):
-            means[int(seed)][rep] = {
-                "ridge_norm": float(gg["ridge_norm"].mean()),
-                "knn_norm": float(gg["knn_norm"].mean()) if gg["knn_norm"].notna().any() else np.nan,
-                "ridge": float(gg["ridge"].mean()),
-                "knn": float(gg["knn"].mean()) if gg["knn"].notna().any() else np.nan,
-            }
+    animal_ix = {a: i for i, a in enumerate(animals)}
+    # per (seed, logical_key_resolved) lists of ridge_norm / knn_norm
+    store: dict[tuple[int, str, str], list[float]] = {}  # (seed, resolved, dec) -> vals
+
+    for sel in cohort["selected_sessions"]:
+        session, animal = sel["session"], sel["animal"]
+        seed = animal_ix[animal]
+        report = _session_report(session)
+        floor = float(report["floor_median_cm"])
+        by = {m["method"]: m for m in report["methods"]}
+        for a, b, _lab, grid_mode in list(CONTRASTS_R2) + list(CONTRASTS_MECH):
+            for logical in (a, b):
+                key = _json_method_key(logical, grid_mode)
+                # also store under a composite so we can look up (logical, grid_mode)
+                rec = by.get(key)
+                if not rec or rec.get("status") not in (None, "ok"):
+                    continue
+                ridge = rec.get("ridge_median_cm")
+                knn = rec.get("knn_median_cm")
+                if ridge is not None and floor > 0:
+                    store.setdefault((seed, f"{logical}@{grid_mode}", "ridge"), []).append(
+                        float(ridge) / floor
+                    )
+                if knn is not None and floor > 0 and not logical.endswith("_smooth"):
+                    store.setdefault((seed, f"{logical}@{grid_mode}", "knn"), []).append(
+                        float(knn) / floor
+                    )
+
     rows = []
     for a, b, label, grid_mode in list(CONTRASTS_R2) + list(CONTRASTS_MECH):
-        for seed, m in means.items():
-            if a not in m or b not in m:
-                continue
-            for dec, key in (("ridge", "ridge_norm"), ("knn", "knn_norm")):
+        for seed in range(len(animals)):
+            for dec in ("ridge", "knn"):
                 if dec == "knn" and (a.endswith("_smooth") or b.endswith("_smooth")):
                     continue
-                va, vb = m[a].get(key), m[b].get(key)
-                if va is None or vb is None or not np.isfinite(va) or not np.isfinite(vb):
+                ka, kb = f"{a}@{grid_mode}", f"{b}@{grid_mode}"
+                la = store.get((seed, ka, dec))
+                lb = store.get((seed, kb, dec))
+                if not la or not lb:
                     continue
+                va, vb = float(np.mean(la)), float(np.mean(lb))
                 rows.append(dict(
                     seed=seed, contrast=f"{a} - {b}", label=label,
                     grid_mode=grid_mode, decoder=dec,
-                    delta=float(va - vb), a=a, b=b, a_val=float(va), b_val=float(vb),
+                    delta=float(va - vb), a=a, b=b, a_val=va, b_val=vb,
                 ))
     return pd.DataFrame(rows)
 
@@ -383,12 +450,13 @@ def build_error_cdf_jumps_maps_pull(
         jump_rate=true_jump, jump_thresh_cm=JUMP_CM, n_steps=int(len(true_step)),
         true_jump_rate=true_jump, session=example_session,
     ))
-    # spatial bins over example-session extent
+    # spatial bins over example-session extent (whole eval / test block)
     xmin, xmax = float(np.nanmin(y_e[:, 0])), float(np.nanmax(y_e[:, 0]))
     ymin, ymax = float(np.nanmin(y_e[:, 1])), float(np.nanmax(y_e[:, 1]))
-    nbin = 10
-    xedges = np.linspace(xmin, xmax, nbin + 1)
-    yedges = np.linspace(ymin, ymax, nbin + 1)
+    bin_cm = 10.0
+    xedges = np.arange(xmin - 1e-6, xmax + bin_cm, bin_cm)
+    yedges = np.arange(ymin - 1e-6, ymax + bin_cm, bin_cm)
+    nbin_x, nbin_y = len(xedges) - 1, len(yedges) - 1
 
     for method in REPS_REAL:
         for dec in ("ridge", "knn"):
@@ -413,11 +481,11 @@ def build_error_cdf_jumps_maps_pull(
                 jump_thresh_cm=JUMP_CM, n_steps=int(len(step)),
                 true_jump_rate=true_jump, session=example_session,
             ))
-            # error maps
-            xi = np.clip(np.digitize(y_e[:n, 0], xedges) - 1, 0, nbin - 1)
-            yi = np.clip(np.digitize(y_e[:n, 1], yedges) - 1, 0, nbin - 1)
-            for bx in range(nbin):
-                for by in range(nbin):
+            # error maps on the whole test/eval block
+            xi = np.clip(np.digitize(y_e[:n, 0], xedges) - 1, 0, nbin_x - 1)
+            yi = np.clip(np.digitize(y_e[:n, 1], yedges) - 1, 0, nbin_y - 1)
+            for bx in range(nbin_x):
+                for by in range(nbin_y):
                     m = (xi == bx) & (yi == by)
                     if not m.any():
                         continue
@@ -427,6 +495,9 @@ def build_error_cdf_jumps_maps_pull(
                         median_err=float(np.median(err[m])),
                         n=int(m.sum()),
                         session=example_session,
+                        bin_cm=bin_cm,
+                        x_lo=float(xedges[bx]), x_hi=float(xedges[bx + 1]),
+                        y_lo=float(yedges[by]), y_hi=float(yedges[by + 1]),
                         x0=float(xedges[bx]), x1=float(xedges[bx + 1]),
                         y0=float(yedges[by]), y1=float(yedges[by + 1]),
                     ))
@@ -572,25 +643,26 @@ def build_rate_maps_and_causal(example_session: str) -> tuple[list[dict], pd.Dat
             for row in rm["rate"]
         ]
 
-    # causal features: pick top spat-info unit, zoom to 5 s with visible shift
+    # causal features: unit with clear activity; 5 s where centred vs causal differ
     cf_rows = []
     if chosen:
-        uid, j = chosen[0][2], chosen[0][3]
-        st0 = [np.asarray(spike_times[j], float)]
-        retained = np.asarray(a["retained"], bool) if "retained" in a else np.ones(len(times), bool)
-        t_rel = times - float(times[retained][0]) if retained.any() else times - times[0]
-        # search for a 5 s window where |causal - centred| is large
-        best_i0, best_score = 0, -1.0
-        for i0 in range(0, max(1, len(times) - 100), 20):
-            sl = slice(i0, i0 + 100)  # 5 s at 50 ms
-            grid = times[sl]
-            if len(grid) < 50:
-                continue
-            causal = causal_count_matrix(st0, grid, window_s=0.250).ravel()
-            centre = window_count_matrix(st0, grid, -0.125, 0.125).ravel()
-            score = float(np.mean(np.abs(causal - centre)))
-            if score > best_score:
-                best_score, best_i0 = score, i0
+        # Prefer a unit that spikes often (among top spat-info), so the trace is visible.
+        best_uid, best_j, best_i0, best_score = chosen[0][2], chosen[0][3], 0, -1.0
+        for info, corr, uid, j, _smooth in chosen[:5]:
+            st0 = [np.asarray(spike_times[j], float)]
+            for i0 in range(0, max(1, len(times) - 100), 10):
+                grid = times[i0:i0 + 100]
+                if len(grid) < 50:
+                    continue
+                causal = causal_count_matrix(st0, grid, window_s=0.250).ravel()
+                centre = window_count_matrix(st0, grid, -0.125, 0.125).ravel()
+                act = float(np.mean(np.maximum(causal, centre)))
+                if act < 0.3:
+                    continue
+                score = float(np.mean(np.abs(causal - centre))) * (1.0 + act)
+                if score > best_score:
+                    best_score, best_i0, best_uid, best_j = score, i0, uid, j
+        st0 = [np.asarray(spike_times[best_j], float)]
         grid = times[best_i0:best_i0 + 100]
         causal = causal_count_matrix(st0, grid, window_s=0.250).ravel()
         centre = window_count_matrix(st0, grid, -0.125, 0.125).ravel()
@@ -598,7 +670,7 @@ def build_rate_maps_and_causal(example_session: str) -> tuple[list[dict], pd.Dat
         for k in range(len(grid)):
             cf_rows.append(dict(
                 t_s=float(grid[k] - t0w), centred=float(centre[k]),
-                causal=float(causal[k]), unit_id=int(uid),
+                causal=float(causal[k]), unit_id=int(best_uid),
                 session=example_session,
             ))
     return rate_maps, pd.DataFrame(cf_rows)
@@ -666,7 +738,7 @@ def write_all(out_dir: Path, *, anon: bool = False) -> dict[str, Any]:
     pred_all_a.to_csv(out_dir / "data_predictions_all.csv", index=False)
 
     _anon_df(build_d_sweep(cohort, animals)).to_csv(out_dir / "data_d_sweep.csv", index=False)
-    build_contrasts(sess_df, animals).to_csv(out_dir / "data_contrasts.csv", index=False)
+    build_contrasts(cohort, animals).to_csv(out_dir / "data_contrasts.csv", index=False)
     _anon_df(build_a13_shifts(cohort, animals)).to_csv(out_dir / "data_a13_shifts.csv", index=False)
 
     cdf, jumps, emaps, pull = build_error_cdf_jumps_maps_pull(ex_session, ex_seed)
