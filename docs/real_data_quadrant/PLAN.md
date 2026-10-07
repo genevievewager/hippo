@@ -1,7 +1,9 @@
 # Real-data quadrant extension — design plan
 
-Status: design locked; seam and M1 not started. Branch: `offline-decoding`
-(rebased onto `master` after merging `quadrant-n5`).
+Status: **M3 done** (cohort + latent-d extension frozen); **M4** (Report 2,
+real-data-only RD1–RD7/RD9) is next. Seam, M1, and M2 are complete. Branch:
+`offline-decoding`. Sim-vs-real comparison moved out of M4 into the **Report 1
+revision** (default + matched sim).
 
 Companion to the simulated `quadrant_n5` experiment (`agents/quadrant_n5/`,
 `realtime/quadrant_n5*.py`, `configs/quadrant_n5.yaml`).
@@ -68,15 +70,16 @@ Primary `d` per method: lowest inner-CV median Ridge error; ties → smaller d.
 Each method also produces Ridge/kNN test errors, A13 null stats, optional
 d-sweep rows, and (when complete) predictions for trajectory panels.
 
-**Latent-d grid (sim frozen; real may extend):** sim keeps
+**Latent-d grid (sim + real; shared extension rule):** default
 `latent_dims: [2, 3, 5, 10, 20]` and `nested_fit_d: 20` in
-`configs/quadrant_n5.yaml`. Real-data rule (recorded before extending):
-if the selected `d` equals the grid max on most sessions, extend the grid by
-doubling until the mode selected `d` is strictly below the max or
+`configs/quadrant_n5.yaml`. Rule (recorded before extending):
+if the selected `d` equals the grid max on most sessions/seeds, extend the
+grid by doubling until the mode selected `d` is strictly below the max or
 `d` reaches `⌊n_units / 2⌋`. Nested methods set `nested_fit_d = max(grid)`.
-Sim N=5 selections also sat at 20 for most methods (pca/dm/isomap/gpfa 9/10,
-lds 10/10); the sim grid is left unchanged by design (sim ≈ 86 units; real
-sessions often ≫ 100 units).
+Sim N=5 selections sat at 20 for most methods (pca/dm/isomap/gpfa 9/10,
+lds 10/10); sim extends to `{2,3,5,10,20,40}` (`⌊86/2⌋=43`). Real cohort
+extends to `{2,3,5,10,20,40,80}` (sessions often ≫ 100 units). Prior rows
+kept alongside labeled `grid20`.
 
 ### 1.3 What “quadrant” means here
 
@@ -110,10 +113,10 @@ Across seeds (N=5): per-seed values, mean, SD, **paired contrasts** with sign
 counts (no p-values): `dm−pca`, `lds−pca`, `raw_lag−raw`, `lds−raw_lag`,
 each method − `raw`, kNN−Ridge, `sorted−gt`.
 
-**Effective lag (causal methods):** shift in 50 ms steps within ±3 s that
-maximizes mean axis-wise Pearson correlation of prediction vs truth. Reported
-next to normalized error (sim posthoc rows and real M2/M3 tables). Positive lag
-means the prediction leads the truth.
+**Effective lag (causal methods):** reports use **train-based lag** (sync /
+train XC under the behind-truth convention) plus an **eval plateau range**
+(lags within 0.01 of peak correlation). Eval **point estimates are dropped**.
+Positive lag means the prediction is behind the truth.
 
 ### 1.5 Seeds and aggregation
 
@@ -277,6 +280,7 @@ Report room `A` as primary; `B` and `a` in the same tables as replications.
 Primary (normalized error; sign counts across animals, N≤6):
 
 - `lds − raw_smooth`
+- `lds_smooth − raw_smooth`
 - `gpfa_causal − raw_smooth` (included: leakage + train-only fit verified)
 - `pca_smooth − raw_smooth`
 - `dm_smooth − pca_smooth`
@@ -298,10 +302,25 @@ Room A only. Parallel: one process per session, max 6, BLAS threads = 8.
 Resume keyed on config hash + git SHA; refuse dirty tree.
 
 **Latent-d grid extension (pre-registered before extended-grid results):**
-If selected `d` equals the grid max on most cohort sessions, extend by
-doubling (`…, 20 → 40 → 80 → …`) until the mode selected `d` is below the
-max or `d = ⌊n_units/2⌋`. Apply to real-data pca/lds (and their smooth
-controls) first; archive prior `grid20` rows alongside. Sim grid unchanged.
+If selected `d` equals the grid max on most cohort sessions (real) or
+seed×source cells (sim), extend by doubling (`…, 20 → 40 → 80 → …`) until
+the mode selected `d` is below the max or `d = ⌊n_units/2⌋`. Apply to
+pca/lds (and their smooth controls); archive prior `grid20` rows alongside.
+Sim cap: d=40 (`⌊86/2⌋`). Real cohort: d=80.
+
+**Plateau stop (recorded before reading final contrasts):** after the first
+extension to d=80, compare median normalized error at d=40 vs d=80 across
+real cohort sessions, per method. If the 40→80 improvement is **&lt; 0.01**
+normalized error, stop extending that method and report
+“selection at grid max; error at plateau”. Otherwise run **one** more
+doubling to `d = min(160, ⌊n_units/2⌋)` for that method only and treat that
+as the final grid. Decision (real): pca improvement ≈ 0.005 → **stop /
+plateau**; lds improvement ≈ −0.008 (d=80 not better) → **stop / plateau**.
+Final real grid remains `{2,3,5,10,20,40,80}`.
+
+**Frozen (post plateau decision):** no new methods, controls, or analysis
+reruns after this decision. Report 2 uses the frozen final grid (+ `grid20`
+rows alongside). Further sim-vs-real work belongs to the Report 1 revision.
 
 ### 3.0e Sim-vs-real metric
 
@@ -419,18 +438,18 @@ trim GPFA/LDS d-sweep or keep heavy methods on a designated subset.
 
 ### 3.5 Report plan (M4 figure specification)
 
-M4 builds an offline figure report that reads **side by side** with
-`agents/quadrant_n5/figures`. Number real-data figures **RD1–RD9** and note
-the parallel sim figure. Same visual style as `agents/quadrant_n5/figures`:
-reuse its style constants and plotting helpers by import where those helpers
-accept arrays (do not import sim report code into core analysis; report pages
-only).
+M4 builds an offline **real-data-only** figure report that reads alongside
+`agents/quadrant_n5/figures` for style, not for a sim-vs-real panel.
+Number real-data figures **RD1–RD7 and RD9** (RD8 removed — see below).
+Same visual style as `agents/quadrant_n5/figures`: reuse its style constants
+and plotting helpers by import where those helpers accept arrays (do not
+import sim report code into core analysis; report pages only).
 
 Write only under an **ignored** dir (`analysis/real_quadrant/outputs/` or
 `outputs/real_quadrant/`). **Never commit** PDFs, NPZs, tidy CSVs, figures, or
 tables from real data.
 
-#### Figure story (RD1–RD9)
+#### Figure story (RD1–RD7, RD9)
 
 | Figure | Content | Parallel |
 | ------ | ------- | -------- |
@@ -441,7 +460,7 @@ tables from real data.
 | **RD5** Predictions | Decoded vs true path on the arena; x(t) and y(t) traces over a test block; error over time | Fig7 trajectories |
 | **RD6** Is it real? | Error distributions vs chance floor; time-shift null; split timeline showing train, test, purge gaps and the trimmed segment edges | Fig2 validity |
 | **RD7** The quadrant answer | Method contrasts across animals; room A primary, B and a as replications | Fig3 / Fig6 |
-| **RD8** Real vs simulated | Normalized error (error / chance floor) side by side with the published `quadrant_n5` aggregates | Fig4 mechanism (sim-vs-real role) |
+| **RD8** *(removed from M4)* | Real vs simulated | **Moved to the Report 1 revision** (default + matched sim). Not part of Report 2 / M4. |
 | **RD9** Region subsets | A priori region-subset decoding (supplementary) | Replaces FigS5 |
 
 Dropped from the sim set for real data (no RD twin): sorted-vs-GT, realtime
@@ -463,10 +482,10 @@ can draw every figure without rerunning analyses**.
 | `valid` mask | RD1, RD6 | Target validity; dropped-frame panels |
 | Trim boundaries | RD1, RD6 | First 60 s / last 10 s edges (§3.0b) |
 | Train / test / purge masks | RD5, RD6 | Split timeline; eval intersection |
-| Predictions per method and decoder | RD5–RD8 | Test-block traces and aggregate error |
+| Predictions per method and decoder | RD5–RD7 | Test-block traces and aggregate error |
 | Latents per method (or a documented subsample) | RD4 | If subsampled, document rule and seed |
-| Chance-floor predictions | RD6, RD8 | Train-mean position floor |
-| Per-fold metrics | RD6–RD8 | Errors, R², null stats as computed |
+| Chance-floor predictions | RD6 | Train-mean position floor |
+| Per-fold metrics | RD6–RD7 | Errors, R², null stats as computed |
 | Example-unit spike times in the plotted window | RD2 | Only the units/window chosen by the fixed selection rule |
 
 **Session-level JSON** (alongside segment artifacts): provenance with git
@@ -476,8 +495,8 @@ commit, config hash, and integrity-check result (centre-window rebuild vs
 **Milestone ownership:** M1 must start saving this contract for the `raw`
 method (and shared masks / times / `y` / floor). Later milestones extend the
 same layout with additional methods, latents, nulls, and cohort aggregates.
-M4 is render-only over these artifacts plus published `quadrant_n5`
-aggregates for RD8.
+M4 / Report 2 is render-only over these real-data artifacts. Sim-vs-real
+(former RD8) is owned by the Report 1 revision.
 
 #### Report rules
 
@@ -489,23 +508,22 @@ aggregates for RD8.
    stated criterion), not hand-picked for how good they look; the rule is
    recorded in the report config / provenance JSON.
 4. Room A is primary in RD7; B and a appear as replications. Sim-vs-real
-   (RD8) uses normalized error (§3.0e).
+   lives in the Report 1 revision (normalized error, §3.0e), not in M4.
 
 ### 3.6 Milestones
 
 | ID | Deliverable | Done when |
 | -- | ----------- | --------- |
-| **Bin-edge** | Done (§3.0a): `Cell_*(t)` = centre 250 ms; causal rebuild `[t−0.250,t)` | Conclusion in PLAN; adapter must not use `Cell_*(t)` as features |
-| **Seam** | `analyze_source` accepts prepared bundle; sim tests byte-identical | Separate commit with tests (after this plan commit) |
-| **M1** | Adapter + `raw` on one 2-room **room-A** segment; within-segment split+purge; chance floor; target-only valid mask; **start figure data contract** for raw | Synthetic unit tests; local metrics JSON; error vs floor; contract artifacts for raw; `HIPPO_DATA_ROOT` only |
-| **M2** | All methods on that segment (GPFA optional if too slow); extend data contract | Per-method JSON + d-selection; time-shift null; timings; predictions/latents per method |
-| **M3** | Eligible 2-room cohort (2/animal near median units); room A; all methods + smooth / gpfa_causal; planned contrasts above | Local manifest (excl. reasons); per-animal means; primary/secondary contrasts; nothing real in git |
-| **M4** | Offline RD1–RD9 report (style-matched to `quadrant_n5` figures) | RD1–RD9 from saved artifacts only; ignored outputs; fixed example-selection rule recorded |
+| **Bin-edge** | Done (§3.0a) | Done |
+| **Seam** | `analyze_source` accepts prepared bundle; sim tests byte-identical | Done |
+| **M1** | Adapter + `raw` on one room-A segment; figure data contract started | Done |
+| **M2** | All methods on that segment; smooth / lag / gpfa_causal | Done |
+| **M3** | Cohort (2/animal); contrasts; latent-d extension + plateau freeze | Done (grid frozen) |
+| **M4 / Report 2** | Offline real-data RD1–RD7 + RD9 (RD8 out of scope) | From saved artifacts only; ignored outputs; fixed example-selection rule |
 
 ---
 
 ## 4. Stop
 
-Plan and branch integration committed. Next after review: bin-edge check,
-then the `analyze_source` seam commit, then M1. No seam or adapter in this
-commit.
+M3 analysis frozen after the plateau decision. Next: M4 / Report 2 render
+(real-data only). Sim extend-d outputs remain for the Report 1 revision.
