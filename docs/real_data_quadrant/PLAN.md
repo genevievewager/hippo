@@ -530,7 +530,7 @@ Report 2 (real-data-only RD1–RD7/RD9) is frozen and closed.
 | -- | -- |
 | Date | 2026-10-08 |
 | Tag | `report2-v1` |
-| Git sha | `35b20f1831792731e7c36f98e19b834ffa2d16f7` |
+| Git sha | `2116e038d15302865c52df507735c20026af6b0d` |
 | Config sha256 | `0192b55b4ad30367f3a2b35ef272ae9da40ee3a352ed459141561612921676b5` |
 | Named PDF sha256 | `e2e3a0bf81a173e5ab5951d691492e5d6076a0d43c91787569ab7c3acc13d16f` |
 | Anon PDF sha256 | `1be0a7be8b29ca9850369c9a83bda1fdee09e624512cf4c61e2566b045415d0b` |
