@@ -65,10 +65,9 @@ from agents.quadrant_n5.figures.figures import (  # noqa: E402
 
 
 def save(fig, out, name):
-    """Save PDF+PNG; fail if any artist bbox exceeds the figure area."""
+    """Save PDF+PNG; fail if any artist or Text bbox exceeds the figure area."""
     fig.canvas.draw()
     renderer = fig.canvas.get_renderer()
-    fw, fh = fig.get_size_inches()
     # Fail on clear overflows past the figure; small pad for tick labels / AA.
     pad = 0.08
     offenders = []
@@ -85,10 +84,29 @@ def save(fig, out, name):
             offenders.append(
                 f"ax{i} bbox=({bb_fig.x0:.3f},{bb_fig.y0:.3f})-({bb_fig.x1:.3f},{bb_fig.y1:.3f})"
             )
+    # Explicit Text artists (annotations can overflow even when axes bbox is OK)
+    for j, txt in enumerate(fig.findobj(match=lambda a: isinstance(a, mpl.text.Text))):
+        s = (txt.get_text() or "").strip()
+        if not s or not txt.get_visible():
+            continue
+        try:
+            bb = txt.get_window_extent(renderer=renderer)
+        except Exception:
+            continue
+        if bb.width == 0 and bb.height == 0:
+            continue
+        bb_fig = bb.transformed(fig.transFigure.inverted())
+        if (bb_fig.x0 < -pad or bb_fig.y0 < -pad
+                or bb_fig.x1 > 1 + pad or bb_fig.y1 > 1 + pad):
+            preview = s.replace("\n", " ")[:40]
+            offenders.append(
+                f"text[{j}] '{preview}' "
+                f"bbox=({bb_fig.x0:.3f},{bb_fig.y0:.3f})-({bb_fig.x1:.3f},{bb_fig.y1:.3f})"
+            )
     if offenders:
         raise RuntimeError(
             f"{name}: artist bbox exceeds figure area (clipped content): "
-            + "; ".join(offenders[:6])
+            + "; ".join(offenders[:8])
         )
     _save_sim(fig, out, name)
 
@@ -513,8 +531,18 @@ def _mfc(rep):
     return "white" if rep in HOLLOW else COL[rep]
 
 
-def _note(fig, x, y, text, fs=5.6, **kw):
-    fig.text(x, y, text, fontsize=fs, color=INK2, va="top", **kw)
+def _note(fig, x, y, text, fs=5.6, wrap_to=0.98, **kw):
+    """Figure footnote; wrap so text stays inside the figure width."""
+    import textwrap
+    # ~0.01 figure-width per character at fs≈5.5 (Liberation Sans)
+    char_w = 0.0105 * (fs / 5.5)
+    max_chars = max(20, int((wrap_to - x) / char_w))
+    # Preserve intentional newlines; wrap each paragraph
+    parts = []
+    for para in str(text).split("\n"):
+        parts.append(textwrap.fill(para, width=max_chars) if para else "")
+    wrapped = "\n".join(parts)
+    fig.text(x, y, wrapped, fontsize=fs, color=INK2, va="top", **kw)
 
 
 def _empty_panel(ax, text):
@@ -711,10 +739,10 @@ def fig1(D, out, **kw):
         if np.isfinite(cov):
             title += f"\n{cov:.2f}"
         ax.set_title(title, fontsize=4.6, pad=1.0, linespacing=0.95)
-    _note(fig, x0, 0.340,
-          "Path and polygon from the same session (room-local cm; do not mix sessions). "
-          "Title = animal·session; cov = fraction of in-polygon 10 cm bins visited by the test path.",
-          fs=4.9)
+    _note(fig, 0.445, 0.340,
+          "Path and polygon from the same session (room-local cm; do not mix). "
+          "Title = animal·session; cov = in-polygon 10 cm bins visited by test path.",
+          fs=4.7, wrap_to=0.99)
 
     # e -- example train-only rate maps
     head_fig(fig, 0.0, 0.245, "e", "Example units: train-only rate maps")
@@ -1198,23 +1226,24 @@ def fig5(D, out, **kw):
         ax.axhline(1.0, color=MUTED, lw=0.6, ls=(0, (3, 2)))
     top = max(allv + [1.0 if norm else 0]) * 1.12
     ax.set_ylim(max(min(allv) - 0.1, 0), top)
-    note_bits = []
-    if not Xk["gpfa_causal"].notna().any():
-        note_bits.append("GPFA-c: Ridge only (no kNN run)")
+    # Notes inside axes (legend + corner text) — never past the figure edge
+    leg_h = []
     if knn_lds_pos is not None:
-        note_bits.append("open diamond = LDS kNN-best d (descriptive)")
-    if note_bits:
-        ax.text(5.4, top * 0.93 if not norm else min(0.93, top * 0.93),
-                "; ".join(note_bits), fontsize=4.8, color=MUTED,
-                ha="right", va="center", fontstyle="italic")
-    # clean comparison callout under Ridge group
+        leg_h.append(Line2D([], [], marker="D", ls="", mfc="white", mec=EDGE["lds"],
+                            ms=4.0, label="LDS kNN-best d (descriptive)"))
     dv_r = (Xr["lds"] - Xr["gpfa"]).dropna().values
     if len(dv_r):
-        ax.text(1.0, -0.18,
-                f"Clean comparison: Ridge LDS - GPFA-off = {dv_r.mean():+.3f} "
-                f"({int((dv_r > 0).sum())}/{len(dv_r)}); kNN gap mixes d choice",
-                transform=ax.get_xaxis_transform(), ha="center", va="top",
-                fontsize=4.8, color=INK2)
+        leg_h.append(Line2D([], [], color="none", label=(
+            f"Clean: Ridge LDS - GPFA-off = {dv_r.mean():+.3f} "
+            f"({int((dv_r > 0).sum())}/{len(dv_r)}); kNN gap mixes d"
+        )))
+    if not Xk["gpfa_causal"].notna().any():
+        leg_h.append(Line2D([], [], color="none", label="GPFA-c: Ridge only (no kNN run)"))
+    if leg_h:
+        ax.legend(handles=leg_h, loc="upper left", fontsize=4.6, frameon=True,
+                  fancybox=False, framealpha=0.92, edgecolor="#e8e6e1",
+                  handletextpad=0.3, borderaxespad=0.25, borderpad=0.3,
+                  labelspacing=0.25)
 
     # b -- selected d (session level)
     ax = fig.add_axes([0.46, 0.20, 0.24, 0.64])
@@ -1258,15 +1287,33 @@ def fig5(D, out, **kw):
             ax.text(0.03, {"raw": 0.22, "pca": 0.14, "lds": 0.06}[rep], f"{SHORT[rep]} r = {r:.3f}",
                     transform=ax.transAxes, fontsize=5.3, color=EDGE[rep], va="top")
         ylo, yhi = min(ys_all), max(ys_all)
-        pad_y = 0.04 * (yhi - ylo + 1e-9)
-        ax.set_ylim(ylo - pad_y - 0.06 * (yhi - ylo + 1e-9), yhi + pad_y)
+        yspan = yhi - ylo + 1e-9
+        pad_y = 0.04 * yspan
+        # Extra bottom room for staggered animal letters
+        ax.set_ylim(ylo - pad_y - 0.14 * yspan, yhi + pad_y)
         ax.set_xlim(xx[0], xx[1])
-        # animal letters (A..) just below points, not overlapping axes label
-        y_lab = ax.get_ylim()[0] + 0.015 * (ax.get_ylim()[1] - ax.get_ylim()[0])
-        for s in cov[ok].index:
+        # animal letters (A..): stagger in y when coverage values cluster
+        y0 = ax.get_ylim()[0]
+        y1 = ax.get_ylim()[1]
+        base = y0 + 0.02 * (y1 - y0)
+        step = 0.045 * (y1 - y0)
+        xspan = float(xx[1] - xx[0]) + 1e-9
+        # sort by coverage; bump row when within 8% of x-span of previous
+        ordered = sorted(cov[ok].index, key=lambda s: float(cov[s]))
+        rows = {}
+        prev_x, row = None, 0
+        for s in ordered:
+            x = float(cov[s])
+            if prev_x is not None and abs(x - prev_x) < 0.08 * xspan:
+                row = (row + 1) % 3
+            else:
+                row = 0
+            rows[s] = row
+            prev_x = x
+        for s in ordered:
             letter = chr(ord("A") + int(s))
-            ax.text(cov[s], y_lab, letter, ha="center", va="bottom", fontsize=5.5,
-                    color=INK2, fontweight="bold", zorder=5)
+            ax.text(cov[s], base + rows[s] * step, letter, ha="center", va="bottom",
+                    fontsize=5.5, color=INK2, fontweight="bold", zorder=5)
         ax.set_xlabel("Test coverage\n(fraction of room bins)")
         ax.set_ylabel(f"Ridge, {'normalized error' if norm else 'cm'}")
     else:
