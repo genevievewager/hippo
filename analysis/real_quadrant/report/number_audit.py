@@ -76,6 +76,29 @@ def audit(data_dir: Path) -> list[str]:
     for rep in ("raw", "raw_smooth", "pca", "lds"):
         if rep not in n["mean_rn"] or not np.isfinite(n["mean_rn"][rep]):
             failures.append(f"missing ridge_norm mean for {rep}")
+
+    # Path-containment QC: record failures (do not fail the build for the
+    # frozen cohort — list them). Require the table to exist.
+    cont_path = data_dir / "data_path_containment.csv"
+    if not cont_path.is_file():
+        failures.append("missing data_path_containment.csv (path-in-polygon QC)")
+    else:
+        import pandas as pd
+        C = pd.read_csv(cont_path)
+        if "pass_qc" not in C.columns or "path_containment_frac" not in C.columns:
+            failures.append("data_path_containment.csv missing pass_qc / path_containment_frac")
+        else:
+            bad = C[~C.pass_qc.astype(bool)]
+            if len(bad):
+                print(
+                    "path containment QC failures (< "
+                    f"{float(C.path_containment_min.iloc[0]):.2f}): "
+                    + "; ".join(
+                        f"{r.session}={float(r.path_containment_frac):.3f}"
+                        for _, r in bad.iterrows()
+                    ),
+                    flush=True,
+                )
     return failures
 
 

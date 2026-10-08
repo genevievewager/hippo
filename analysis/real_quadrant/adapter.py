@@ -49,6 +49,10 @@ class ExtentError(RuntimeError):
     """Retained path extent is not comparable to the room boundary polygon."""
 
 
+class PathContainmentError(RuntimeError):
+    """Retained path is not inside the assigned room boundary polygon."""
+
+
 class RateMapStabilityError(RuntimeError):
     """Train split-half rate-map stability is below the load-time threshold."""
 
@@ -56,6 +60,10 @@ class RateMapStabilityError(RuntimeError):
 # Retained tracking bbox must be this fraction of the boundary width/height.
 EXTENT_FRAC_LO = 0.50
 EXTENT_FRAC_HI = 1.10
+
+# Fraction of retained path samples that must lie inside the assigned polygon.
+# Extent (width/height) alone cannot catch a wrong room shape / index.
+PATH_CONTAINMENT_MIN = 0.95
 
 # Load-time place-field sanity: on the training part of a segment, split-half
 # rate-map stability (8×8 bins, ≥40 samples/bin) must clear this fraction of
@@ -196,6 +204,36 @@ def load_units_and_spikes(
     return unit_ids, spike_times, units_df
 
 
+def _room_index(cfg: dict[str, Any], room: str) -> int:
+    """Map room label (e.g. ``A``) to ``boundary.Room`` integer index."""
+    mr = cfg["preprocessing"]["map_rooms"]
+    idx_map = {int(k): str(v) for k, v in (mr.get("index") or {}).items()}
+    for i, lab in idx_map.items():
+        if lab == room:
+            return int(i)
+    alt = room.upper() if room != room.upper() else room
+    for i, lab in idx_map.items():
+        if lab == alt:
+            return int(i)
+    raise KeyError(f"no boundary Room index for room={room!r}")
+
+
+def _room_polygon_global(cfg: dict[str, Any], room: str) -> np.ndarray:
+    """Closed (N, 2) boundary polygon in global cm (``postions_dataset`` frame)."""
+    room_idx = _room_index(cfg, room)
+    bdf = pd.DataFrame(cfg["preprocessing"]["boundary"])
+    sub = bdf[bdf["Room"].astype(int) == int(room_idx)]
+    if sub.empty:
+        raise KeyError(f"empty boundary for room={room!r}")
+    xy = np.column_stack([
+        sub["X"].to_numpy(dtype=float),
+        sub["Y"].to_numpy(dtype=float),
+    ])
+    if len(xy) and not np.allclose(xy[0], xy[-1]):
+        xy = np.vstack([xy, xy[0]])
+    return xy
+
+
 def _room_boundary(
     cfg: dict[str, Any], room: str,
 ) -> tuple[float, float, float, float, float, float]:
@@ -204,30 +242,9 @@ def _room_boundary(
     Boundary coordinates are centimetres in the same frame as
     ``postions_dataset.csv``.
     """
-    mr = cfg["preprocessing"]["map_rooms"]
-    idx_map = {int(k): str(v) for k, v in (mr.get("index") or {}).items()}
-    # Prefer matching Room index for this label; lowercase rooms share geometry
-    # with their uppercase counterpart when not in index.
-    room_idx = None
-    for i, lab in idx_map.items():
-        if lab == room:
-            room_idx = i
-            break
-    if room_idx is None:
-        # e.g. room 'a' → use 'A' polygon
-        alt = room.upper() if room != room.upper() else room
-        for i, lab in idx_map.items():
-            if lab == alt:
-                room_idx = i
-                break
-    if room_idx is None:
-        raise KeyError(f"no boundary Room index for room={room!r}")
-    bdf = pd.DataFrame(cfg["preprocessing"]["boundary"])
-    sub = bdf[bdf["Room"].astype(int) == int(room_idx)]
-    if sub.empty:
-        raise KeyError(f"empty boundary for room={room!r}")
-    xmin, xmax = float(sub["X"].min()), float(sub["X"].max())
-    ymin, ymax = float(sub["Y"].min()), float(sub["Y"].max())
+    xy = _room_polygon_global(cfg, room)
+    xmin, xmax = float(xy[:, 0].min()), float(xy[:, 0].max())
+    ymin, ymax = float(xy[:, 1].min()), float(xy[:, 1].max())
     return (
         0.5 * (xmin + xmax),
         0.5 * (ymin + ymax),
@@ -236,6 +253,52 @@ def _room_boundary(
         xmin,
         ymin,
     )
+
+
+def path_polygon_containment(
+    x: np.ndarray,
+    y: np.ndarray,
+    polygon_xy: np.ndarray,
+) -> float:
+    """Fraction of finite (x, y) samples strictly inside the closed polygon."""
+    from matplotlib.path import Path as MplPath
+
+    x = np.asarray(x, dtype=float).ravel()
+    y = np.asarray(y, dtype=float).ravel()
+    m = np.isfinite(x) & np.isfinite(y)
+    if not m.any():
+        return float("nan")
+    poly = np.asarray(polygon_xy, dtype=float)
+    if len(poly) < 3:
+        return float("nan")
+    return float(MplPath(poly).contains_points(np.column_stack([x[m], y[m]])).mean())
+
+
+def assert_path_inside_polygon(
+    x: np.ndarray,
+    y: np.ndarray,
+    polygon_xy: np.ndarray,
+    *,
+    min_frac: float = PATH_CONTAINMENT_MIN,
+) -> dict[str, float]:
+    """Require retained path samples to lie inside the assigned room polygon.
+
+    Complements the bbox extent check, which cannot catch a wrong shape or
+    room-index mapping.
+    """
+    frac = path_polygon_containment(x, y, polygon_xy)
+    stats = {
+        "path_containment_frac": float(frac),
+        "path_containment_min": float(min_frac),
+    }
+    if not np.isfinite(frac) or frac < float(min_frac):
+        raise PathContainmentError(
+            "retained path not inside assigned room polygon: "
+            f"containment={frac:.4f} (require >= {min_frac:.2f}). "
+            "Check map_rooms index -> label and that the room-A segment "
+            "matches the assigned boundary."
+        )
+    return stats
 
 
 def split_half_rate_map_stability(
@@ -553,6 +616,31 @@ def build_segment_bundle(
         _append_manifest(reason)
         raise
 
+    # Containment: path must lie inside the assigned polygon (shape-aware QC).
+    poly_global = _room_polygon_global(cfg, room)
+    try:
+        containment_stats = assert_path_inside_polygon(
+            y_global[retained & target_valid, 0],
+            y_global[retained & target_valid, 1],
+            poly_global,
+        )
+    except PathContainmentError as exc:
+        reason = {
+            "session": session_name,
+            "room": room,
+            "status": "excluded",
+            "reason": "path_containment",
+            "path_containment_frac": path_polygon_containment(
+                y_global[retained & target_valid, 0],
+                y_global[retained & target_valid, 1],
+                poly_global,
+            ),
+            "detail": str(exc),
+        }
+        _append_manifest(reason)
+        raise
+    extent_stats = {**extent_stats, **containment_stats}
+
     # Load-time place-field sanity on the training part of the retained segment.
     from realtime.quadrant_n5_run import causal_train_test_split
 
@@ -639,6 +727,7 @@ def build_segment_bundle(
         "valid_frac_retained": valid_frac,
         "integrity_match_fraction": match_frac,
         "cache_key": key,
+        "path_containment_frac": float(containment_stats["path_containment_frac"]),
         "ratemap_stability_frac_gt_thresh": frac_f,
         "ratemap_stability_flagged": bool(ratemap_flagged),
     })

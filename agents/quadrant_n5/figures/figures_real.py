@@ -156,7 +156,22 @@ def load_real(here):
         D["meta"] = json.load(open(p))
     p = os.path.join(here, "data_polygons.json")
     if os.path.isfile(p):
-        D["polygons"] = {int(k): np.asarray(v, float) for k, v in json.load(open(p)).items()}
+        raw = json.load(open(p))
+        # New schema: {by_session, by_animal, by_animal_session}; legacy: animal→poly
+        if isinstance(raw, dict) and "by_session" in raw:
+            D["polygons_by_session"] = {
+                str(k): np.asarray(v, float) for k, v in raw["by_session"].items()
+            }
+            D["polygons"] = {
+                int(k): np.asarray(v, float) for k, v in (raw.get("by_animal") or {}).items()
+            }
+            D["polygon_session_by_animal"] = {
+                int(k): str(v) for k, v in (raw.get("by_animal_session") or {}).items()
+            }
+        else:
+            D["polygons"] = {int(k): np.asarray(v, float) for k, v in raw.items()}
+            D["polygons_by_session"] = {}
+            D["polygon_session_by_animal"] = {}
     p = os.path.join(here, "data_rate_maps.json")
     if os.path.isfile(p):
         rm = json.load(open(p))
@@ -309,7 +324,27 @@ def _verdict(v, tol=0.03):
 
 
 # ---------------------------------------------------------------- geometry
-def _poly(D, s):
+def _poly_session(D, session):
+    """Room outline for one session (preferred; matches that session's path)."""
+    if session is None:
+        return None
+    P = D.get("polygons_by_session") or {}
+    p = P.get(str(session))
+    return None if p is None else np.asarray(p, float)
+
+
+def _poly(D, s, session=None):
+    """Room outline. Prefer ``session``; else animal-keyed fallback."""
+    if session is not None:
+        p = _poly_session(D, session)
+        if p is not None:
+            return p
+    # animal→matched session from tidy extract
+    ses_map = D.get("polygon_session_by_animal") or {}
+    if int(s) in ses_map:
+        p = _poly_session(D, ses_map[int(s)])
+        if p is not None:
+            return p
     P = D.get("polygons") or {}
     p = P.get(int(s))
     if p is None:
@@ -322,9 +357,14 @@ def _draw_poly(ax, poly, lw=0.7, color="#6e6c66"):
         ax.add_patch(MplPolygon(poly, closed=True, fill=False, ec=color, lw=lw, zorder=1))
 
 
-def _lims(D, seeds, pad=0.06, extra=None):
+def _lims(D, seeds, pad=0.06, extra=None, sessions=None):
     """Shared symmetric room-local limits from polygons (+ optional extra xy)."""
     ext = []
+    if sessions:
+        for ses in sessions:
+            p = _poly_session(D, ses)
+            if p is not None:
+                ext.append(np.abs(p).max())
     for s in seeds:
         p = _poly(D, s)
         if p is not None:
@@ -358,10 +398,37 @@ def _split_masks(b, trim_end_s=10.0):
 
 
 def _pick_session(D, s, meta):
+    """Session whose path+polygon are drawn for animal ``s``.
+
+    Prefer the tidy ``polygon_session_by_animal`` (example session when it
+    belongs to the animal; else first cohort session). Never use a bare
+    lexicographic sort that can disagree with the polygon source.
+    """
+    ses_map = D.get("polygon_session_by_animal") or {}
+    if int(s) in ses_map:
+        return ses_map[int(s)]
     B = D["B"]
-    ses = sorted(B[B.seed == s].session.unique()) if "session" in B.columns else [None]
+    ses = list(B[B.seed == s].session.unique()) if "session" in B.columns else [None]
     ex = meta.get("example_session_raw") or meta.get("example_session")
-    return ex if ex in ses else ses[0]
+    return ex if ex in ses else (ses[0] if ses else None)
+
+
+def _session_label(meta, session, seed=None):
+    """Compact panel label: animal letter/code · session code."""
+    codes = meta.get("session_codes") or {}
+    # anon: session already S#; named: map raw→S# if present as values
+    if session in (codes.values() if isinstance(codes, dict) else []):
+        sess_lab = str(session)
+    elif isinstance(codes, dict) and session in codes:
+        sess_lab = str(codes[session])
+    else:
+        # try reverse map raw→code
+        rev = {v: k for k, v in codes.items()} if isinstance(codes, dict) else {}
+        # named meta stores session_codes as raw→raw or raw→S#
+        sess_lab = str(codes.get(session, session)) if isinstance(codes, dict) else str(session)
+    if seed is not None:
+        return f"{_code(meta, seed)}\u00b7{sess_lab}"
+    return sess_lab
 
 
 def _coverage(D, s, meta, bin_cm=10.0):
@@ -377,11 +444,11 @@ def _coverage(D, s, meta, bin_cm=10.0):
             return float(np.nanmean(v))
     B = D["B"][D["B"].seed == s]
     vals = []
-    sessions = sorted(B.session.unique()) if "session" in B.columns else [None]
-    poly = _poly(D, s)
+    sessions = list(B.session.unique()) if "session" in B.columns else [None]
     te_end = float(meta.get("trim_end_s", 10.0))
     for ses in sessions:
         b = B if ses is None else B[B.session == ses]
+        poly = _poly(D, s, session=ses)
         tr, te = _split_masks(b, te_end)
         if not te.any():
             continue
@@ -597,36 +664,57 @@ def fig1(D, out, **kw):
                   rotation_mode="anchor")
     ax.set_ylabel("Units / session"); ax.set_xlabel("Animal")
 
-    # d -- per-animal path with room polygon
-    head_fig(fig, 0.435, 0.535, "d", "Test path (black) vs training path (grey), room polygon")
-    w, gapx, x0 = 0.080, 0.0125, 0.445
-    paths = {}
-    for s in seeds:
-        ses = _pick_session(D, s, meta)
+    # d -- one panel per cohort session (path + polygon from the SAME session)
+    head_fig(fig, 0.435, 0.535, "d", "Test path (black) vs training path (grey); one panel per session")
+    if "session" in B.columns:
+        units = []
+        for s in seeds:
+            for ses in B[B.seed == s].session.unique():
+                units.append((int(s), str(ses)))
+    else:
+        units = [(int(s), _pick_session(D, s, meta)) for s in seeds]
+    n_pan = max(len(units), 1)
+    gapx = 0.006
+    x0 = 0.445
+    span = 0.545
+    w = (span - (n_pan - 1) * gapx) / n_pan
+    allxy = []
+    panels = []
+    for s, ses in units:
         b = B[(B.seed == s) & ((B.session == ses) if "session" in B.columns else True)]
-        paths[s] = (b, ses)
-    allxy = np.vstack([p[0][["x_cm", "y_cm"]].values for p in paths.values()])
-    L = _lims(D, seeds, extra=allxy)
-    for j, s in enumerate(seeds):
+        if len(b):
+            allxy.append(b[["x_cm", "y_cm"]].values)
+        panels.append((s, ses, b))
+    L = _lims(D, seeds, extra=np.vstack(allxy) if allxy else None,
+              sessions=[ses for _, ses, _ in panels])
+    FS = D.get("FS")
+    for j, (s, ses, b) in enumerate(panels):
         ax = fig.add_axes([x0 + j * (w + gapx), 0.385, w, w * FW / FH])
-        b, ses = paths[s]
         tr, te = _split_masks(b, float(meta.get("trim_end_s", 10.0)))
-        _draw_poly(ax, _poly(D, s))
-        ax.plot(b.x_cm[tr], b.y_cm[tr], color="#d9d7d1", lw=0.35, zorder=2)
-        ax.plot(b.x_cm[te], b.y_cm[te], color=INK, lw=0.5, zorder=3)
+        _draw_poly(ax, _poly(D, s, session=ses))
+        if len(b):
+            ax.plot(b.x_cm[tr], b.y_cm[tr], color="#d9d7d1", lw=0.3, zorder=2)
+            ax.plot(b.x_cm[te], b.y_cm[te], color=INK, lw=0.45, zorder=3)
         ax.set_xlim(-L, L); ax.set_ylim(-L, L); ax.set_aspect("equal")
         _style_box(ax)
-        ax.set_xticks([-round(L, -1), 0, round(L, -1)] if L > 20 else [0])
-        ax.set_yticks(ax.get_xticks()); ax.tick_params(labelsize=5, pad=1.5)
-        if j:
-            ax.set_yticklabels([]); ax.set_xticklabels([])
-        else:
-            ax.set_ylabel("y (cm)", labelpad=-5); ax.set_xlabel("x (cm)", labelpad=-1)
-        cov = _coverage(D, s, meta)
-        ax.set_title(f"{_code(meta, s)}" + (f" | cov {cov:.2f}" if np.isfinite(cov) else ""),
-                     fontsize=5.8, pad=2.5)
-    _note(fig, x0, 0.340, "cov = fraction of the room polygon visited by the test path (10 cm bins). "
-          "Room-local cm; origin at room centre.", fs=5.2)
+        ax.set_xticks([]); ax.set_yticks([])
+        if j == 0:
+            ax.set_ylabel("y (cm)", labelpad=-2, fontsize=5.5)
+        cov = float("nan")
+        if FS is not None and "session" in FS.columns and "coverage" in FS.columns:
+            v = FS[FS.session == ses].coverage.values
+            if len(v) and np.isfinite(v).any():
+                cov = float(np.nanmean(v))
+        if not np.isfinite(cov):
+            cov = _coverage(D, s, meta)
+        title = _session_label(meta, ses, seed=s)
+        if np.isfinite(cov):
+            title += f"\n{cov:.2f}"
+        ax.set_title(title, fontsize=4.6, pad=1.0, linespacing=0.95)
+    _note(fig, x0, 0.340,
+          "Path and polygon from the same session (room-local cm; do not mix sessions). "
+          "Title = animal·session; cov = fraction of in-polygon 10 cm bins visited by the test path.",
+          fs=4.9)
 
     # e -- example train-only rate maps
     head_fig(fig, 0.0, 0.245, "e", "Example units: train-only rate maps")
@@ -642,7 +730,7 @@ def fig1(D, out, **kw):
             im = ax.imshow(rate, origin="lower", extent=ext, cmap="viridis", vmin=0,
                            vmax=float(rate.max()) if rate.count() else 1.0, interpolation="nearest")
             if r.get("seed") is not None:
-                _draw_poly(ax, _poly(D, r["seed"]), lw=0.5, color="white")
+                _draw_poly(ax, _poly(D, r["seed"], session=r.get("session")), lw=0.5, color="white")
             ax.set_xticks([]); ax.set_yticks([]); _style_box(ax, 0.4)
             ax.set_title(f"u{int(r.get('unit_id', j))} | SI {float(r.get('spat_info', np.nan)):.2f}\n"
                          f"peak {float(rate.max()) if rate.count() else 0:.1f} Hz",
@@ -1062,10 +1150,12 @@ def fig5(D, out, **kw):
     # a -- cost of causality
     ax = fig.add_axes([0.07, 0.20, 0.27, 0.64])
     head_fig(fig, 0.0, 0.92, "a", "Cost of causality: LDS / GPFA-c vs offline GPFA")
+    Xkb = _knn_best_wide(D, value="norm" if norm else "cm")
     layouts = {"Ridge": ("gpfa", "gpfa_causal", "lds"), "kNN": ("gpfa", "lds")}
     xoff = {"Ridge": 0.0, "kNN": 3.6}
     xt_pos, xt_lab = [], []
     allv = []
+    knn_lds_pos = None
     for dec, X in (("Ridge", Xr), ("kNN", Xk)):
         seq = [r for r in layouts[dec] if X[r].notna().any()]
         pos = {r: xoff[dec] + 0.9 * i for i, r in enumerate(seq)}
@@ -1076,14 +1166,28 @@ def fig5(D, out, **kw):
         for r in seq:
             v = X[r].dropna().values
             allv.extend(v.tolist())
-            ax.scatter(np.full(len(v), pos[r]), v, s=9, marker=MRK[r], facecolor=_mfc(r) if r != "gpfa_causal" else COL[r],
+            ax.scatter(np.full(len(v), pos[r]), v, s=9, marker=MRK[r],
+                       facecolor=_mfc(r) if r != "gpfa_causal" else COL[r],
                        edgecolor=EDGE[r], lw=0.55, zorder=3)
             ax.plot([pos[r] - 0.25, pos[r] + 0.25], [v.mean()] * 2, color=EDGE[r], lw=1.5, zorder=4)
             xt_pos.append(pos[r]); xt_lab.append(SHORT[r])
+        if dec == "kNN" and "lds" in pos:
+            knn_lds_pos = pos["lds"]
+            # open diamonds: LDS kNN at kNN-best d (descriptive, chosen on test)
+            if "lds" in Xkb.columns and Xkb["lds"].notna().any():
+                vkb = Xkb["lds"].dropna().values
+                allv.extend(vkb.tolist())
+                ax.scatter(np.full(len(vkb), pos["lds"]), vkb, s=12, marker="D",
+                           facecolor="white", edgecolor=EDGE["lds"], lw=0.7, zorder=5)
+                ax.plot([pos["lds"] - 0.3, pos["lds"] + 0.3], [vkb.mean()] * 2,
+                        color=EDGE["lds"], lw=1.0, ls=(0, (2, 1.5)), zorder=5)
         if "lds" in seq and "gpfa" in seq:
             dv = (X["lds"] - X["gpfa"]).dropna().values
-            ax.text(np.mean([pos[r] for r in seq]), 1.0, f"LDS - GPFA-off\n{dv.mean():+.3f}  ({int((dv > 0).sum())}/{len(dv)} higher)",
-                    transform=ax.get_xaxis_transform(), ha="center", va="bottom", fontsize=5.4, color=INK2, linespacing=1.2)
+            tag = "Ridge" if dec == "Ridge" else "kNN @ Ridge-sel d"
+            ax.text(np.mean([pos[r] for r in seq]), 1.0,
+                    f"LDS - GPFA-off ({tag})\n{dv.mean():+.3f}  ({int((dv > 0).sum())}/{len(dv)} higher)",
+                    transform=ax.get_xaxis_transform(), ha="center", va="bottom",
+                    fontsize=5.0, color=INK2, linespacing=1.15)
         ax.text(np.mean(list(pos.values())), 0.015, dec, transform=ax.get_xaxis_transform(), ha="center",
                 fontsize=6, color=INK2, fontweight="bold",
                 bbox=dict(fc="white", ec="none", alpha=0.85, pad=0.5))
@@ -1094,9 +1198,23 @@ def fig5(D, out, **kw):
         ax.axhline(1.0, color=MUTED, lw=0.6, ls=(0, (3, 2)))
     top = max(allv + [1.0 if norm else 0]) * 1.12
     ax.set_ylim(max(min(allv) - 0.1, 0), top)
+    note_bits = []
     if not Xk["gpfa_causal"].notna().any():
-        ax.text(5.4, top * 0.93 if not norm else 0.93, "GPFA-c: Ridge only (no kNN run)", fontsize=5.0, color=MUTED,
+        note_bits.append("GPFA-c: Ridge only (no kNN run)")
+    if knn_lds_pos is not None:
+        note_bits.append("open diamond = LDS kNN-best d (descriptive)")
+    if note_bits:
+        ax.text(5.4, top * 0.93 if not norm else min(0.93, top * 0.93),
+                "; ".join(note_bits), fontsize=4.8, color=MUTED,
                 ha="right", va="center", fontstyle="italic")
+    # clean comparison callout under Ridge group
+    dv_r = (Xr["lds"] - Xr["gpfa"]).dropna().values
+    if len(dv_r):
+        ax.text(1.0, -0.18,
+                f"Clean comparison: Ridge LDS - GPFA-off = {dv_r.mean():+.3f} "
+                f"({int((dv_r > 0).sum())}/{len(dv_r)}); kNN gap mixes d choice",
+                transform=ax.get_xaxis_transform(), ha="center", va="top",
+                fontsize=4.8, color=INK2)
 
     # b -- selected d (session level)
     ax = fig.add_axes([0.46, 0.20, 0.24, 0.64])
@@ -1298,8 +1416,8 @@ def fig7(D, out, **kw):
         return
     methods_knn = [m.replace("_smooth", "") for m in methods_ridge]
     methods = methods_ridge
-    poly = _poly(D, seed)
-    L = _lims(D, [seed], extra=W[["x_true", "y_true"]].values.ravel())
+    poly = _poly(D, seed, session=ses)
+    L = _lims(D, [seed], extra=W[["x_true", "y_true"]].values.ravel(), sessions=[ses] if ses else None)
     msk = (W.session == ses) if "session" in W.columns else (W.seed == seed)
     t0 = float(W[msk].t_s.min())
     wmap = 0.27 * 180.0
@@ -1563,7 +1681,7 @@ def figS3(D, out, **kw):
                 if len(sub):
                     t0 = float(sub.t_s.min())
                     sub = sub[sub.t_s < t0 + 60.0]
-                _draw_poly(ax, _poly(D, seed), lw=0.5)
+                _draw_poly(ax, _poly(D, seed, session=u if by_session else None), lw=0.5)
                 ax.plot(sub.x_true, sub.y_true, color=INK, lw=0.7, zorder=2)
                 ax.scatter(sub.x_pred, sub.y_pred, s=1.3, c=COL[m] if m != "raw_smooth" else "#7a7872", alpha=0.4,
                            linewidths=0, zorder=3, rasterized=True)
@@ -1649,7 +1767,7 @@ def figS4(D, out, **kw):
                 ax = _mm_axes(fig, H, 0.06 + ci * 0.22, 12 + ri * rowh, 0.18, 0.18 * 180)
                 im = ax.imshow(np.ma.masked_invalid(grids[(dec, m)]), origin="lower", extent=[-L, L, -L, L], cmap=cmap,
                                vmin=0, vmax=max(vmax, 1e-6), interpolation="nearest")
-                _draw_poly(ax, _poly(D, seed), lw=0.6, color="#c83a39")
+                _draw_poly(ax, _poly(D, seed, session=ses), lw=0.6, color="#c83a39")
                 ax.set_xlim(-L, L); ax.set_ylim(-L, L); ax.set_aspect("equal"); ax.set_xticks([]); ax.set_yticks([])
                 ax.set_title(f"{'Ridge' if dec == 'ridge' else 'kNN'} | {SHORT.get(m, m)}", fontsize=6,
                              color=EDGE.get(m, INK), pad=2)

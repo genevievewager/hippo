@@ -1,9 +1,8 @@
 # Real-data quadrant extension — design plan
 
-Status: **M3 done** (cohort + latent-d extension frozen); **M4** (Report 2,
-real-data-only RD1–RD7/RD9) is next. Seam, M1, and M2 are complete. Branch:
-`offline-decoding`. Sim-vs-real comparison moved out of M4 into the **Report 1
-revision** (default + matched sim).
+Status: **Report 2 COMPLETE** (2026-10-08). Seam, M1–M4 done. Branch:
+`offline-decoding`; tag `report2-v1`. Sim-vs-real comparison lives in the
+**Report 1 revision** (default + matched sim), not M4.
 
 Companion to the simulated `quadrant_n5` experiment (`agents/quadrant_n5/`,
 `realtime/quadrant_n5*.py`, `configs/quadrant_n5.yaml`).
@@ -519,11 +518,25 @@ M4 / Report 2 is render-only over these real-data artifacts. Sim-vs-real
 | **M1** | Adapter + `raw` on one room-A segment; figure data contract started | Done |
 | **M2** | All methods on that segment; smooth / lag / gpfa_causal | Done |
 | **M3** | Cohort (2/animal); contrasts; latent-d extension + plateau freeze | Done (grid frozen) |
-| **M4 / Report 2** | Offline real-data RD1–RD7 + RD9 (RD8 out of scope) | From saved artifacts only; ignored outputs; fixed example-selection rule |
+| **M4 / Report 2** | Offline real-data RD1–RD7 + RD9 (RD8 out of scope) | **COMPLETE** 2026-10-08 (tag `report2-v1`) |
 
 ---
 
-## 4. Stop
+## 4. Stop — Report 2 COMPLETE (2026-10-08)
 
-M3 analysis frozen after the plateau decision. Next: M4 / Report 2 render
-(real-data only). Sim extend-d outputs remain for the Report 1 revision.
+Report 2 (real-data-only RD1–RD7/RD9) is frozen and closed.
+
+| Field | Value |
+| -- | -- |
+| Date | 2026-10-08 |
+| Tag | `report2-v1` |
+| Git sha | `35b20f1831792731e7c36f98e19b834ffa2d16f7` |
+| Config sha256 | `0192b55b4ad30367f3a2b35ef272ae9da40ee3a352ed459141561612921676b5` |
+| Named PDF sha256 | `e2e3a0bf81a173e5ab5951d691492e5d6076a0d43c91787569ab7c3acc13d16f` |
+| Anon PDF sha256 | `1be0a7be8b29ca9850369c9a83bda1fdee09e624512cf4c61e2566b045415d0b` |
+| Named figure-set sha256 | `081e5d03a4b85f29943005c6a08c8313c77611880047f162b6e6b29d678efa7b` |
+| Anon figure-set sha256 | `e35682278158e531b95e182f02dd1eb4b271fe2afb39fc183d095a3712d96d96` |
+
+**Answer (aggregate, N = 6 animals; mean over animals of per-animal session medians; normalized error = median Euclidean / chance floor).** (1) Temporal integration helps: raw+EMA − raw = −0.088 (6/6). (2) Static compression does not beat the full population: PCA+EMA − raw+EMA = +0.050 (1/6). (3) DM does not beat PCA at matched grid20: dm+EMA − pca+EMA = +0.021 (1/6). (4) LDS+EMA − raw+EMA = −0.020 (3/6); causal GPFA − raw+EMA = +0.042 (0/6). (5) Readout: at the pre-registered Ridge-selected d, kNN − Ridge is slightly negative for every method (general gain, not LDS-specific as in Report 1); at each method’s kNN-best d (descriptive, chosen on test) the gain is larger (6/6 where defined). Primary contrasts stay at Ridge-selected d. EMA is Ridge-only; causal GPFA has no kNN run.
+
+Next: Report 1 revision (sim-vs-real normalized error and the readout gap). Sim extend-d outputs remain for that revision. Local artifact paths: gitignored `outputs/real_quadrant/HANDOFF.local.md`.

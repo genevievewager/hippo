@@ -3,17 +3,23 @@
 from analysis.real_quadrant.adapter import (
     ExtentError,
     IntegrityError,
+    PathContainmentError,
     assert_path_extent_matches_boundary,
+    assert_path_inside_polygon,
     build_segment_bundle,
     causal_count_matrix,
     centre_window_match_fraction,
+    path_polygon_containment,
 )
 
 __all__ = [
     "ExtentError",
     "IntegrityError",
+    "PathContainmentError",
     "assert_path_extent_matches_boundary",
+    "assert_path_inside_polygon",
     "build_segment_bundle",
     "causal_count_matrix",
     "centre_window_match_fraction",
+    "path_polygon_containment",
 ]

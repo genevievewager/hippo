@@ -190,6 +190,7 @@ def numbers(data_dir: str) -> dict:
             "per-session median (normalized error = median Euclidean error / "
             "chance floor)."
         ),
+        path_containment_failures=list(meta.get("path_containment_failures") or []),
     )
 
 
@@ -318,13 +319,21 @@ def story(n):
     plat = n["plateau"]
     pca_d = (plat.get("pca") or {}).get("improvement_40_to_80")
     lds_d = (plat.get("lds") or {}).get("improvement_40_to_80")
+    fails = n.get("path_containment_failures") or []
+    fail_vals = ", ".join(
+        f"{float(f['path_containment_frac']):.3f}" for f in fails
+    ) if fails else "none"
     P.append(Paragraph(
         f"Room A only (B and a deferred). No sorted-vs-GT, no realtime latency, no learning curves "
         f"(would need refits). Stability gate selects sessions with stable train maps. "
         f"Plateau stop: pca 40 to 80 Delta={_fmt_n(pca_d) if pca_d is not None else 'n/a'}, "
         f"lds Delta={_fmt_n(lds_d) if lds_d is not None else 'n/a'}. "
         f"N = {n['n_ani']} supports sign counts, not p-values. Nonlinear-dynamic cell still empty. "
-        f"EMA is Ridge-only. RD9 region subsets would need new fits.",
+        f"Two cohort sessions fail the path-containment QC ({fail_vals}; boundary polygons drawn "
+        f"smaller than the tracked path), which affects coverage, centre-pull and spatial maps "
+        f"for those sessions but not decoding error (floor = train-mean position). "
+        f"EMA is Ridge-only; causal GPFA has no kNN run and its latents were not saved. "
+        f"RD9 region subsets would need new fits.",
         BODY,
     ))
 
@@ -346,15 +355,23 @@ def legends(n):
     L = {}
     dm = n["contrasts"].get("dm_smooth - pca_smooth") or {}
     rs = n["contrasts"].get("raw_smooth - raw") or {}
+    fail = n.get("path_containment_failures") or (n.get("meta") or {}).get("path_containment_failures") or []
+    fail_txt = (
+        "; ".join(f"{f['session']}={float(f['path_containment_frac']):.3f}" for f in fail)
+        if fail else "none"
+    )
     L["Fig1_design"] = (
         "Figure 1 | Question, pipeline and recordings.",
         f"<b>a</b>, Representation quadrant plus controls (raw, raw+hist, raw+EMA). "
         f"Nonlinear-dynamic cell empty. <b>b</b>, Pipeline retargeted to recordings: spike times "
         f"to causal counts [t-250 ms, t) to representation to decoder (no simulator / GT). "
-        f"<b>c</b>, Units by region (pooled and per animal). <b>d</b>, Per-animal path with room "
-        f"polygon (grey = train, black = test); cov = fraction of in-polygon 10 cm bins visited "
-        f"by the test path. <b>e</b>, Train-only rate maps (min occupancy &gt;= 0.5 s, Gaussian "
-        f"smooth, Hz); units by train spatial information among split-half-stable units. "
+        f"<b>c</b>, Units by region (pooled and per animal). <b>d</b>, One panel per cohort "
+        f"session (animal·session); grey = train, black = test; room polygon from the same "
+        f"session (room-local cm; do not mix sessions). cov = fraction of in-polygon 10 cm "
+        f"bins visited by the test path. Path-containment QC failures "
+        f"(&lt; 0.95 inside assigned polygon): {fail_txt}. "
+        f"<b>e</b>, Train-only rate maps (min occupancy &gt;= 0.5 s, Gaussian smooth, Hz); "
+        f"units by train spatial information among split-half-stable units. "
         f"N = {n['n_ani']} animals, {n['n_sess']} sessions. Example session by fixed rule in meta.",
     )
     L["Fig2_validity"] = (
@@ -404,14 +421,21 @@ def legends(n):
     plat = n.get("plateau") or {}
     pca_plat = (plat.get("pca") or {}).get("improvement_40_to_80")
     lds_plat = (plat.get("lds") or {}).get("improvement_40_to_80")
+    knn_lds_gpfa = float("nan")
+    if np.isfinite(n["mean_kn"].get("lds", float("nan"))) and np.isfinite(n["mean_kn"].get("gpfa", float("nan"))):
+        knn_lds_gpfa = n["mean_kn"]["lds"] - n["mean_kn"]["gpfa"]
     L["Fig5_deployability"] = (
         "Figure 5 | Causality cost, selected d, and coverage.",
-        f"<b>a</b>, Cost of causality: Ridge and kNN normalized error for offline GPFA, "
-        f"causal GPFA (Ridge only), and LDS; LDS - GPFA-off (Ridge) = "
-        f"{_fmt_n(lds_minus_gpfa)}. <b>b</b>, Selected latent d per session (dot size = count); "
-        f"shaded band = extended grid 40/80 (PCA, LDS). Plateau 40 to 80: PCA "
-        f"Delta={_fmt_n(pca_plat) if pca_plat is not None else 'n/a'}, LDS "
-        f"Delta={_fmt_n(lds_plat) if lds_plat is not None else 'n/a'}. "
+        f"<b>a</b>, Cost of causality: offline GPFA, causal GPFA (Ridge only), and LDS. "
+        f"The clean comparison is Ridge LDS - GPFA-off = {_fmt_n(lds_minus_gpfa)} "
+        f"(3/{n['n_ani']} higher). LDS kNN is scored at the Ridge-selected d (often d = 80, "
+        f"where kNN error rises; see S1 and Fig. 3b open diamonds) while GPFA is on d &lt;= 20, "
+        f"so the kNN gap ({_fmt_n(knn_lds_gpfa)}) mixes causality with d choice; open diamonds "
+        f"on LDS = kNN-best d (descriptive, chosen on test). GPFA-c has no kNN run. "
+        f"<b>b</b>, Selected latent d per session (dot size = count); shaded band = extended "
+        f"grid 40/80 (PCA, LDS). Plateau 40 to 80: PCA Delta="
+        f"{_fmt_n(pca_plat) if pca_plat is not None else 'n/a'}, LDS Delta="
+        f"{_fmt_n(lds_plat) if lds_plat is not None else 'n/a'}. "
         f"<b>c</b>, Ridge normalized error vs test-room coverage (fraction of in-polygon "
         f"10 cm bins visited by the test path); letters = animals. "
         f"{cov_bits}. Negative r: more room covered by the test path, lower error. "
@@ -471,7 +495,10 @@ def legends(n):
         f"<b>Columns</b>: PCA, DM, LDS, GPFA-off (offline GPFA; causal GPFA latents not in "
         f"the saved figure_contract). <b>Rows</b>: colour = room-local x or y (cm), one "
         f"colormap and named colorbar per row. First two latent dimensions; example session "
-        f"(fixed rule); eval samples. kNN-pressure panels dropped.",
+        f"(fixed rule); eval samples. Sign and rotation of latent axes are arbitrary, so "
+        f"mirrored or rotated clouds across methods are expected; these two dimensions show "
+        f"the largest shared (largely non-spatial) structure, not the dimensions the decoder "
+        f"relies on. kNN-pressure panels dropped.",
     )
     return L
 

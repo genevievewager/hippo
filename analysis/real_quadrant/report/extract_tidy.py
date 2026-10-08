@@ -76,6 +76,38 @@ def _room_polygon(session: str) -> np.ndarray:
     return _room_outline_local(session, "A")
 
 
+PATH_CONTAINMENT_MIN = 0.95
+
+
+def path_containment_qc(session: str, room: str = "A") -> dict[str, Any]:
+    """Fraction of retained room-A path samples inside the assigned polygon.
+
+    Uses saved ``arrays.npz`` (room-local) and the session's own outline.
+    Complements the bbox extent check (which cannot catch a wrong shape).
+    """
+    from matplotlib.path import Path as MplPath
+
+    a = _arrays(session)
+    y = np.asarray(a["y"], float)
+    retained = np.asarray(a["retained"], bool) if "retained" in a else np.ones(len(y), bool)
+    finite = retained & np.isfinite(y).all(axis=1)
+    pts = y[finite]
+    poly = _room_polygon(session)
+    if len(pts) == 0 or len(poly) < 3:
+        frac = float("nan")
+    else:
+        frac = float(MplPath(poly).contains_points(pts).mean())
+    return dict(
+        session=session,
+        room=room,
+        path_containment_frac=frac,
+        path_containment_min=PATH_CONTAINMENT_MIN,
+        pass_qc=bool(np.isfinite(frac) and frac >= PATH_CONTAINMENT_MIN),
+        n_path=int(finite.sum()),
+        n_poly_verts=int(len(poly) - 1),
+    )
+
+
 def test_room_coverage(session: str, *, bin_cm: float = 10.0) -> float:
     """Fraction of in-polygon ``bin_cm`` bins visited by the test path."""
     from matplotlib.path import Path as MplPath
@@ -768,12 +800,70 @@ def write_all(out_dir: Path, *, anon: bool = False) -> dict[str, Any]:
         "frac_over_budget", "a11_yhat_inf_cm", "phase3_vs_replay",
     ]).to_csv(out_dir / "data_replay.csv", index=False)
 
-    # Polygons (one per animal — use first session of that animal)
-    polygons = {}
+    # Polygons keyed by session (never mix path from one session with another
+    # session's outline — room-local origins differ). Also keep animal→session
+    # example-rule picks for single-animal panels via meta.
+    polygons: dict[str, Any] = {
+        "by_session": {}, "by_animal": {}, "by_animal_session": {},
+    }
+    for sel in cohort["selected_sessions"]:
+        sess = sel["session"]
+        key = sess_codes[sess] if anon else sess
+        polygons["by_session"][key] = _room_polygon(sess).tolist()
     for animal, ix in animal_ix.items():
-        sess = next(s["session"] for s in cohort["selected_sessions"] if s["animal"] == animal)
-        polygons[str(ix)] = _room_polygon(sess).tolist()
+        # Prefer example session when it belongs to this animal; else first
+        # cohort session for the animal (stable, not lexicographic sort).
+        sess_list = [
+            s["session"] for s in cohort["selected_sessions"] if s["animal"] == animal
+        ]
+        pick = ex_session if ex_session in sess_list else sess_list[0]
+        key = sess_codes[pick] if anon else pick
+        polygons["by_animal"][str(ix)] = polygons["by_session"][key]
+        polygons["by_animal_session"][str(ix)] = key
     (out_dir / "data_polygons.json").write_text(json.dumps(polygons) + "\n")
+
+    # Path-containment QC (shape-aware; extent check alone cannot catch this)
+    containment_rows = []
+    for sel in cohort["selected_sessions"]:
+        row = path_containment_qc(sel["session"], "A")
+        row["animal"] = codes[sel["animal"]] if anon else sel["animal"]
+        row["session"] = sess_codes[sel["session"]] if anon else sel["session"]
+        containment_rows.append(row)
+    pd.DataFrame(containment_rows).to_csv(
+        out_dir / "data_path_containment.csv", index=False,
+    )
+    containment_fail = [
+        {"session": r["session"], "animal": r["animal"],
+         "path_containment_frac": r["path_containment_frac"]}
+        for r in containment_rows if not r["pass_qc"]
+    ]
+    if containment_fail:
+        print(
+            "WARNING: path containment < "
+            f"{PATH_CONTAINMENT_MIN} for "
+            + "; ".join(
+                f"{f['session']}={f['path_containment_frac']:.3f}"
+                for f in containment_fail
+            ),
+            flush=True,
+        )
+    # Record per-session containment in the shared real-data manifest
+    try:
+        from analysis.real_quadrant.adapter import _append_manifest, PATH_CONTAINMENT_MIN as _PCM
+        for r in containment_rows:
+            _append_manifest({
+                "milestone": "report2",
+                "check": "path_containment",
+                "session": r["session"],
+                "animal": r["animal"],
+                "room": "A",
+                "path_containment_frac": r["path_containment_frac"],
+                "path_containment_min": _PCM,
+                "pass_qc": r["pass_qc"],
+                "status": "ok" if r["pass_qc"] else "path_containment_fail",
+            })
+    except Exception as exc:
+        print(f"WARNING: could not append path_containment to manifest: {exc}", flush=True)
 
     rate_maps, causal_df = build_rate_maps_and_causal(ex_session)
     if anon:
@@ -823,6 +913,12 @@ def write_all(out_dir: Path, *, anon: bool = False) -> dict[str, Any]:
         ema_ridge_only=True,
         note="EMA smoothing is Ridge-only; kNN contrasts omit *_smooth methods.",
         figure_set_label="report2_real",
+        path_containment_min=PATH_CONTAINMENT_MIN,
+        path_containment_failures=containment_fail,
+        fig1d_rule=(
+            "One panel per cohort session; path and room polygon from the same "
+            "session (room-local cm). Do not mix sessions within a panel."
+        ),
     )
     (out_dir / "data_meta.json").write_text(json.dumps(meta, indent=2) + "\n")
     return meta
