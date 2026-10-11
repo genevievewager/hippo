@@ -249,6 +249,7 @@ def run_methods_fault_tolerant(
     methods: tuple[str, ...],
     analyze_fn=analyze_source,
     log=None,
+    save_latent_cache: bool = False,
 ) -> tuple[list[str], dict[str, dict[str, Any]], dict[str, Any] | None]:
     """Run each method independently; failures are recorded and skipped.
 
@@ -280,6 +281,7 @@ def run_methods_fault_tolerant(
                 output_dir=out_dir,
                 method_keys=tuple(keys),
                 save_figure_contract=False,
+                save_latent_cache=bool(save_latent_cache),
             )
             rec = _load_method_rec(out_dir, method)
             if _is_failed_or_skipped(rec):
@@ -311,6 +313,7 @@ def run_methods_fault_tolerant(
             output_dir=out_dir,
             method_keys=tuple(succeeded),
             save_figure_contract=True,
+            save_latent_cache=bool(save_latent_cache),
         )
     return succeeded, failures, summary
 
@@ -570,12 +573,21 @@ def _score_gpfa_causal(
         return None
     try:
         model = GPFAModel.load(model_dir)
-        bundle = build_segment_bundle(
-            session, room="A", require_ratemap_stability=False,
-        )
     except Exception:
         return None
-    X_counts = np.asarray(bundle["X_counts"], dtype=float)
+    # Prefer figure-contract arrays (same unit set / features as the fit).
+    # Rebuilding the bundle can disagree under an HF Region allow-list.
+    X_counts = None
+    if arrays is not None and "X_counts" in getattr(arrays, "files", []):
+        X_counts = np.asarray(arrays["X_counts"], dtype=float)
+    if X_counts is None:
+        try:
+            bundle = build_segment_bundle(
+                session, room="A", require_ratemap_stability=False,
+            )
+            X_counts = np.asarray(bundle["X_counts"], dtype=float)
+        except Exception:
+            return None
     if len(X_counts) != len(times):
         return None
     X, _ = _sqrt_zscore_train(X_counts, train_ok)

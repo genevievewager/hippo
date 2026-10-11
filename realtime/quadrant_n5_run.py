@@ -511,7 +511,16 @@ def _inner_cv_select(
     methods_seed: int,
     alphas: np.ndarray,
     ks: list[int],
-) -> tuple[int | None, float, int, dict[str, Any], list[dict[str, Any]]]:
+    *,
+    collect_fold_cache: bool = False,
+) -> tuple[
+    int | None,
+    float,
+    int,
+    dict[str, Any],
+    list[dict[str, Any]],
+    list[dict[str, Any]],
+]:
     """Refit the representation in every fold; choose d / ridge alpha / kNN k.
 
     Validation rows are transformed with the same operator as test (Nyström,
@@ -520,6 +529,11 @@ def _inner_cv_select(
     The fifth return is the per-d decoder-choice curve. It does not change
     the selected (d, alpha, k), which stay the Phase 3 joint-Ridge then k
     at the winning d.
+
+    The sixth return is an optional fold cache (full-session ``Z`` +
+    ``fit_mask`` per inner fold) when ``collect_fold_cache`` is True;
+    otherwise an empty list. Nested methods store one ``Z`` at
+    ``nested_fit_d`` per fold (slice for each d at reuse time).
     """
     split = cfg["split"]
     reducing = key not in ("raw", "raw_lag")
@@ -540,12 +554,22 @@ def _inner_cv_select(
     fold_latents: dict[int, list[tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]]] = {
         (dd if reducing else 0): [] for dd in (dims if reducing else [0])
     }
-    for tr, va in folds:
+    fold_cache: list[dict[str, Any]] = []
+    for fold_i, (tr, va) in enumerate(folds):
         fit_mask = np.zeros(len(train_ok), dtype=bool)
         fit_mask[idx_ok[tr]] = True
         for d_fit in d_fit_grid:
             model = _make_rep(key, int(d_fit), cfg, methods_seed, n_fit=int(fit_mask.sum()))
             Z = fit_transform_representation(key, model, X, fit_mask)
+            if collect_fold_cache and reducing:
+                # Nested: one Z at nested_fit_d per fold (slice columns for d).
+                # Non-nested: one Z per (fold, d) — each d is a separate fit.
+                fold_cache.append({
+                    "fold": int(fold_i),
+                    "d_fit": int(d_fit),
+                    "fit_mask": fit_mask.copy(),
+                    "Z": np.asarray(Z, dtype=np.float32),
+                })
             if nested and reducing:
                 for dd in dims:
                     fold_latents[dd].append(
@@ -627,7 +651,7 @@ def _inner_cv_select(
         "inner_cv_knn_median": best_k_med,
         "n_folds": len(folds),
         "refit_representation": True,
-    }, per_d
+    }, per_d, fold_cache
 
 
 def score_d_curve(
@@ -1084,12 +1108,16 @@ def analyze_source(
     output_dir: Path | None = None,
     method_keys: tuple[str, ...] | list[str] | None = None,
     save_figure_contract: bool = False,
+    save_latent_cache: bool = False,
 ) -> dict[str, Any]:
     """Run the frozen method grid on a sim directory or a prepared bundle.
 
     When ``bundle`` is provided, ``sim_dir`` may be ``None``. Segment edge
     trims (60 s / 10 s) apply only on the bundle path; the sim path is
     unchanged.
+
+    When ``save_latent_cache`` is True, write reusable fold + final latents
+    under ``output_dir/latent_cache/`` (see ``analysis.real_quadrant.latent_cache``).
     """
     if spike_source == "real":
         require_clean_git_for_real_data()
@@ -1242,9 +1270,9 @@ def analyze_source(
                 flush=True,
             )
             # Refit final latents/preds for the figure contract (no CV).
-            if need_contract_arrays:
+            if need_contract_arrays or save_latent_cache:
                 reducing = key not in ("raw", "raw_lag")
-                Z_all, _Z_fit, pred_r, pred_k, fit_s, transform_s = (
+                Z_all, Z_fit, pred_r, pred_k, fit_s, transform_s = (
                     _final_fit_predict(
                         key,
                         cached.get("primary_d"),
@@ -1260,13 +1288,28 @@ def analyze_source(
                 row["transform_s"] = transform_s
                 if reducing:
                     computed_reducing.add(key)
+                if save_latent_cache:
+                    from analysis.real_quadrant import latent_cache as _lcache
+                    nested = bool((cfg["representations"].get(key) or {}).get("nested"))
+                    _lcache.save_final_latent(
+                        _lcache.cache_root(out_dir), key,
+                        Z=Z_all,
+                        primary_d=cached.get("primary_d"),
+                        ridge_alpha=float(cached["ridge_alpha"]),
+                        Z_fit=Z_fit if nested else None,
+                        nested_fit_d=(
+                            int(cfg["nested_fit_d"]) if nested else None
+                        ),
+                        extra={"source": "resume_refit"},
+                    )
             continue
         print(f"  [{spike_source}] {key} …", flush=True)
         t_method = time.perf_counter()
         reducing = key not in ("raw", "raw_lag")
-        primary_d, alpha, knn_k, cv_info, per_d_cv = _inner_cv_select(
+        primary_d, alpha, knn_k, cv_info, per_d_cv, fold_cache = _inner_cv_select(
             key, X, y, train_ok, decode_times, cfg, methods_seed, alphas,
             list(dec["knn_k"]),
+            collect_fold_cache=bool(save_latent_cache),
         )
         Z_all, Z_fit, pred_r, pred_k, fit_s, transform_s = _final_fit_predict(
             key, primary_d, float(alpha), int(knn_k),
@@ -1278,6 +1321,26 @@ def analyze_source(
         pred_store[f"pred_{key}_knn"] = pred_k
         pred_source[key] = "phase3_in_memory"
         latents[key] = Z_all
+        if save_latent_cache:
+            from analysis.real_quadrant import latent_cache as _lcache
+            lc_root = _lcache.cache_root(out_dir)
+            nested = bool((cfg["representations"].get(key) or {}).get("nested"))
+            for entry in fold_cache:
+                _lcache.save_fold_latent(
+                    lc_root, key, int(entry["fold"]),
+                    Z=entry["Z"], fit_mask=entry["fit_mask"],
+                    d_fit=int(entry["d_fit"]),
+                )
+            _lcache.save_final_latent(
+                lc_root, key,
+                Z=Z_all,
+                primary_d=primary_d,
+                ridge_alpha=float(alpha),
+                Z_fit=Z_fit if nested else None,
+                nested_fit_d=(
+                    int(cfg["nested_fit_d"]) if nested else None
+                ),
+            )
         ridge_stats = _euclid(pred_r, yte)
         knn_stats = _euclid(pred_k, yte)
         a13 = _a13_null(
@@ -1478,6 +1541,28 @@ def analyze_source(
             pred_store,
             method_source=pred_source,
         )
+    if save_latent_cache:
+        from analysis.real_quadrant import latent_cache as _lcache
+        lc_root = _lcache.cache_root(out_dir)
+        _lcache.write_meta(lc_root, {
+            "session": (load_meta.get("bundle_meta") or {}).get("session"),
+            "n_units": int(len(unit_ids)),
+            "n_times": int(len(decode_times)),
+            "latent_dims": list(cfg.get("latent_dims") or []),
+            "nested_fit_d": cfg.get("nested_fit_d"),
+            "methods": list(keys),
+            "config_sha256": cfg.get("config_sha256"),
+            "git_sha": _git_sha(),
+            "region_allowlist": (load_meta.get("bundle_meta") or {}).get(
+                "region_allowlist"
+            ),
+            "note": (
+                "final/ = train-fit session latents; folds/ = inner-CV fits "
+                "(target-free Z + fit_mask). Outer split is the single "
+                "causal train/test mask (no outer k-fold)."
+            ),
+        })
+
     if save_figure_contract or load_meta.get("source") == "bundle":
         # Only write contract when we actually computed predictions this run
         # (skip-only resumes leave pred_store empty).

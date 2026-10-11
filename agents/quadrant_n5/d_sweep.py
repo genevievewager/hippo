@@ -142,7 +142,7 @@ def sweep_method(
         raise RuntimeError("inner_cv_refit_representation must be true")
     alphas = ridge_alpha_grid(cfg)
     ks = list(cfg["decoders"]["knn_k"])
-    primary_d, _alpha, _knn_k, _cv, per_d_cv = _inner_cv_select(
+    primary_d, _alpha, _knn_k, _cv, per_d_cv, _fold_cache = _inner_cv_select(
         key, obs["X"], obs["y"], obs["train_ok"], obs["decode_times"],
         cfg, methods_seed, alphas, ks,
     )
