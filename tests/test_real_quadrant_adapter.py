@@ -10,12 +10,14 @@ import pytest
 import yaml
 
 from analysis.real_quadrant.adapter import (
+    HF_REGION_ALLOWLIST,
     ExtentError,
     IntegrityError,
     assert_path_extent_matches_boundary,
     build_segment_bundle,
     causal_count_matrix,
     centre_window_match_fraction,
+    load_units_and_spikes,
     window_count_matrix,
 )
 from realtime.quadrant_n5_run import (
@@ -75,6 +77,15 @@ def _write_synthetic_session(
         ds[f"Cell_{u + 1}"] = cell[:, u]
     # NON-SOMA unit present in dataset but must be dropped by BClabel filter.
     ds[f"Cell_{n_units + 1}"] = np.zeros(len(grid), dtype=int)
+    # GOOD non-HF units (VI/TEa/NC): kept by default (v1), dropped by HF allow-list.
+    n_non_hf = 5
+    non_hf_spikes: list[np.ndarray] = []
+    for k in range(n_non_hf):
+        st = np.sort(rng.uniform(t0 - 0.2, t1 + 0.2, size=int(rng.integers(40, 80))))
+        non_hf_spikes.append(st)
+        ds[f"Cell_{n_units + 2 + k}"] = window_count_matrix(
+            [st], grid, -0.125, 0.125,
+        )[:, 0]
     pd.DataFrame(ds).to_csv(dest / "dataset.csv", index=False)
     # postions_dataset.csv: true cm coordinates
     pos = pd.DataFrame({
@@ -104,6 +115,14 @@ def _write_synthetic_session(
         "BClabel": "NON-SOMA",
         "Region": "VI",
     })
+    for k, st in enumerate(non_hf_spikes):
+        rows.append({
+            "cell": n_units + 2 + k,
+            "timestamp": ",".join(f"{v:.9f}" for v in st),
+            "spike": int(st.size),
+            "BClabel": "GOOD",
+            "Region": ("VI", "TEa", "NC")[k % 3],
+        })
     pd.DataFrame(rows).to_csv(dest / "clusters_dataset.csv", index=False)
     cfg = {
         "preprocessing": {
@@ -223,6 +242,42 @@ def test_integrity_fails_on_corrupted_spikes(tmp_path):
             min_valid_frac=0.5,
             require_ratemap_stability=False,
         )
+
+
+def test_hf_region_allowlist_drops_non_hf_keeps_default_v1(tmp_path):
+    """Default loader keeps GOOD non-HF; HF allow-list drops them (v2)."""
+    sess = _write_synthetic_session(tmp_path / "synth_hf", n_units=40)
+    ids_all, _, df_all = load_units_and_spikes(sess)
+    ids_hf, _, df_hf = load_units_and_spikes(sess, regions=HF_REGION_ALLOWLIST)
+    assert len(ids_all) == 45  # 40 HF-region + 5 GOOD VI/TEa/NC; NON-SOMA dropped
+    assert len(ids_hf) == 40
+    assert set(df_all["region"]) >= {"MEC", "SUB", "VI", "TEa", "NC"}
+    assert set(df_hf["region"]) <= HF_REGION_ALLOWLIST
+    assert set(ids_hf).issubset(set(ids_all))
+    # Default build_segment_bundle still includes non-HF (v1 reproduction path).
+    bundle_default = build_segment_bundle(
+        sess.name,
+        room="A",
+        data_root=sess.parent,
+        cache_root=tmp_path / "cache_default",
+        min_units=30,
+        min_valid_frac=0.5,
+        require_ratemap_stability=False,
+    )
+    assert len(bundle_default["unit_ids"]) == 45
+    assert bundle_default["meta"]["region_allowlist"] is None
+    bundle_hf = build_segment_bundle(
+        sess.name,
+        room="A",
+        data_root=sess.parent,
+        cache_root=tmp_path / "cache_hf",
+        min_units=30,
+        min_valid_frac=0.5,
+        require_ratemap_stability=False,
+        regions=HF_REGION_ALLOWLIST,
+    )
+    assert len(bundle_hf["unit_ids"]) == 40
+    assert bundle_hf["meta"]["region_allowlist"] == sorted(HF_REGION_ALLOWLIST)
 
 
 def test_ratemap_stability_refuses_unstable_synthetic(tmp_path):

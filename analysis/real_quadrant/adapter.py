@@ -34,6 +34,10 @@ CENTRE_HALF = 0.125
 MIN_UNITS = 30
 MIN_VALID_FRAC = 0.7
 
+# Hippocampal-formation Region allow-list for Report 2 v2 (exact strings).
+# Default loader behaviour remains all non-NON-SOMA regions (v1).
+HF_REGION_ALLOWLIST: frozenset[str] = frozenset({"MEC", "SUB", "PARA", "LEC"})
+
 # Columns that must never be used as decoder features.
 FORBIDDEN_FEATURE_FILES = (
     "spike_rate_dataset.csv",
@@ -163,8 +167,18 @@ def _cache_key(payload: dict[str, Any]) -> str:
 
 def load_units_and_spikes(
     session_dir: Path,
+    *,
+    regions: frozenset[str] | set[str] | None = None,
 ) -> tuple[list[int], list[np.ndarray], pd.DataFrame]:
-    """Parse clusters with usecols only; drop BClabel NON-SOMA."""
+    """Parse clusters with usecols only; drop BClabel NON-SOMA.
+
+    Parameters
+    ----------
+    regions :
+        If ``None`` (default), keep all regions after the NON-SOMA drop (v1).
+        If a set of Region strings (e.g. ``HF_REGION_ALLOWLIST``), keep only
+        those exact labels. ``RegionConfidence`` is never consulted.
+    """
     clusters_path = session_dir / "clusters_dataset.csv"
     if not clusters_path.is_file():
         raise FileNotFoundError(clusters_path)
@@ -176,10 +190,11 @@ def load_units_and_spikes(
         raise ValueError("clusters_dataset.csv must have cell and timestamp")
     ds_hdr = pd.read_csv(session_dir / "dataset.csv", nrows=0)
     cell_cols = {c for c in ds_hdr.columns if c.startswith("Cell_")}
+    allow = frozenset(regions) if regions is not None else None
 
     unit_ids: list[int] = []
     spike_times: list[np.ndarray] = []
-    regions: list[str] = []
+    regions_out: list[str] = []
     labels: list[str] = []
     for chunk in pd.read_csv(clusters_path, usecols=usecols, chunksize=64):
         for _, row in chunk.iterrows():
@@ -189,15 +204,22 @@ def load_units_and_spikes(
             bcl = str(row["BClabel"]) if "BClabel" in row.index else "GOOD"
             if bcl == "NON-SOMA":
                 continue
+            reg = str(row["Region"]).strip() if "Region" in row.index else "unknown"
+            if allow is not None and reg not in allow:
+                continue
             unit_ids.append(cid)
             spike_times.append(_parse_spike_times(row["timestamp"]))
-            regions.append(str(row["Region"]) if "Region" in row.index else "unknown")
+            regions_out.append(reg)
             labels.append(bcl)
     if not unit_ids:
-        raise RuntimeError(f"no units after NON-SOMA filter in {session_dir.name}")
+        raise RuntimeError(
+            f"no units after NON-SOMA"
+            f"{' + Region allow-list' if allow is not None else ''}"
+            f" filter in {session_dir.name}"
+        )
     units_df = pd.DataFrame({
         "unit_id": unit_ids,
-        "region": regions,
+        "region": regions_out,
         "cell_type": labels,
         "BClabel": labels,
     })
@@ -439,6 +461,7 @@ def build_segment_bundle(
     min_valid_frac: float = MIN_VALID_FRAC,
     require_ratemap_stability: bool = True,
     min_ratemap_frac_above: float = RATEMAP_MIN_FRAC_ABOVE,
+    regions: frozenset[str] | set[str] | None = None,
 ) -> dict[str, Any]:
     """Build a prepared analyze_source bundle for one room segment.
 
@@ -446,6 +469,9 @@ def build_segment_bundle(
     Raises RuntimeError for pre-registered exclusions (logged to manifest).
     Raises RateMapStabilityError when train split-half rate-map stability is
     below ``min_ratemap_frac_above`` (logged + flagged; decode refused).
+
+    ``regions`` is forwarded to ``load_units_and_spikes`` (default ``None`` =
+    all non-NON-SOMA regions, reproducing v1).
     """
     root = Path(data_root) if data_root is not None else _require_data_root()
     session_dir = root / session_name
@@ -464,7 +490,9 @@ def build_segment_bundle(
     t0, t1 = [float(x) for x in rooms[room]["range"]]
     cx, cy, width, height, _xmin, _ymin = _room_boundary(cfg, room)
 
-    unit_ids, spike_times, units_df = load_units_and_spikes(session_dir)
+    unit_ids, spike_times, units_df = load_units_and_spikes(
+        session_dir, regions=regions,
+    )
     if len(unit_ids) < int(min_units):
         reason = {
             "session": session_name,
@@ -709,6 +737,9 @@ def build_segment_bundle(
             "update_dt": float(update_dt),
             "target_source": "postions_dataset.csv",
             "target_units": "cm",
+            "region_allowlist": (
+                sorted(regions) if regions is not None else None
+            ),
             "extent": extent_stats,
             "ratemap_stability": {
                 **ratemap,
