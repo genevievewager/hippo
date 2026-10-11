@@ -115,7 +115,19 @@ def _save_gpfa_causal_cache(
         model = GPFAModel.load(model_dir)
         arrays = np.load(contract / "arrays.npz")
         train_ok = np.asarray(arrays["train_ok"], dtype=bool)
-        X_counts = np.asarray(arrays["X_counts"], dtype=float)
+        if "X_counts" in arrays.files:
+            X_counts = np.asarray(arrays["X_counts"], dtype=float)
+        else:
+            bundle = build_segment_bundle(
+                session,
+                room="A",
+                data_root=Path(os.environ["HIPPO_DATA_ROOT"]),
+                regions=HF_REGION_ALLOWLIST,
+            )
+            X_counts = np.asarray(bundle["X_counts"], dtype=float)
+        C = getattr(model, "C", None)
+        if C is not None and int(np.asarray(C).shape[0]) != int(X_counts.shape[1]):
+            return
         X, _ = _sqrt_zscore_train(X_counts, train_ok)
         Z = model.transform(X, causal=True, reset=True)
         gpfa_rec = json.loads((out_dir / "gpfa.json").read_text())
