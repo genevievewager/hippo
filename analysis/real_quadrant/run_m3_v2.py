@@ -22,6 +22,10 @@ from analysis.real_quadrant.adapter import (
     HF_REGION_ALLOWLIST,
     build_segment_bundle,
 )
+from analysis.real_quadrant.hf_guard import (
+    assert_model_obs_eq_n_units,
+    assert_n_features_eq_n_units,
+)
 from analysis.real_quadrant import latent_cache as lcache
 from analysis.real_quadrant.run_m3 import (
     BLAS_THREADS,
@@ -111,44 +115,46 @@ def _save_gpfa_causal_cache(
     model_dir = OUTPUT_ROOT / "models" / f"seed_{seed_index}" / "real" / "gpfa"
     if not (model_dir / "gpfa_params.npz").is_file():
         return
-    try:
-        model = GPFAModel.load(model_dir)
-        arrays = np.load(contract / "arrays.npz")
-        train_ok = np.asarray(arrays["train_ok"], dtype=bool)
-        if "X_counts" in arrays.files:
-            X_counts = np.asarray(arrays["X_counts"], dtype=float)
-        else:
-            bundle = build_segment_bundle(
-                session,
-                room="A",
-                data_root=Path(os.environ["HIPPO_DATA_ROOT"]),
-                regions=HF_REGION_ALLOWLIST,
-            )
-            X_counts = np.asarray(bundle["X_counts"], dtype=float)
-        C = getattr(model, "C", None)
-        if C is not None and int(np.asarray(C).shape[0]) != int(X_counts.shape[1]):
-            return
-        X, _ = _sqrt_zscore_train(X_counts, train_ok)
-        Z = model.transform(X, causal=True, reset=True)
-        gpfa_rec = json.loads((out_dir / "gpfa.json").read_text())
-        primary_d = gpfa_rec.get("primary_d")
-        if primary_d is not None and Z.shape[1] > int(primary_d):
-            Z = Z[:, : int(primary_d)]
-        root = lcache.cache_root(out_dir)
-        lcache.save_final_latent(
-            root, "gpfa_causal",
-            Z=Z,
-            primary_d=primary_d,
-            ridge_alpha=float(gpfa_rec.get("ridge_alpha") or 0.0),
-            extra={"session": session, "source": "gpfa_causal_filter"},
+    model = GPFAModel.load(model_dir)
+    arrays = np.load(contract / "arrays.npz")
+    train_ok = np.asarray(arrays["train_ok"], dtype=bool)
+    summary = json.loads((out_dir / "source_summary.json").read_text())
+    n_units = int(summary["n_units"])
+    if "X_counts" in arrays.files:
+        X_counts = np.asarray(arrays["X_counts"], dtype=float)
+    else:
+        bundle = build_segment_bundle(
+            session,
+            room="A",
+            data_root=Path(os.environ["HIPPO_DATA_ROOT"]),
+            regions=HF_REGION_ALLOWLIST,
         )
-        # Also merge into figure_contract latents.npz for convenience.
-        lat_path = contract / "latents.npz"
-        payload = dict(np.load(lat_path)) if lat_path.is_file() else {}
-        payload["Z_gpfa_causal"] = np.asarray(Z, dtype=float)
-        np.savez_compressed(lat_path, **payload)
-    except Exception:
-        return
+        X_counts = np.asarray(bundle["X_counts"], dtype=float)
+    assert_n_features_eq_n_units(
+        X_counts, n_units, context="v2.gpfa_causal_cache.X_counts",
+    )
+    assert_model_obs_eq_n_units(
+        model, n_units, context="v2.gpfa_causal_cache.model",
+    )
+    X, _ = _sqrt_zscore_train(X_counts, train_ok)
+    Z = model.transform(X, causal=True, reset=True)
+    gpfa_rec = json.loads((out_dir / "gpfa.json").read_text())
+    primary_d = gpfa_rec.get("primary_d")
+    if primary_d is not None and Z.shape[1] > int(primary_d):
+        Z = Z[:, : int(primary_d)]
+    root = lcache.cache_root(out_dir)
+    lcache.save_final_latent(
+        root, "gpfa_causal",
+        Z=Z,
+        primary_d=primary_d,
+        ridge_alpha=float(gpfa_rec.get("ridge_alpha") or 0.0),
+        extra={"session": session, "source": "gpfa_causal_filter"},
+    )
+    # Also merge into figure_contract latents.npz for convenience.
+    lat_path = contract / "latents.npz"
+    payload = dict(np.load(lat_path)) if lat_path.is_file() else {}
+    payload["Z_gpfa_causal"] = np.asarray(Z, dtype=float)
+    np.savez_compressed(lat_path, **payload)
 
 
 def _run_one_session(job: dict[str, Any]) -> dict[str, Any]:
@@ -183,6 +189,10 @@ def _run_one_session(job: dict[str, Any]) -> dict[str, Any]:
             regions=HF_REGION_ALLOWLIST,
         )
         n_units = int(len(bundle["unit_ids"]))
+        assert_n_features_eq_n_units(
+            bundle["X_counts"], n_units,
+            context=f"v2.bundle[{session}].X_counts",
+        )
         cfg = dict(load_quadrant_n5_yaml())
         cfg["phase3"] = dict(cfg["phase3"], learning_curve_source="__skip__")
         cfg = _cap_cfg_for_units(cfg, n_units)

@@ -1146,6 +1146,16 @@ def analyze_source(
             cfg, sim_dir, spike_source, bundle=bundle,
         )
     )
+    # Feature-entry guard: every method (raw/raw_lag/PCA/DM/LDS/Isomap/GPFA),
+    # kNN, smoothing, A5/A13, and posthoc diagnostics share this X. Width must
+    # match the session unit set (HF allow-list when regions were filtered).
+    from analysis.real_quadrant.hf_guard import assert_n_features_eq_n_units
+
+    assert_n_features_eq_n_units(
+        X_counts,
+        len(unit_ids),
+        context=f"analyze_source[{spike_source}].X_counts",
+    )
     train_mask, test_mask = causal_train_test_split(
         decode_times, float(split["train_frac"]), gap_s=float(split["gap_s"]),
     )

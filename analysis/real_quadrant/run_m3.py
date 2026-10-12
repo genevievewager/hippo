@@ -481,24 +481,11 @@ def _apply_session_posthoc(
         and not gpfa_failed
         and not _is_failed_or_skipped(_load_method_rec(out_dir, "gpfa"))
     ):
-        try:
-            row = _score_gpfa_causal(
-                session, seed_index, arrays, times, y, train_ok, eval_mask,
-                floor_med, out_dir,
-            )
-        except Exception as exc:
-            row = None
-            write_method_skipped(
-                out_dir, "gpfa_causal",
-                reason=f"gpfa_causal scoring failed: {type(exc).__name__}: {exc}",
-            )
-            method_rows["gpfa_causal"] = {
-                "method": "gpfa_causal",
-                "status": "skipped",
-                "reason": f"{type(exc).__name__}: {exc}",
-                "normalized_error": None,
-                "causal": True,
-            }
+        # HF width mismatches raise (HFFeatureWidthError); do not skip.
+        row = _score_gpfa_causal(
+            session, seed_index, arrays, times, y, train_ok, eval_mask,
+            floor_med, out_dir,
+        )
         if row is not None:
             method_rows["gpfa_causal"] = {**row["row"], "status": "ok"}
             preds["pred_gpfa_causal_ridge"] = row["pred_eval"]
@@ -578,6 +565,11 @@ def _score_gpfa_causal(
     floor_med: float,
     out_dir: Path,
 ) -> dict[str, Any] | None:
+    from analysis.real_quadrant.hf_guard import (
+        assert_model_obs_eq_n_units,
+        assert_n_features_eq_n_units,
+    )
+
     try:
         from realtime.dynamic_latents.gpfa import GPFAModel
     except Exception:
@@ -592,22 +584,26 @@ def _score_gpfa_causal(
     # Prefer figure-contract arrays (same unit set / features as the fit).
     # Rebuilding the bundle must use the session region allow-list (HF-only
     # v2); the default all-region loader disagrees with the saved GPFA C.
+    summary: dict[str, Any] = {}
+    summary_path = out_dir / "source_summary.json"
+    if summary_path.is_file():
+        try:
+            summary = json.loads(summary_path.read_text())
+        except Exception:
+            summary = {}
+    n_units = int(summary.get("n_units") or 0)
+    regions = (
+        (summary.get("segment") or {})
+        .get("bundle_meta", {})
+        .get("region_allowlist")
+    )
+
     X_counts = None
     if arrays is not None and "X_counts" in getattr(arrays, "files", []):
         X_counts = np.asarray(arrays["X_counts"], dtype=float)
     if X_counts is None:
-        regions = None
-        summary_path = out_dir / "source_summary.json"
-        if summary_path.is_file():
-            try:
-                summary = json.loads(summary_path.read_text())
-                regions = (
-                    (summary.get("segment") or {})
-                    .get("bundle_meta", {})
-                    .get("region_allowlist")
-                )
-            except Exception:
-                regions = None
+        if not regions and n_units <= 0:
+            return None
         try:
             bundle = build_segment_bundle(
                 session,
@@ -616,22 +612,23 @@ def _score_gpfa_causal(
                 regions=(frozenset(regions) if regions else None),
             )
             X_counts = np.asarray(bundle["X_counts"], dtype=float)
+            if n_units <= 0:
+                n_units = int(len(bundle["unit_ids"]))
         except Exception:
             return None
+    if n_units <= 0:
+        n_units = int(X_counts.shape[1])
     if len(X_counts) != len(times):
         return None
-    n_obs = int(getattr(model, "n_neurons", X_counts.shape[1]) or X_counts.shape[1])
-    # GPFAModel may expose C with shape (n_obs, d)
-    C = getattr(model, "C", None)
-    if C is not None:
-        n_obs = int(np.asarray(C).shape[0])
-    if int(X_counts.shape[1]) != n_obs:
-        return None
-    try:
-        X, _ = _sqrt_zscore_train(X_counts, train_ok)
-        Z = model.transform(X, causal=True, reset=True)
-    except Exception:
-        return None
+    # RAISE on HF / model width mismatch (never skip).
+    assert_n_features_eq_n_units(
+        X_counts, n_units, context="gpfa_causal.X_counts",
+    )
+    assert_model_obs_eq_n_units(
+        model, n_units, context="gpfa_causal.model",
+    )
+    X, _ = _sqrt_zscore_train(X_counts, train_ok)
+    Z = model.transform(X, causal=True, reset=True)
     gpfa_rec = json.loads((out_dir / "gpfa.json").read_text())
     primary_d = gpfa_rec.get("primary_d")
     if primary_d is not None and Z.shape[1] > int(primary_d):
