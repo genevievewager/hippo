@@ -49,7 +49,14 @@ def test_all_region_features_vs_hf_model_raises():
 
 def test_model_obs_mismatch_raises():
     class _M:
-        C = np.zeros((269, 8))  # all-region obs dim
+        C_ = np.zeros((269, 8))  # all-region obs dim (sklearn-style trailing _)
 
     with pytest.raises(HFFeatureWidthError, match="model_n_obs=269 != n_units=256"):
         assert_model_obs_eq_n_units(_M(), 256, context="synthetic.model")
+
+
+def test_model_obs_reads_C_underscore():
+    class _M:
+        C_ = np.zeros((256, 8))
+
+    assert_model_obs_eq_n_units(_M(), 256, context="ok")

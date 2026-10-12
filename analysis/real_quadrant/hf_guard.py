@@ -34,6 +34,21 @@ def assert_n_features_eq_n_units(
         )
 
 
+def model_n_obs(model: object) -> int:
+    """Observation / feature width of a fitted latent model (GPFA uses ``C_``)."""
+    for attr in ("C_", "C", "emission_matrix"):
+        C = getattr(model, attr, None)
+        if C is not None:
+            return int(np.asarray(C).shape[0])
+    for attr in ("n_features_in_", "n_neurons", "n_obs"):
+        v = getattr(model, attr, None)
+        if v is not None:
+            return int(v)
+    raise HFFeatureWidthError(
+        f"cannot determine observation dim on {type(model).__name__}"
+    )
+
+
 def assert_model_obs_eq_n_units(
     model: object,
     n_units: int,
@@ -42,11 +57,7 @@ def assert_model_obs_eq_n_units(
 ) -> None:
     """Require a fitted GPFA/LDS-like model's observation dim == n_units."""
     n_units = int(n_units)
-    C = getattr(model, "C", None)
-    if C is not None:
-        n_obs = int(np.asarray(C).shape[0])
-    else:
-        n_obs = int(getattr(model, "n_neurons", -1))
+    n_obs = model_n_obs(model)
     if n_obs != n_units:
         raise HFFeatureWidthError(
             f"{context}: model_n_obs={n_obs} != n_units={n_units}"
