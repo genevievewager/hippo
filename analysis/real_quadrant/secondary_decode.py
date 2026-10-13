@@ -3,17 +3,20 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any, Callable, Sequence
 
 import numpy as np
 
 from analysis.real_quadrant import latent_cache as lcache
+from analysis.real_quadrant.posthoc_smooth import EMA_TAUS_S, causal_ema
 from analysis.real_quadrant.secondary_metrics import (
     a13_scalar_shifts,
     categorical_chance_normalized,
     fit_predict_knn_clf,
+    fit_predict_knn_clf_proba,
     fit_predict_knn_reg,
     fit_predict_logreg,
+    fit_predict_logreg_proba,
     fit_predict_ridge_scaled,
     normalized_circular_error,
     normalized_continuous_error,
@@ -23,6 +26,7 @@ from analysis.real_quadrant.secondary_targets import (
     derived_wall_from_xy,
     merge_rare_classes,
 )
+from realtime.quadrant_n5 import inner_cv_block_masks
 
 
 TargetKind = str  # continuous | circular | categorical
@@ -34,6 +38,182 @@ def _slice_Z(Z: np.ndarray, d: int | None) -> np.ndarray:
         return Z
     return Z[:, : int(d)]
 
+
+def _predict_all_ridge(
+    Z: np.ndarray, y: np.ndarray, train_mask: np.ndarray, alpha: float,
+) -> np.ndarray:
+    """Fit on ``train_mask``; predict every row (continuous / circular)."""
+    m = np.asarray(train_mask, dtype=bool)
+    y = np.asarray(y, dtype=float)
+    if y.ndim == 1:
+        m = m & np.isfinite(y)
+        pred = fit_predict_ridge_scaled(Z[m], y[m], Z, float(alpha))
+        return np.asarray(pred, dtype=float).ravel()
+    m = m & np.isfinite(y).all(1)
+    return np.asarray(
+        fit_predict_ridge_scaled(Z[m], y[m], Z, float(alpha)), dtype=float,
+    )
+
+
+def _predict_all_knn_reg(
+    Z: np.ndarray, y: np.ndarray, train_mask: np.ndarray, k: int,
+) -> np.ndarray:
+    m = np.asarray(train_mask, dtype=bool)
+    y = np.asarray(y, dtype=float)
+    if y.ndim == 1:
+        m = m & np.isfinite(y)
+        kk = min(int(k), int(m.sum()))
+        return np.asarray(
+            fit_predict_knn_reg(Z[m], y[m], Z, kk), dtype=float,
+        ).ravel()
+    m = m & np.isfinite(y).all(1)
+    kk = min(int(k), int(m.sum()))
+    return np.asarray(fit_predict_knn_reg(Z[m], y[m], Z, kk), dtype=float)
+
+
+def select_ema_tau_outputs(
+    pred_full: np.ndarray,
+    y: np.ndarray,
+    times: np.ndarray,
+    train_ok: np.ndarray,
+    *,
+    kind: TargetKind,
+    taus_s: Sequence[float] = EMA_TAUS_S,
+    n_blocks: int = 5,
+    gap_s: float = 1.0,
+    classes: np.ndarray | None = None,
+) -> tuple[float, float]:
+    """Choose causal EMA τ on training blocks only (never on test).
+
+    ``pred_full`` is the unsmoothed readout on the full timeline.
+    For categorical, ``pred_full`` is class probabilities ``(n, k)``.
+    """
+    times = np.asarray(times, dtype=float)
+    train_ok = np.asarray(train_ok, dtype=bool)
+    y = np.asarray(y, dtype=float)
+    if kind == "categorical":
+        train_ok = train_ok & np.isfinite(y)
+    elif y.ndim == 1:
+        train_ok = train_ok & np.isfinite(y)
+    else:
+        train_ok = train_ok & np.isfinite(y).all(1)
+    train_idx = np.where(train_ok)[0]
+    if train_idx.size < 10:
+        return float(taus_s[0]), float("inf")
+    times_tr = times[train_ok]
+    folds = inner_cv_block_masks(times_tr, n_blocks=int(n_blocks), gap_s=float(gap_s))
+    best_tau = float(taus_s[0])
+    best_med = float("inf")
+    for tau in taus_s:
+        fold_meds: list[float] = []
+        for tr_rel, va_rel in folds:
+            va_idx = train_idx[np.asarray(va_rel, dtype=bool)]
+            if va_idx.size == 0:
+                continue
+            # EMA over full timeline (causal); score only validation indices.
+            if kind == "categorical":
+                sm = causal_ema(pred_full, times, float(tau))
+                row = sm[va_idx]
+                row = np.clip(row, 0, None)
+                row = row / np.maximum(row.sum(axis=1, keepdims=True), 1e-12)
+                yhat = np.asarray(classes)[np.argmax(row, axis=1)]
+                yva = y[va_idx].astype(int)
+                ba = categorical_chance_normalized(yhat, yva)["balanced_accuracy"]
+                fold_meds.append(
+                    1.0 - float(ba) if np.isfinite(ba) else 1.0
+                )
+            else:
+                pred2 = pred_full if pred_full.ndim == 2 else pred_full.reshape(-1, 1)
+                sm = causal_ema(pred2, times, float(tau))
+                if kind == "circular":
+                    th = np.arctan2(y[va_idx, 0], y[va_idx, 1])
+                    thh = np.arctan2(sm[va_idx, 0], sm[va_idx, 1])
+                    d = (thh - th + np.pi) % (2 * np.pi) - np.pi
+                    fold_meds.append(float(np.median(np.abs(d))))
+                elif y.ndim == 1:
+                    fold_meds.append(
+                        float(np.median(np.abs(sm[va_idx, 0] - y[va_idx])))
+                    )
+                else:
+                    fold_meds.append(
+                        float(np.median(np.linalg.norm(sm[va_idx] - y[va_idx], axis=1)))
+                    )
+        if not fold_meds:
+            continue
+        med = float(np.median(fold_meds))
+        if med < best_med or (med == best_med and float(tau) < best_tau):
+            best_med = med
+            best_tau = float(tau)
+    return best_tau, best_med
+
+
+def apply_ema_selected(
+    pred_full: np.ndarray,
+    y: np.ndarray,
+    times: np.ndarray,
+    train_ok: np.ndarray,
+    eval_mask: np.ndarray,
+    *,
+    kind: TargetKind,
+    taus_s: Sequence[float] = EMA_TAUS_S,
+    classes: np.ndarray | None = None,
+) -> dict[str, Any]:
+    """Select τ on train CV; apply causal EMA; score eval (τ never from test)."""
+    tau, cv = select_ema_tau_outputs(
+        pred_full, y, times, train_ok, kind=kind, taus_s=taus_s, classes=classes,
+    )
+    if kind == "categorical":
+        sm = causal_ema(pred_full, times, tau)
+        row = np.clip(sm, 0, None)
+        row = row / np.maximum(row.sum(axis=1, keepdims=True), 1e-12)
+        yhat_full = np.asarray(classes)[np.argmax(row, axis=1)].astype(int)
+        mte = np.asarray(eval_mask, dtype=bool) & np.isfinite(y)
+        sc = categorical_chance_normalized(yhat_full[mte], y[mte].astype(int))
+        return {
+            "tau_s": float(tau),
+            "inner_cv_score": float(cv),
+            "scores": sc,
+            "pred_eval": yhat_full[mte],
+            "pred_full": yhat_full,
+        }
+    pred2 = pred_full if pred_full.ndim == 2 else pred_full.reshape(-1, 1)
+    sm = causal_ema(pred2, times, tau)
+    if kind == "circular":
+        mte = np.asarray(eval_mask, dtype=bool) & np.isfinite(y).all(1)
+        mtr = np.asarray(train_ok, dtype=bool) & np.isfinite(y).all(1)
+        sc = normalized_circular_error(sm[mte], y[mte], y[mtr])
+        return {
+            "tau_s": float(tau),
+            "inner_cv_score": float(cv),
+            "scores": sc,
+            "pred_eval": sm[mte],
+            "pred_full": sm,
+        }
+    if y.ndim == 1:
+        mte = np.asarray(eval_mask, dtype=bool) & np.isfinite(y)
+        mtr = np.asarray(train_ok, dtype=bool) & np.isfinite(y)
+        sc = normalized_continuous_error(
+            sm[mte, 0], y[mte], y[mtr], use_median_floor=True,
+        )
+        return {
+            "tau_s": float(tau),
+            "inner_cv_score": float(cv),
+            "scores": sc,
+            "pred_eval": sm[mte, 0],
+            "pred_full": sm[:, 0],
+        }
+    mte = np.asarray(eval_mask, dtype=bool) & np.isfinite(y).all(1)
+    mtr = np.asarray(train_ok, dtype=bool) & np.isfinite(y).all(1)
+    sc = normalized_continuous_error(
+        sm[mte], y[mte], y[mtr], use_median_floor=False,
+    )
+    return {
+        "tau_s": float(tau),
+        "inner_cv_score": float(cv),
+        "scores": sc,
+        "pred_eval": sm[mte],
+        "pred_full": sm,
+    }
 
 def select_hparams_from_fold_cache(
     cache_dir: Path,
@@ -202,10 +382,17 @@ def decode_target_from_cache(
     *,
     kind: TargetKind,
     hparams: dict[str, Any],
+    times: np.ndarray | None = None,
     shift_fracs: list[float] | None = None,
     pass_min: float = 0.0,
+    apply_ema: bool = True,
+    ema_taus_s: Sequence[float] = EMA_TAUS_S,
 ) -> dict[str, Any]:
-    """Final readout + A13-style null for one (method, target)."""
+    """Final readout + optional causal EMA + A13-style null for one target.
+
+    EMA τ is chosen by blocked inner CV on training indices only (never test).
+    Applied to continuous outputs, HD sin/cos, or class probabilities.
+    """
     final = lcache.load_final_latent(cache_dir, method)
     d = hparams.get("primary_d")
     Z = _slice_Z(final["Z"], d)
@@ -214,6 +401,10 @@ def decode_target_from_cache(
     y = np.asarray(y, dtype=float)
     train_ok = np.asarray(train_ok, dtype=bool)
     eval_mask = np.asarray(eval_mask, dtype=bool)
+    if times is None:
+        times = np.arange(len(Z), dtype=float) * 0.05
+    else:
+        times = np.asarray(times, dtype=float)
 
     if kind == "categorical":
         mtr = train_ok & np.isfinite(y)
@@ -233,6 +424,19 @@ def decode_target_from_cache(
             "pred_knn": pred_k,
             "eval_index": np.where(mte)[0],
         }
+        if apply_ema:
+            proba_r, classes_r = fit_predict_logreg_proba(Z[mtr], y[mtr], Z)
+            proba_k, classes_k = fit_predict_knn_clf_proba(
+                Z[mtr], y[mtr], Z, min(k, int(mtr.sum())),
+            )
+            out["ridge_ema"] = apply_ema_selected(
+                proba_r, y, times, train_ok, eval_mask,
+                kind="categorical", taus_s=ema_taus_s, classes=classes_r,
+            )
+            out["knn_ema"] = apply_ema_selected(
+                proba_k, y, times, train_ok, eval_mask,
+                kind="categorical", taus_s=ema_taus_s, classes=classes_k,
+            )
     elif kind == "circular":
         mtr = train_ok & np.isfinite(y).all(1)
         mte = eval_mask & np.isfinite(y).all(1)
@@ -251,6 +455,17 @@ def decode_target_from_cache(
             "pred_knn": pred_k,
             "eval_index": np.where(mte)[0],
         }
+        if apply_ema:
+            full_r = _predict_all_ridge(Z, y, train_ok, alpha)
+            full_k = _predict_all_knn_reg(Z, y, train_ok, k)
+            out["ridge_ema"] = apply_ema_selected(
+                full_r, y, times, train_ok, eval_mask,
+                kind="circular", taus_s=ema_taus_s,
+            )
+            out["knn_ema"] = apply_ema_selected(
+                full_k, y, times, train_ok, eval_mask,
+                kind="circular", taus_s=ema_taus_s,
+            )
     else:
         if y.ndim == 1:
             mtr = train_ok & np.isfinite(y)
@@ -279,6 +494,17 @@ def decode_target_from_cache(
             "pred_knn": pred_k,
             "eval_index": np.where(mte)[0],
         }
+        if apply_ema:
+            full_r = _predict_all_ridge(Z, y, train_ok, alpha)
+            full_k = _predict_all_knn_reg(Z, y, train_ok, k)
+            out["ridge_ema"] = apply_ema_selected(
+                full_r, y, times, train_ok, eval_mask,
+                kind="continuous", taus_s=ema_taus_s,
+            )
+            out["knn_ema"] = apply_ema_selected(
+                full_k, y, times, train_ok, eval_mask,
+                kind="continuous", taus_s=ema_taus_s,
+            )
 
     if shift_fracs:
         out["a13"] = a13_scalar_shifts(
@@ -286,10 +512,9 @@ def decode_target_from_cache(
             alpha=alpha, k=k, shift_fracs=shift_fracs,
             kind=kind, pass_min=pass_min,
         )
-    # A5 for secondary: causal latents reused; readout is feed-forward
     out["a5"] = {
         "status": "PASS",
-        "note": "latents reused from causal Phase A cache; readout feed-forward",
+        "note": "latents reused from causal Phase A cache; readout feed-forward; EMA causal",
     }
     return out
 

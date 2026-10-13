@@ -1,9 +1,10 @@
 """Phase B: secondary-target decode on cached Phase A latents (Report 2 v2).
 
-Reads ``outputs/real_quadrant/m3_v2/room_A/<session>/latent_cache/`` and
-``figure_contract/arrays.npz``. Never writes under ``hippo-dq/`` or v1 ``m3/``.
+Reads Phase A latents **read-only** from the hippo-r2v2 m3_v2 tree and writes
+results under ``m3_v2/phaseB/<session>/`` only. Never writes into
+``room_A/``, ``hippo-dq/``, or v1 ``m3/``.
 
-Do not launch until Phase A finishes and this module has been reviewed.
+Do not launch until extend-d finishes and this module has been reviewed.
 """
 
 from __future__ import annotations
@@ -24,10 +25,7 @@ from analysis.real_quadrant.adapter import (
     _room_polygon_global,
 )
 from analysis.real_quadrant import latent_cache as lcache
-from analysis.real_quadrant.run_m3_v2 import (
-    OUT_ROOT,
-    load_v2_cohort,
-)
+from analysis.real_quadrant.posthoc_smooth import EMA_TAUS_S
 from analysis.real_quadrant.secondary_decode import (
     beyond_position_control,
     beyond_speed_control,
@@ -39,16 +37,63 @@ from analysis.real_quadrant.secondary_targets import build_secondary_target_tabl
 from realtime.quadrant_n5 import load_quadrant_n5_yaml
 from realtime.quadrant_n5_run import _git_sha, require_clean_git_for_real_data
 
-REPO_ROOT = Path(__file__).resolve().parents[2]
-PHASE_B_DIRNAME = "phaseB"
+# Code may live in a worktree; Phase A artifacts stay under hippo-r2v2.
+PHASE_A_ROOT = Path(
+    os.environ.get(
+        "HIPPO_R2V2_M3_ROOT",
+        "/home/gmwager/projects/hippo-r2v2/outputs/real_quadrant/m3_v2",
+    )
+)
+PHASE0_COHORT = Path(
+    os.environ.get(
+        "HIPPO_R2V2_PHASE0",
+        "/home/gmwager/projects/hippo-r2v2/outputs/real_quadrant/phase0/phase0_result.json",
+    )
+)
+# Phase B writes here only (sibling of room_A, not inside it).
+PHASE_B_ROOT = PHASE_A_ROOT / "phaseB"
 
 
-def _session_out(session: str) -> Path:
-    return OUT_ROOT / "room_A" / session
+def _phase_a_session_dir(session: str, *, bridge: bool = False) -> Path:
+    if bridge:
+        return PHASE_A_ROOT / "bridge" / "room_A" / session
+    return PHASE_A_ROOT / "room_A" / session
 
 
 def _phase_b_out(session: str) -> Path:
-    return _session_out(session) / PHASE_B_DIRNAME
+    return PHASE_B_ROOT / session
+
+
+def _load_v2_cohort(*, include_bridge: bool = False) -> dict[str, Any]:
+    """Load cohort from Phase 0 JSON (absolute path; worktree-safe)."""
+    from analysis.real_quadrant.adapter import HF_REGION_ALLOWLIST as _HF
+
+    if not PHASE0_COHORT.is_file():
+        raise FileNotFoundError(f"missing {PHASE0_COHORT}")
+    raw = json.loads(PHASE0_COHORT.read_text())
+    selected = list(raw["hf_cohort"]["selected_sessions"])
+    if include_bridge:
+        have = {s["session"] for s in selected}
+        v1_only = set((raw.get("diff_v1_v2") or {}).get("v1_only") or [])
+        by_sess = {
+            b["session"]: b for b in (raw.get("bridge_v1_sessions") or [])
+        }
+        for sess in sorted(v1_only):
+            if sess in have:
+                continue
+            row = by_sess.get(sess) or {}
+            selected.append({
+                "animal": row.get("animal", sess.split("_", 1)[0]),
+                "session": sess,
+                "n_units": row.get("n_hf"),
+                "bridge": True,
+            })
+            have.add(sess)
+    return {
+        "rule": f"HF-only; regions={sorted(_HF)}",
+        "selected_sessions": selected,
+        "n_selected_sessions": len(selected),
+    }
 
 
 def _load_align_extras(session: str, decode_times: np.ndarray) -> dict[str, Any]:
@@ -58,11 +103,9 @@ def _load_align_extras(session: str, decode_times: np.ndarray) -> dict[str, Any]
         root / session / "postions_dataset.csv",
         usecols=["timestamp", "X", "Y", "V", "HD", "valid", "room"],
     )
-    # nearest-timestamp align (decode grid ⊂ positions timestamps in adapter)
     pos_t = pos["timestamp"].to_numpy(dtype=float)
     idx = np.searchsorted(pos_t, decode_times, side="left")
     idx = np.clip(idx, 0, len(pos_t) - 1)
-    # prefer exact / left neighbour if closer
     prev = np.clip(idx - 1, 0, len(pos_t) - 1)
     use_prev = np.abs(pos_t[prev] - decode_times) < np.abs(pos_t[idx] - decode_times)
     idx = np.where(use_prev, prev, idx)
@@ -88,23 +131,33 @@ def _polygon_local(session: str) -> np.ndarray:
     return out
 
 
+def _slim_ema(block: dict[str, Any] | None) -> dict[str, Any] | None:
+    if not block:
+        return None
+    return {
+        k: v for k, v in block.items()
+        if k not in ("pred_full", "pred_eval")
+    }
+
+
 def run_session_phase_b(
     session: str,
     *,
     methods: list[str] | None = None,
+    bridge: bool = False,
 ) -> dict[str, Any]:
-    out_dir = _session_out(session)
-    cache_dir = lcache.cache_root(out_dir)
-    contract = out_dir / "figure_contract"
+    phase_a_dir = _phase_a_session_dir(session, bridge=bridge)
+    cache_dir = lcache.cache_root(phase_a_dir)
+    contract = phase_a_dir / "figure_contract"
     arrays_path = contract / "arrays.npz"
     if not arrays_path.is_file():
         raise FileNotFoundError(f"missing {arrays_path}; run Phase A first")
     if not cache_dir.is_dir():
         raise FileNotFoundError(f"missing {cache_dir}; run Phase A with cache")
 
-    arrays = np.load(arrays_path)
+    # Read-only: load into memory; never open Phase A paths for write.
+    arrays = np.load(arrays_path)  # numpy memmap/read
     train_ok = np.asarray(arrays["train_ok"], dtype=bool)
-    # eval mask: prefer explicit; else ~train among finite y
     if "eval_mask" in arrays.files:
         eval_mask = np.asarray(arrays["eval_mask"], dtype=bool)
     elif "test_ok" in arrays.files:
@@ -148,15 +201,17 @@ def run_session_phase_b(
     shift_fracs = list(np.linspace(lo, hi, n_shifts))
     pass_min = float(a13cfg.get("pass_min_cm", 0.0))
 
-    # available methods = final latent files
     final_dir = cache_dir / "final"
-    available = sorted(p.stem for p in final_dir.glob("*.npz"))
+    available = sorted(
+        p.stem for p in final_dir.glob("*.npz") if not p.name.endswith(".meta.npz")
+    )
+    # drop .meta confusion — stems are method names
+    available = [m for m in available if not m.endswith(".meta")]
     if methods is None:
         methods = available
     else:
         methods = [m for m in methods if m in available]
 
-    # categorical prep
     wall_bin, wall_meta = prepare_categorical_target(
         targets["wall_distance_bin"], train_ok, eval_mask,
     )
@@ -171,27 +226,36 @@ def run_session_phase_b(
         ("head_direction", targets["head_direction_sincos"], "circular"),
         ("wall_distance_bin", wall_bin, "categorical"),
         ("movement_state", move_st, "categorical"),
-        ("pc_v", targets["pc_v"], "continuous"),  # sensitivity only
+        ("pc_v", targets["pc_v"], "continuous"),
     ]
 
     phase_b_dir = _phase_b_out(session)
     phase_b_dir.mkdir(parents=True, exist_ok=True)
-    # Dual provenance: Phase B code sha vs Phase A latent-cache sha.
+    if phase_b_dir.resolve() != (PHASE_B_ROOT / session).resolve():
+        raise RuntimeError(f"refusing unexpected Phase B path {phase_b_dir}")
+    if "room_A" in phase_b_dir.resolve().parts:
+        raise RuntimeError("Phase B must not write under room_A")
+
     phase_a_sha = (
         (meta or {}).get("git_sha")
-        or json.loads((out_dir / "source_summary.json").read_text()).get("git_sha")
+        or json.loads((phase_a_dir / "source_summary.json").read_text()).get("git_sha")
     )
     results: dict[str, Any] = {
         "session": session,
-        "git_sha": _git_sha(),  # Phase B code (this worktree HEAD)
+        "bridge": bool(bridge),
+        "git_sha": _git_sha(),
         "git_sha_phaseB": _git_sha(),
         "git_sha_phaseA_latents": phase_a_sha,
+        "phase_a_dir": str(phase_a_dir.resolve()),
+        "phase_b_dir": str(phase_b_dir.resolve()),
         "latent_cache_meta": {
             "git_sha": (meta or {}).get("git_sha"),
             "config_sha256": (meta or {}).get("config_sha256"),
             "n_units": (meta or {}).get("n_units"),
             "latent_dims": (meta or {}).get("latent_dims"),
+            "extend_d": (meta or {}).get("extend_d"),
         },
+        "ema_taus_s": list(EMA_TAUS_S),
         "hf_regions": sorted(HF_REGION_ALLOWLIST),
         "methods": methods,
         "class_merge": {
@@ -201,8 +265,6 @@ def run_session_phase_b(
         "by_method": {},
     }
 
-    # Need position predictions for beyond-position control — from primary
-    # session_report / predictions if present
     pred_xy_by_method: dict[str, np.ndarray] = {}
     pred_path = contract / "predictions.npz"
     if pred_path.is_file():
@@ -228,10 +290,8 @@ def run_session_phase_b(
                 method_out[tname] = {"skipped": True, "reason": move_meta}
                 continue
             if tname == "head_direction":
-                # tighten masks via HD valid
                 y_use = y_t.copy()
-                bad = ~targets["head_direction_valid"]
-                y_use[bad] = np.nan
+                y_use[~targets["head_direction_valid"]] = np.nan
             else:
                 y_use = y_t
 
@@ -249,14 +309,19 @@ def run_session_phase_b(
                 dec = decode_target_from_cache(
                     cache_dir, method, y_use, train_ok, eval_mask,
                     kind=kind, hparams=hp,
+                    times=decode_times,
                     shift_fracs=shift_fracs,
                     pass_min=pass_min,
+                    apply_ema=True,
+                    ema_taus_s=EMA_TAUS_S,
                 )
-                # strip large arrays from JSON dump
                 slim = {
                     k: v for k, v in dec.items()
                     if k not in ("pred_ridge", "pred_knn", "eval_index")
                 }
+                for ek in ("ridge_ema", "knn_ema"):
+                    if ek in slim:
+                        slim[ek] = _slim_ema(slim[ek])
                 if tname == "distance_to_wall" and method in pred_xy_by_method:
                     slim["beyond_position"] = beyond_position_control(
                         pred_xy_by_method[method],
@@ -265,11 +330,7 @@ def run_session_phase_b(
                         poly,
                         dec["eval_index"],
                     )
-                if tname == "movement_state" and "speed" in method_out:
-                    # use speed ridge preds if we kept them — re-decode light
-                    sp = method_out.get("speed", {})
                 if tname == "speed":
-                    # stash for beyond-speed after movement_state
                     method_out["_speed_pred_ridge"] = dec["pred_ridge"]
                     method_out["_speed_eval_index"] = dec["eval_index"]
                 if tname == "movement_state" and "_speed_pred_ridge" in method_out:
@@ -287,7 +348,6 @@ def run_session_phase_b(
                     "ok": False,
                     "error": f"{type(exc).__name__}: {exc}",
                 }
-        # drop stashed preds
         method_out.pop("_speed_pred_ridge", None)
         method_out.pop("_speed_eval_index", None)
         results["by_method"][method] = method_out
@@ -295,7 +355,6 @@ def run_session_phase_b(
     (phase_b_dir / "phaseB_results.json").write_text(
         json.dumps(results, indent=2, default=str) + "\n"
     )
-    # also save target arrays for QC (no neural data)
     np.savez_compressed(
         phase_b_dir / "secondary_targets.npz",
         distance_to_wall=targets["distance_to_wall"],
@@ -316,18 +375,27 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--session", type=str, default=None)
     parser.add_argument("--smoke", action="store_true",
                         help="First cohort session only.")
-    parser.add_argument("--bridge", action="store_true")
+    parser.add_argument("--bridge", action="store_true",
+                        help="Include v1-only bridge sessions.")
     parser.add_argument("--max-workers", type=int, default=1)
     args = parser.parse_args(argv)
 
     require_clean_git_for_real_data()
-    print(f"OUT_ROOT={OUT_ROOT.resolve()}", flush=True)
-    print(f"PHASE_B under {OUT_ROOT / 'room_A'}/<session>/{PHASE_B_DIRNAME}", flush=True)
+    PHASE_B_ROOT.mkdir(parents=True, exist_ok=True)
+    print(f"PHASE_A_ROOT={PHASE_A_ROOT.resolve()}", flush=True)
+    print(f"PHASE_B_ROOT={PHASE_B_ROOT.resolve()}", flush=True)
+    print(f"EMA_TAUS_S={list(EMA_TAUS_S)}", flush=True)
 
-    cohort = load_v2_cohort(include_bridge=bool(args.bridge))
+    cohort = _load_v2_cohort(include_bridge=bool(args.bridge))
     selected = list(cohort["selected_sessions"])
     if args.session:
         selected = [s for s in selected if s["session"] == args.session]
+        if not selected:
+            selected = [{
+                "session": args.session,
+                "animal": args.session.split("_", 1)[0],
+                "bridge": False,
+            }]
     elif args.smoke:
         selected = selected[:1]
 
@@ -335,9 +403,10 @@ def main(argv: list[str] | None = None) -> int:
     results = []
     for sel in selected:
         session = sel["session"]
-        print(f"Phase B start {session}", flush=True)
+        bridge = bool(sel.get("bridge", False))
+        print(f"Phase B start {session} bridge={bridge}", flush=True)
         try:
-            rec = run_session_phase_b(session)
+            rec = run_session_phase_b(session, bridge=bridge)
             ok = True
             err = None
         except Exception as exc:
@@ -349,9 +418,16 @@ def main(argv: list[str] | None = None) -> int:
             f"PROGRESS phaseB session={session} ok={ok} wall_s={wall:.1f}",
             flush=True,
         )
-        results.append({"ok": ok, "session": session, "error": err})
+        results.append({
+            "ok": ok,
+            "session": session,
+            "bridge": bridge,
+            "error": err,
+            "git_sha_phaseB": _git_sha(),
+            "git_sha_phaseA_latents": (rec or {}).get("git_sha_phaseA_latents"),
+        })
 
-    out = OUT_ROOT / "phaseB_results.json"
+    out = PHASE_B_ROOT / "phaseB_results.json"
     out.write_text(json.dumps({"results": results}, indent=2) + "\n")
     n_ok = sum(1 for r in results if r["ok"])
     print(f"Phase B finished {n_ok}/{len(results)}", flush=True)

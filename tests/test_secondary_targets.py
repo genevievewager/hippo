@@ -107,6 +107,52 @@ def test_continuous_normalized_and_derived_wall():
     assert int(b[1]) == 0  # near wall (<10 cm)
 
 
+def test_causal_ema_reduces_error_tau_not_from_test(tmp_path):
+    """EMA on a smooth target lowers error; τ chosen on train blocks only."""
+    from analysis.real_quadrant.posthoc_smooth import EMA_TAUS_S, causal_ema
+    from analysis.real_quadrant.secondary_decode import (
+        apply_ema_selected,
+        select_ema_tau_outputs,
+    )
+
+    rng = np.random.default_rng(0)
+    n = 400
+    t = np.arange(n) * 0.05
+    # smooth latent target + noisy readout
+    true = np.sin(2 * np.pi * t / 4.0)
+    pred = true + rng.normal(0, 0.6, size=n)
+    train_ok = np.zeros(n, dtype=bool)
+    train_ok[:300] = True
+    eval_mask = ~train_ok
+
+    tau, _ = select_ema_tau_outputs(
+        pred, true, t, train_ok, kind="continuous", taus_s=EMA_TAUS_S,
+    )
+    assert tau in EMA_TAUS_S
+    # Sanity: selecting with eval as "train" must not be how we call it —
+    # verify train-only: zeroing test labels shouldn't change τ.
+    true_masked = true.copy()
+    true_masked[eval_mask] = np.nan
+    tau2, _ = select_ema_tau_outputs(
+        pred, true_masked, t, train_ok, kind="continuous", taus_s=EMA_TAUS_S,
+    )
+    assert tau2 == tau
+
+    raw_err = float(np.median(np.abs(pred[eval_mask] - true[eval_mask])))
+    out = apply_ema_selected(
+        pred, true, t, train_ok, eval_mask, kind="continuous", taus_s=EMA_TAUS_S,
+    )
+    ema_err = float(out["scores"]["median_error"])
+    assert ema_err < raw_err
+    # causal_ema itself is causal (depends only on past)
+    sm = causal_ema(pred.reshape(-1, 1), t, tau)[:, 0]
+    # perturb future test preds; past train EMA unchanged
+    pred2 = pred.copy()
+    pred2[eval_mask] = rng.normal(size=int(eval_mask.sum()))
+    sm2 = causal_ema(pred2.reshape(-1, 1), t, tau)[:, 0]
+    np.testing.assert_allclose(sm[train_ok], sm2[train_ok], atol=1e-12)
+
+
 def test_build_table_and_cache_decode_roundtrip(tmp_path):
     rng = np.random.default_rng(1)
     n, d = 300, 6
@@ -149,7 +195,9 @@ def test_build_table_and_cache_decode_roundtrip(tmp_path):
     assert hp["primary_d"] in (2, 3, 6)
     dec = decode_target_from_cache(
         root, "pca", table["speed"], train_ok, eval_mask,
-        kind="continuous", hparams=hp, shift_fracs=[0.3, 0.5],
+        kind="continuous", hparams=hp, times=t,
+        shift_fracs=[0.3, 0.5], apply_ema=True,
     )
     assert dec["a5"]["status"] == "PASS"
     assert np.isfinite(dec["ridge"]["normalized_error"])
+    assert "ridge_ema" in dec and dec["ridge_ema"]["tau_s"] in (0.1, 0.25, 0.5, 1.0, 2.0)

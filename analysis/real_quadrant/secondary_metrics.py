@@ -166,12 +166,39 @@ def fit_predict_logreg(
     return np.asarray(clf.predict(Zte_s), dtype=int)
 
 
+def fit_predict_logreg_proba(
+    Ztr: np.ndarray, ytr: np.ndarray, Zte: np.ndarray,
+) -> tuple[np.ndarray, np.ndarray]:
+    """Return ``(proba [n_te, n_classes], classes)``."""
+    scaler = StandardScaler()
+    Ztr_s = scaler.fit_transform(Ztr)
+    Zte_s = scaler.transform(Zte)
+    clf = LogisticRegression(
+        max_iter=500,
+        multi_class="multinomial",
+        solver="lbfgs",
+        random_state=0,
+    )
+    ytr_i = np.asarray(ytr).astype(int)
+    clf.fit(Ztr_s, ytr_i)
+    return np.asarray(clf.predict_proba(Zte_s), dtype=float), np.asarray(clf.classes_)
+
+
 def fit_predict_knn_clf(
     Ztr: np.ndarray, ytr: np.ndarray, Zte: np.ndarray, k: int,
 ) -> np.ndarray:
     clf = KNeighborsClassifier(n_neighbors=int(k), weights="uniform")
     clf.fit(Ztr, np.asarray(ytr).astype(int))
     return np.asarray(clf.predict(Zte), dtype=int)
+
+
+def fit_predict_knn_clf_proba(
+    Ztr: np.ndarray, ytr: np.ndarray, Zte: np.ndarray, k: int,
+) -> tuple[np.ndarray, np.ndarray]:
+    clf = KNeighborsClassifier(n_neighbors=int(k), weights="uniform")
+    ytr_i = np.asarray(ytr).astype(int)
+    clf.fit(Ztr, ytr_i)
+    return np.asarray(clf.predict_proba(Zte), dtype=float), np.asarray(clf.classes_)
 
 
 def a13_scalar_shifts(
