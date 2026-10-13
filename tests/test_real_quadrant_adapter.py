@@ -13,7 +13,9 @@ from analysis.real_quadrant.adapter import (
     HF_REGION_ALLOWLIST,
     ExtentError,
     IntegrityError,
+    PathContainmentError,
     assert_path_extent_matches_boundary,
+    assert_path_inside_polygon,
     build_segment_bundle,
     causal_count_matrix,
     centre_window_match_fraction,
@@ -37,6 +39,8 @@ def _write_synthetic_session(
     dt: float = 0.05,
     n_units: int = 40,
     path_scale: float = 1.0,
+    path_offset_x: float = 0.0,
+    path_offset_y: float = 0.0,
 ) -> Path:
     """Create a minimal session dir with centre-labeled Cell_* and spike lists.
 
@@ -59,8 +63,16 @@ def _write_synthetic_session(
         # Drop half the spikes from unit 0's list so integrity fails.
         spike_lists[0] = spike_lists[0][::2]
     # cm path covering ~90% of the 80×120 cm boundary (unless path_scale shrinks it).
-    x_cm = 40.0 + 36.0 * path_scale * np.sin(2 * np.pi * (grid - t0) / (session_s / 3))
-    y_cm = 60.0 + 54.0 * path_scale * np.cos(2 * np.pi * (grid - t0) / (session_s / 5))
+    x_cm = (
+        40.0
+        + 36.0 * path_scale * np.sin(2 * np.pi * (grid - t0) / (session_s / 3))
+        + float(path_offset_x)
+    )
+    y_cm = (
+        60.0
+        + 54.0 * path_scale * np.cos(2 * np.pi * (grid - t0) / (session_s / 5))
+        + float(path_offset_y)
+    )
     valid = np.ones(len(grid), dtype=bool)
     valid[::17] = False
     # dataset.csv: normalized X/Y (wrong for targets) + Cell_*
@@ -227,6 +239,60 @@ def test_extent_check_rejects_shrunken_path_in_adapter(tmp_path):
             min_units=30,
             min_valid_frac=0.5,
             require_ratemap_stability=False,
+        )
+
+
+def test_path_containment_report_only_by_default():
+    """Direct QC helper: raise_on_fail=False returns pass_qc=False."""
+    poly = np.array([[0.0, 0.0], [80.0, 0.0], [80.0, 120.0], [0.0, 120.0]])
+    # All points outside the polygon.
+    stats = assert_path_inside_polygon(
+        np.array([200.0, 210.0, 220.0]),
+        np.array([200.0, 210.0, 220.0]),
+        poly,
+        raise_on_fail=False,
+    )
+    assert stats["pass_qc"] is False
+    assert stats["path_containment_frac"] == pytest.approx(0.0)
+    with pytest.raises(PathContainmentError):
+        assert_path_inside_polygon(
+            np.array([200.0, 210.0]),
+            np.array([200.0, 210.0]),
+            poly,
+            raise_on_fail=True,
+        )
+
+
+def test_path_containment_flagged_not_excluded_in_bundle(tmp_path):
+    """V2_PLAN: failed containment is reported QC; bundle still builds."""
+    # Same bbox size as in-bounds path, shifted outside the room polygon.
+    sess = _write_synthetic_session(
+        tmp_path / "synth_outside", path_offset_x=200.0,
+    )
+    bundle = build_segment_bundle(
+        sess.name,
+        room="A",
+        data_root=sess.parent,
+        cache_root=tmp_path / "cache_report",
+        min_units=30,
+        min_valid_frac=0.5,
+        require_ratemap_stability=False,
+        require_path_containment=False,
+    )
+    assert bundle["meta"]["path_containment_pass_qc"] is False
+    assert bundle["meta"]["require_path_containment"] is False
+    assert float(bundle["meta"]["path_containment_frac"]) < 0.95
+    assert len(bundle["unit_ids"]) >= 30
+    with pytest.raises(PathContainmentError):
+        build_segment_bundle(
+            sess.name,
+            room="A",
+            data_root=sess.parent,
+            cache_root=tmp_path / "cache_hard",
+            min_units=30,
+            min_valid_frac=0.5,
+            require_ratemap_stability=False,
+            require_path_containment=True,
         )
 
 

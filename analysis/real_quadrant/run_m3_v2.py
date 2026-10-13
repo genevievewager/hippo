@@ -182,24 +182,39 @@ def _run_one_session(job: dict[str, Any]) -> dict[str, Any]:
             f"start v2 HF methods={methods} seed_index={seed_index} "
             f"regions={sorted(HF_REGION_ALLOWLIST)}"
         )
+        require_path_containment = bool(job.get("require_path_containment", False))
         bundle = build_segment_bundle(
             session,
             room="A",
             data_root=data_root,
             regions=HF_REGION_ALLOWLIST,
+            require_path_containment=require_path_containment,
         )
         n_units = int(len(bundle["unit_ids"]))
         assert_n_features_eq_n_units(
             bundle["X_counts"], n_units,
             context=f"v2.bundle[{session}].X_counts",
         )
+        meta = bundle.get("meta") or {}
+        cont_frac = meta.get("path_containment_frac")
+        cont_pass = meta.get("path_containment_pass_qc")
+        if cont_pass is False:
+            _log(
+                f"WARNING path_containment QC FAIL "
+                f"frac={cont_frac} "
+                f"require_path_containment={require_path_containment}; "
+                f"decoding flagged (report-only)"
+            )
         cfg = dict(load_quadrant_n5_yaml())
         cfg["phase3"] = dict(cfg["phase3"], learning_curve_source="__skip__")
         cfg = _cap_cfg_for_units(cfg, n_units)
         _log(
             f"n_HF={n_units} latent_dims={cfg['latent_dims']} "
             f"nested_fit_d={cfg['nested_fit_d']} "
-            f"(cap ⌊n/2⌋={n_units // 2})"
+            f"(cap ⌊n/2⌋={n_units // 2}) "
+            f"path_containment_frac={cont_frac} "
+            f"path_containment_pass_qc={cont_pass} "
+            f"require_path_containment={require_path_containment}"
         )
         streams = _streams(seed_index)
         # Patch module OUT_ROOT paths used by resume helpers via job out_dir.
@@ -261,6 +276,10 @@ def _run_one_session(job: dict[str, Any]) -> dict[str, Any]:
             "report_path": str(out_dir / "session_report.json") if report else None,
             "git_sha": _git_sha(),
             "hf_only": True,
+            "require_path_containment": require_path_containment,
+            "path_containment_frac": cont_frac,
+            "path_containment_pass_qc": cont_pass,
+            "path_containment_min": meta.get("path_containment_min"),
         }
     except Exception as exc:
         wall = time.perf_counter() - t0
@@ -276,6 +295,9 @@ def _run_one_session(job: dict[str, Any]) -> dict[str, Any]:
             "error": err,
             "git_sha": _git_sha(),
             "hf_only": True,
+            "require_path_containment": bool(
+                job.get("require_path_containment", False)
+            ),
         }
 
 
@@ -290,6 +312,14 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--max-workers", type=int, default=MAX_WORKERS)
     parser.add_argument("--aggregate-only", action="store_true")
     parser.add_argument("--worker-job", type=str, default=None)
+    parser.add_argument(
+        "--require-path-containment",
+        action="store_true",
+        help=(
+            "Hard-exclude sessions that fail path-in-polygon QC. "
+            "Default (V2_PLAN): report-only — decode and flag."
+        ),
+    )
     args = parser.parse_args(argv)
 
     # Ensure workers use this module's OUT_ROOT / _run_one_session.
@@ -349,6 +379,7 @@ def main(argv: list[str] | None = None) -> int:
             "posthoc": True,
             "include_gpfa_causal": True,
             "blas_threads": BLAS_THREADS,
+            "require_path_containment": bool(args.require_path_containment),
         })
 
     # Patch _launch_parallel worker module path to this file.

@@ -302,24 +302,34 @@ def assert_path_inside_polygon(
     polygon_xy: np.ndarray,
     *,
     min_frac: float = PATH_CONTAINMENT_MIN,
+    raise_on_fail: bool = True,
 ) -> dict[str, float]:
-    """Require retained path samples to lie inside the assigned room polygon.
+    """Path-in-polygon QC for the retained path vs the assigned room polygon.
 
     Complements the bbox extent check, which cannot catch a wrong shape or
     room-index mapping.
+
+    When ``raise_on_fail`` is False (Report 2 / V2_PLAN default at the bundle
+    entry), a failed check is returned as ``pass_qc=False`` instead of raising
+    so the session can still be decoded and flagged.
     """
     frac = path_polygon_containment(x, y, polygon_xy)
+    ok = bool(np.isfinite(frac) and frac >= float(min_frac))
     stats = {
         "path_containment_frac": float(frac),
         "path_containment_min": float(min_frac),
+        "pass_qc": ok,
     }
-    if not np.isfinite(frac) or frac < float(min_frac):
-        raise PathContainmentError(
+    if not ok:
+        msg = (
             "retained path not inside assigned room polygon: "
             f"containment={frac:.4f} (require >= {min_frac:.2f}). "
             "Check map_rooms index -> label and that the room-A segment "
             "matches the assigned boundary."
         )
+        if raise_on_fail:
+            raise PathContainmentError(msg)
+        stats["detail"] = msg
     return stats
 
 
@@ -462,6 +472,7 @@ def build_segment_bundle(
     require_ratemap_stability: bool = True,
     min_ratemap_frac_above: float = RATEMAP_MIN_FRAC_ABOVE,
     regions: frozenset[str] | set[str] | None = None,
+    require_path_containment: bool = False,
 ) -> dict[str, Any]:
     """Build a prepared analyze_source bundle for one room segment.
 
@@ -469,6 +480,10 @@ def build_segment_bundle(
     Raises RuntimeError for pre-registered exclusions (logged to manifest).
     Raises RateMapStabilityError when train split-half rate-map stability is
     below ``min_ratemap_frac_above`` (logged + flagged; decode refused).
+
+    Path containment is a **reported QC** by default (``require_path_containment=
+    False``, matching V2_PLAN / v1 report extract): failed sessions are decoded
+    and flagged. Set ``True`` to restore hard exclusion.
 
     ``regions`` is forwarded to ``load_units_and_spikes`` (default ``None`` =
     all non-NON-SOMA regions, reproducing v1).
@@ -644,29 +659,41 @@ def build_segment_bundle(
         _append_manifest(reason)
         raise
 
-    # Containment: path must lie inside the assigned polygon (shape-aware QC).
+    # Containment: shape-aware QC vs assigned polygon (report-only by default).
     poly_global = _room_polygon_global(cfg, room)
-    try:
-        containment_stats = assert_path_inside_polygon(
-            y_global[retained & target_valid, 0],
-            y_global[retained & target_valid, 1],
-            poly_global,
-        )
-    except PathContainmentError as exc:
+    containment_stats = assert_path_inside_polygon(
+        y_global[retained & target_valid, 0],
+        y_global[retained & target_valid, 1],
+        poly_global,
+        raise_on_fail=bool(require_path_containment),
+    )
+    if not containment_stats.get("pass_qc", True):
         reason = {
             "session": session_name,
             "room": room,
-            "status": "excluded",
-            "reason": "path_containment",
-            "path_containment_frac": path_polygon_containment(
-                y_global[retained & target_valid, 0],
-                y_global[retained & target_valid, 1],
-                poly_global,
+            "status": (
+                "excluded" if require_path_containment else "path_containment_flag"
             ),
-            "detail": str(exc),
+            "reason": "path_containment",
+            "path_containment_frac": float(
+                containment_stats["path_containment_frac"]
+            ),
+            "path_containment_min": float(
+                containment_stats["path_containment_min"]
+            ),
+            "pass_qc": False,
+            "detail": containment_stats.get("detail"),
         }
         _append_manifest(reason)
-        raise
+        print(
+            f"WARNING: path containment QC FAIL for {session_name} room={room}: "
+            f"frac={containment_stats['path_containment_frac']:.4f} "
+            f"(min={containment_stats['path_containment_min']:.2f}); "
+            f"{'EXCLUDING' if require_path_containment else 'decoding anyway (flagged)'}",
+            flush=True,
+        )
+        if require_path_containment:
+            raise PathContainmentError(str(containment_stats.get("detail") or reason))
     extent_stats = {**extent_stats, **containment_stats}
 
     # Load-time place-field sanity on the training part of the retained segment.
@@ -741,6 +768,16 @@ def build_segment_bundle(
                 sorted(regions) if regions is not None else None
             ),
             "extent": extent_stats,
+            "require_path_containment": bool(require_path_containment),
+            "path_containment_frac": float(
+                containment_stats["path_containment_frac"]
+            ),
+            "path_containment_min": float(
+                containment_stats["path_containment_min"]
+            ),
+            "path_containment_pass_qc": bool(
+                containment_stats.get("pass_qc", True)
+            ),
             "ratemap_stability": {
                 **ratemap,
                 "min_frac_above": float(min_ratemap_frac_above),
@@ -752,13 +789,19 @@ def build_segment_bundle(
     _append_manifest({
         "session": session_name,
         "room": room,
-        "status": "ok",
+        "status": (
+            "ok"
+            if containment_stats.get("pass_qc", True)
+            else "ok_path_containment_flag"
+        ),
         "n_units": len(unit_ids),
         "n_times": int(len(grid)),
         "valid_frac_retained": valid_frac,
         "integrity_match_fraction": match_frac,
         "cache_key": key,
+        "require_path_containment": bool(require_path_containment),
         "path_containment_frac": float(containment_stats["path_containment_frac"]),
+        "path_containment_pass_qc": bool(containment_stats.get("pass_qc", True)),
         "ratemap_stability_frac_gt_thresh": frac_f,
         "ratemap_stability_flagged": bool(ratemap_flagged),
     })
