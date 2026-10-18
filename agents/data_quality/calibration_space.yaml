@@ -1,0 +1,155 @@
+# Report 4 §6.1 — CHEAP calibration space (REVISED; do not run until approved)
+# ~6–10 continuous knobs (listed = 6 core). Dynamics switches fixed at default.
+# Bounds tagged guessed vs documented.
+
+version: 3
+status: draft_not_approved
+design: cheap_v1
+
+protocol:
+  thigmotaxis: fitted in matching on behaviour targets only, then held fixed
+  seed: nuisance; np.random.seed(seed) per replicate
+  dynamics_switches_fixed: true
+  apply_hippocampal_dynamics: default
+  apply_feedforward: default
+  feedforward.profile: default
+  shared_generation: >
+    Each θ → proxy sessions (300 s, ~50 units in each animal's MEC/SUB
+    proportions): 1 session × 6 animals = 6 sims per θ, shared across LOAO folds.
+    Fold k scores calibration animals only. Held-out animal only at validation
+    after calibration_log lock (C1).
+  bootstrap_grouping: recording_day (= animal_DDMMYYYY)
+  proxy_fidelity_gate: >
+    Score default θ with proxy sessions AND with full matched sessions; R must
+    agree within the bootstrap interval. If not, STOP AND SHOW.
+
+proxy:
+  duration_s: 300
+  n_units_total_approx: 50
+  n_sessions_per_theta: 6
+  note: one session per animal per θ; shared across folds
+
+budget:
+  morris:
+    r: 4
+    formula: "4 × (k + 1)"
+    k_continuous: 6
+    n_evals: 28
+  lhs:
+    formula: "≈ 10 × k_kept after Morris"
+    k_kept_assumed_for_cost: 6
+    n_evals_assumed: 60
+  gp:
+    n_theta_per_fold: 15
+    n_folds: 6
+    n_evals: 90
+  validation:
+    formula: "locked θ × up to 3 eligible full-size sessions per held-out animal"
+    n_sessions_cap_per_animal: 3
+    n_evals_assumed: 18
+  hard_cap_wall_h: 3.0
+  note: >
+    If timed proxy projection at current n_jobs exceeds 3 h, STOP AND SHOW.
+    Do not run calibration until approved.
+
+cost_at_n_jobs:
+  n_jobs: 48
+  proxy_gen_wall_s: 15.043
+  n_proxy_gens: 1068
+  projected_proxy_wall_h: 0.093
+  projected_validation_wall_h: 0.119
+  projected_total_wall_h: 0.212
+  hard_cap_h: 3.0
+  under_cap: true
+  timed_utc: "2026-10-07"
+  status: draft_not_approved_do_not_run
+
+
+fixed:
+  - name: session_duration_s
+    default: 300.0
+    role: proxy
+  - name: arena_size_cm
+    role: matched_condition
+  - name: cell_capture.unit_density_per_mm
+    role: matched_condition
+    controls: ~50 units total in animal MEC/SUB proportions
+  - name: ratinabox_params.n_*
+    role: matched_condition
+  - name: thigmotaxis
+    default: 0.8
+    role: matched_then_fixed
+  - name: apply_hippocampal_dynamics
+    role: fixed_at_default
+  - name: apply_feedforward
+    role: fixed_at_default
+  - name: feedforward.profile
+    role: fixed_at_default
+  - name: everything_else
+    role: fixed
+
+calibrate:
+  continuous:
+
+    - name: rate_scale_MEC
+      path: SimConfig.ratinabox_params.rate_scale_hz  # MEC populations
+      implementation: joint scale of MEC_grid/hd/speed amplitude_hz
+      default: 15.0
+      bounds: [5.0, 40.0]
+      bounds_source: guessed — around sim_default 15
+      scale: log
+      moves: [units_rate, spatial, decoding]
+
+    - name: rate_scale_SUB
+      path: SimConfig.rate_params.Sub_bvc.amplitude_hz
+      implementation: joint scale Sub_bvc + INT_CA1 amplitudes
+      default: 10.0
+      bounds: [3.0, 30.0]
+      bounds_source: guessed — around Sub_bvc default 10
+      scale: log
+      moves: [units_rate, spatial, decoding]
+
+    - name: sorting_miss_rate
+      path: SimConfig.sorting_params.miss_rate
+      default: 0.12
+      bounds: [0.02, 0.40]
+      bounds_source: guessed — around SORTING_PARAMS 0.12
+      scale: linear
+      moves: [sorting_realism, units_rate, decoding]
+
+    - name: sorting_fp_contam
+      paths:
+        - SimConfig.sorting_params.false_positive_rate
+        - SimConfig.sorting_params.contamination_rate
+      defaults: [0.005, 0.08]
+      # single θ: log-interp both from low→high endpoints
+      bounds_fp: [0.001, 0.05]
+      bounds_contam: [0.01, 0.25]
+      bounds_source: guessed — around SORTING_PARAMS defaults
+      scale: log_coupled
+      moves: [sorting_realism]
+      note: one Morris dimension covering false positives / contamination
+
+    - name: sorting_jitter_ms
+      path: SimConfig.sorting_params.jitter_ms
+      default: 0.3
+      bounds: [0.05, 1.5]
+      bounds_source: guessed — around SORTING_PARAMS 0.3
+      scale: log
+      moves: [sorting_realism, rhythm]
+
+    - name: recording_noise_std_uv
+      path: SimConfig.recording_params.noise_std_uv
+      default: 15.0
+      bounds: [5.0, 40.0]
+      bounds_source: guessed — around RECORDING_PARAMS 15
+      scale: log
+      moves: [sorting_realism, units_rate]
+
+# k_continuous = 6 (rate_MEC, rate_SUB, miss, fp/contam, jitter, noise).
+# Dynamics switches FIXED. Everything else FIXED.
+
+loao:
+  n_animals: 6
+  proxy_sessions_per_theta: 6
+  validation_sessions_cap_per_held_out_animal: 3
