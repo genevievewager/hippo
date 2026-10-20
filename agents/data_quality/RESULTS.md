@@ -1,4 +1,36 @@
-# Report 4a — Results (draft v4)
+# Report 4a — Results (v8)
+
+**Tag:** `report4a-v8` · **PDF:** `reports/report4/report4a_full.pdf` (+ anon) · **Build:** `hippo-dq/outputs/data_quality/reports/report4a_v8/`
+
+## v8 figure map
+
+| Page | Content |
+|------|---------|
+| 1 | Prose story only (version line: Report 4a v8, tag report4a-v8) |
+| 2 | **Fig 1** — Behavioural information (ex-Fig 3): decode info at N=20, position vs N ladder, region splits, VE share, error/floor vs N, paired N=20, reweighted sensitivity |
+| 3 | **Fig 2** — Tuning and drift: rate maps, place-tuned fraction / bits, adjacent-block reliability, within-session drift |
+| 4 | **Fig 3** — Spikes and behaviour (ex-Fig 1): ISI / refractory, speed, turning, still, HD–movement residual |
+| 5 | **Fig 4** — What matches: paired strips for unit / population metrics with \(R \le 1\) |
+| 6 | **Fig 5** — Divergence \(R\) + simulator to-do |
+| 7 | **Fig S1** — Extra distributions / sensitivity |
+| 8 | **Appendix** — Gates / eligibility |
+
+Numbers frozen at v5 tidy + `n_curve_ladder.csv`. Audits (prose, number, anon leak, overlap, whitespace, duplicate) PASS for v8.
+
+## N-ladder (lab position information)
+
+Session-median net decode information (position), ladder \(N \in \{10, 20, 40, 80, 160, \max\}\).
+
+| \(N\) | Lab | Matched |
+|------:|----:|--------:|
+| 10 | −0.113 | 0.081 |
+| 20 | −0.080 | 0.178 |
+| 40 | −0.007 | 0.373 |
+| 80 | 0.081 | 0.527 |
+| 160 | 0.169 | 0.681 |
+| max | 0.227 (≈184) | 0.756 (≈415) |
+
+Lab zero-crossing (log-\(N\) interp between 40 and 80): \(N \approx 42\).
 
 ## The question
 
@@ -18,29 +50,30 @@ Cohort: 6 animals, 47 room-A lab sessions; matched arm n = 47; default seeds = 5
 
 Matched-arm \(R \le 1\) (within lab variability) includes firing rate (\(R = 0.83\)), Fano factor (\(0.81\)), ISI CV (\(0.78\)), within-session rate drift (\(0.72\)), field size among place-tuned (\(0.94\)), Skaggs sparsity (\(0.94\)), peak rate (\(0.93\)), and spatial information (\(0.68\)). Grid-cell fractions are near chance in both arms and are not counted as a match.
 
-## Structural requests to the other lab
+## Structural requests to the other lab (1..7)
 
-- Add a public refractory / min-ISI parameter (generator is inhomogeneous Poisson).
-- Expose speed and rotational knobs (DF6); thigmotaxis was held at 0.8 and not fitted.
-- Reduce excess **border** and **HD** cells and the over-strong behavioural encoding of position, movement direction and speed. Speed-cell excess is near the reliability floor after the keep-mask fix (\(R \approx 1.26\)) and is **not** a primary cell-type request.
-- Lab head direction differs from movement direction by a median ~45°; the sim has no such dissociation (sim HD = movement heading). Add an independent HD drive.
-- Within-session drift: lab place maps are less reliable (adjacent-block \(r \approx 0.48\) vs 0.89) and drift slowly (slope \(\approx -0.024\)/block vs ~0). Add a public nonstationarity / representational-drift mechanism.
-- Accept external trajectories (DF6) so lab behaviour can be replayed exactly when knobs are insufficient.
+1. Refractory period (public min-ISI).
+2. Speed / turning knobs or external trajectories (DF6).
+3. Independent head direction (~45° lab dissociation).
+4. Tuned-cell prevalence and per-spike information (border/HD/place; speed-cell excess near floor, \(R \approx 1.26\)).
+5. Within-session drift (adjacent-block \(r \approx 0.48\) vs 0.89; slope \(\approx -0.024\)/block).
+6. Expose the capture cap (DF7).
+7. Honour `SimConfig.seed` (DF5).
 
-## Keep-mask spike fix (v4)
+## Keep-mask spike fix + v5 consistency
 
-`_spike_positions` now assigns each spike to its parent frame interval and drops spikes whose frame is excluded (speed filter, valid mask, split arm). Occupancy and spikes share the same `keep` mask. Sanity: 20 lab + 20 sim eligible units — occupancy-weighted map mean equals mean rate over kept frames within 5% (all 40 passed, max rel err = 0). Lab peak rate fell 13.7 → 7.5 Hz and field size rose 0.43 → 0.67; matched barely moved. See `OLD_VS_NEW_spike_keep.csv` in the report4a_v4 outputs.
+`_spike_positions` assigns each spike to its parent frame interval; occupancy and spikes share `keep`. Lab peak rate 13.7 → 7.5 Hz. **v5:** every figure, caption, story and findings page is built from the post keep-mask tidy (`data_fig3_divergence.csv`); page-number audit + anon leak check both PASS. Fig7 dropped (trajectories in Fig5). Findings page is prose from that tidy (story is authority).
 
 ## Deferred items
 
-- Calibration pages Q13–Q15 → Report **4b** (proxy-fidelity gate failed).
+- Calibration (Q13–Q15) → Report **4b** (one line on the story; no empty page).
 - Report 2 v2 behavioural speed (250 ms) recheck when Report 2 v2 is final.
 - Occupancy-matched joint bins across lab polygon vs sim square remain unused (not meaningful).
 - SUB sparse in most lab sessions; room A only.
 
 ## Artefacts
 
-- PDF: `hippo-dq/outputs/data_quality/reports/report4a_v4/report4a_full.pdf`
+- PDF: `hippo/reports/report4/report4a_full.pdf` (also `hippo-dq/outputs/data_quality/reports/report4a_v8/`)
 - Anon PDF: `…/report4a_full_anon.pdf`
-- OLD vs NEW: `…/OLD_VS_NEW_spike_keep.csv`
-- Tag: `report4a-draft` (this package on `offline-decoding`)
+- Delivery: `hippo/tmp_r4_review/v8/` (full + anon + audit JSONs + page PNGs)
+- Tag: `report4a-v8` (prior: `report4a-draft` = v4 package on `offline-decoding`)

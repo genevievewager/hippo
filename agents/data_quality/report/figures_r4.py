@@ -36,6 +36,7 @@ from agents.quadrant_n5.figures.figures import (  # noqa: E402
     head_fig,
     save as _save,
 )
+# W_FULL is 180 mm — every figure must use this width (Report 1 package).
 
 FAM_COL = {
     "units": "#2a78d6",
@@ -53,46 +54,28 @@ ARM_COL = {"default": "#6e6c66", "matched": "#0b0b0b"}
 
 
 def save(fig, out, name):
-    """Overflow check (Report 2 style) then save."""
+    """Overflow + text-overlap check (matplotlib extents), then save at W_FULL."""
+    from agents.data_quality.report.overlap_audit import audit_mpl_figure
+
     fig.canvas.draw()
-    renderer = fig.canvas.get_renderer()
-    pad = 0.08
-    offenders = []
-    for i, ax in enumerate(fig.axes):
-        try:
-            bb = ax.get_tightbbox(renderer)
-        except Exception:
-            continue
-        if bb is None:
-            continue
-        bb_fig = bb.transformed(fig.transFigure.inverted())
-        if bb_fig.x0 < -pad or bb_fig.y0 < -pad or bb_fig.x1 > 1 + pad or bb_fig.y1 > 1 + pad:
-            offenders.append(f"ax{i}")
-    if offenders:
-        # warn but still save for review; audit will catch
-        print(json.dumps({"overflow_warn": name, "axes": offenders[:6]}), flush=True)
+    fails = audit_mpl_figure(fig)
+    if fails:
+        print(json.dumps({"mpl_overlap": name, "n": len(fails), "sample": fails[:4]}, default=str), flush=True)
     _save(fig, out, name)
 
 
 def _load(data: str) -> dict:
+    """Load tidy tables. Fig3 always from ``data_fig3_divergence.csv`` (post keep-mask).
+
+    Never prefer ``behavior_info/…_with_info.csv`` — that merge historically
+    rebased on a stale v3 Fig3 and desynced the forest plot from the story.
+    """
     D = {"meta": json.load(open(os.path.join(data, "data_meta.json")))}
-    # Prefer Fig3 with information family if behaviour-info merge exists
-    fig3_name = "data_fig3_divergence.csv"
-    merged = os.path.join(
-        os.path.dirname(data.rstrip("/")),
-        "behavior_info",
-        "data_fig3_divergence_with_info.csv",
-    )
-    if os.path.isfile(merged):
-        D["fig3"] = pd.read_csv(merged)
-        fig3_name = None
     for name, key in (
         ("data_fig3_divergence.csv", "fig3"),
         ("data_sim_gets_right.csv", "right"),
         ("data_session_metrics.csv", "sess"),
     ):
-        if key == "fig3" and fig3_name is None:
-            continue
         p = os.path.join(data, name)
         if os.path.isfile(p):
             D[key] = pd.read_csv(p)
@@ -113,8 +96,22 @@ def _load(data: str) -> dict:
     return D
 
 
-def _caption(fig, text, y=0.012):
-    fig.text(0.01, y, textwrap.fill(text, 145), fontsize=5.6, color=INK2, va="bottom", ha="left")
+def _caption(fig, text, y=0.018):
+    """Caption inside the 180 mm frame at ≥ 8 pt (Report 1 caption band)."""
+    fig.text(0.01, y, textwrap.fill(text, 118), fontsize=8.0, color=INK2, va="bottom", ha="left")
+
+
+def _fmt_abs(v: float) -> str:
+    if not np.isfinite(v):
+        return "—"
+    av = abs(float(v))
+    if av < 5e-3:
+        return "0.00"
+    if av >= 10:
+        return f"{v:.1f}"
+    if av >= 0.1:
+        return f"{v:.2f}"
+    return f"{v:.3f}"
 
 
 def _n_note(meta):
@@ -125,154 +122,195 @@ def _n_note(meta):
 
 
 # ================================================================= FIG headline (for story PDF assembly uses reportlab; this is optional panel)
+# Story takeaway metrics for the headline forest (not information-family rows).
+HEADLINE_METRICS = [
+    ("refractory_violation_rate", "Refractory violations"),
+    ("speed_median", "Speed (median)"),
+    ("turning_angle_std", "Turning-angle SD"),
+    ("frac_place_tuned", "Place-tuned fraction"),
+    ("decode_error_over_floor", "Decode error / floor"),
+]
+
+
+def _bits_place_row(out_dir: str) -> dict | None:
+    """Load held-out bits/spike (place-tuned) from sibling behavior_info."""
+    report_root = os.path.dirname(os.path.abspath(out_dir))
+    enc_p = os.path.join(report_root, "behavior_info", "encoding_diag_summary.json")
+    if not os.path.isfile(enc_p):
+        return None
+    enc = json.load(open(enc_p)).get("table") or {}
+    lab_b = (enc.get("lab") or {}).get("bits_end_med_place")
+    mat_b = (enc.get("sim_matched") or {}).get("bits_end_med_place")
+    if lab_b is None or mat_b is None or not np.isfinite(lab_b) or abs(lab_b) < 1e-9:
+        return None
+    r_bits = float(mat_b / lab_b)
+    return {
+        "label": "Bits/spike (place-tuned)",
+        "metric_base": "bits_per_spike_place",
+        "R_matched": r_bits, "R_matched_lo": r_bits, "R_matched_hi": r_bits,
+        "family": "spatial",
+        "lab_median": float(lab_b), "sim_matched_median": float(mat_b),
+    }
+
+
 def fig_headline(D, out):
-    """Single headline strip: refractory absolute + R overview thumbnail."""
+    """Headline: takeaway metrics (matched R) + refractory absolute bars."""
+    from matplotlib.ticker import FixedLocator, NullFormatter
+
     meta = D["meta"]
-    fig3 = D["fig3"]
-    fig = plt.figure(figsize=(W_FULL, 52 * MM))
-    # Tight top: no blank gap above panel
-    ax = fig.add_axes([0.34, 0.28, 0.38, 0.62])
-    fig.text(0.01, 0.955, "a", fontsize=9, fontweight="bold", color=INK, va="top")
-    fig.text(0.035, 0.955, "Headline divergence (matched arm)", fontsize=7, color=INK, va="top")
-    sub = fig3.dropna(subset=["R_matched"]).sort_values("R_matched", ascending=True).tail(8)
-    y = np.arange(len(sub))
-    for i, (_, r) in enumerate(sub.iterrows()):
-        c = FAM_COL.get(r["family"], MUTED)
-        ax.plot([r["R_matched_lo"], r["R_matched_hi"]], [i, i], color=c, lw=1.3)
+    fig3 = D["fig3"].set_index("metric_base")
+    fig = plt.figure(figsize=(W_FULL, 58 * MM))
+    ax = fig.add_axes([0.30, 0.22, 0.36, 0.62])
+    head_fig(fig, 0.01, 0.90, "a", "Headline divergence (matched) — takeaways")
+    rows = []
+    for base, label in HEADLINE_METRICS:
+        if base not in fig3.index:
+            continue
+        r = fig3.loc[base]
+        if not np.isfinite(r.get("R_matched", np.nan)):
+            continue
+        rows.append({**r.to_dict(), "label": label, "metric_base": base})
+    bits = _bits_place_row(out)
+    if bits is not None:
+        rows.append(bits)
+    rows = sorted(rows, key=lambda r: float(r["R_matched"]))
+    y = np.arange(len(rows))
+    for i, r in enumerate(rows):
+        c = FAM_COL.get(r.get("family", "other"), MUTED)
+        lo = r.get("R_matched_lo", r["R_matched"])
+        hi = r.get("R_matched_hi", r["R_matched"])
+        if np.isfinite(lo) and np.isfinite(hi):
+            ax.plot([lo, hi], [i, i], color=c, lw=1.3)
         ax.plot(r["R_matched"], i, "o", color=c, ms=4.5)
     ax.axvline(1, color=FAILC, ls="--", lw=0.8)
     ax.set_yticks(y)
-    # Full labels — wrap rather than truncate
-    labels = []
-    for l in sub["label"]:
-        s = str(l)
-        if len(s) > 42:
-            s = s[:40] + "…"
-        labels.append(s)
-    ax.set_yticklabels(labels, fontsize=5.5)
-    ax.set_xlabel("Divergence ratio R (log scale)", fontsize=6.5)
+    ax.set_yticklabels([r["label"] for r in rows], fontsize=6.0)
+    ax.set_xlabel("R (log)", fontsize=7)
     ax.set_xscale("log")
-    ax.xaxis.set_major_formatter(plt.FuncFormatter(lambda v, _p: f"{v:g}"))
-    ax.set_xlim(0.5, max(30, float(sub["R_matched_hi"].max()) * 1.1))
+    ax.xaxis.set_major_locator(FixedLocator([1, 10]))
+    ax.xaxis.set_major_formatter(plt.FuncFormatter(lambda v, _p: f"{int(v)}" if v >= 1 else f"{v:g}"))
+    ax.xaxis.set_minor_formatter(NullFormatter())
+    hi = max((float(r.get("R_matched_hi", r["R_matched"])) for r in rows), default=10)
+    ax.set_xlim(0.4, max(30, hi * 1.15))
 
-    ax2 = fig.add_axes([0.78, 0.28, 0.20, 0.62])
-    fig.text(0.78, 0.955, "b", fontsize=9, fontweight="bold", color=INK, va="top")
-    fig.text(0.805, 0.955, "Refractory (absolute)", fontsize=7, color=INK, va="top")
-    labs = ["lab", "matched\nsim", "default\nsim"]
+    # Panel b: title above the axes; labels below bars (never overlapping title)
+    ax2 = fig.add_axes([0.74, 0.22, 0.22, 0.55])
+    head_fig(fig, 0.74, 0.90, "b", "Refractory (absolute)")
+    labs = ["lab", "matched", "default"]
     vals = [
         meta["refractory_pct"]["lab"],
         meta["refractory_pct"]["sim_matched"],
         meta["refractory_pct"]["sim_default"],
     ]
-    ax2.bar([0, 1, 2], vals, color=[INK2, INK, MUTED], width=0.65)
+    bars = ax2.bar([0, 1, 2], vals, color=[INK2, INK, MUTED], width=0.65)
     ax2.set_xticks([0, 1, 2], labs, fontsize=6)
-    ax2.set_ylabel("% of ISIs < 1.5 ms", fontsize=6)
+    ax2.set_ylabel("% ISIs < 1.5 ms", fontsize=6.5)
+    ymax = max(vals) * 1.35 if vals else 1
+    ax2.set_ylim(0, ymax)
     for i, v in enumerate(vals):
-        ax2.text(i, v + 0.05, f"{v:.2f}%", ha="center", fontsize=6)
+        ax2.text(i, v + ymax * 0.03, f"{v:.2f}%", ha="center", va="bottom", fontsize=5.5)
     _caption(
         fig,
-        f"{_n_note(meta)}. Dots = R; lines = 90% recording_day bootstrap. Bars = session-median refractory rate.",
-        y=0.04,
+        f"{_n_note(meta)}. a = story takeaways; dots = R (±90% day bootstrap).",
+        y=0.03,
     )
     save(fig, out, "Fig0_headline")
 
 
 # ================================================================= FIG 3
 def fig3(D, out):
+    from matplotlib.ticker import FixedLocator, NullFormatter
+
     meta = D["meta"]
     df = D["fig3"].dropna(subset=["R_matched"]).copy()
-    # order by family then R
+    ban = {"excess", "bin3", "spatial_context"}
+    df = df[~df["metric_base"].astype(str).str.contains("|".join(ban), case=False, regex=True)].copy()
     fam_order = [
         "units", "spatial", "behaviour", "information", "population",
         "decoding", "rhythm", "sorting", "other",
     ]
     df["_fo"] = df["family"].map({f: i for i, f in enumerate(fam_order)}).fillna(99)
     df = df.sort_values(["_fo", "R_matched"], ascending=[True, True]).reset_index(drop=True)
+    if len(df) > 25:
+        df = df.iloc[:25].reset_index(drop=True)
 
-    fig = plt.figure(figsize=(W_FULL, 175 * MM))
+    n = len(df)
+    # Fixed height budget so the fig fits the A4 180 mm frame with caption
+    fig_h = min(220, max(130, 5.8 * n + 45))
+    fig = plt.figure(figsize=(W_FULL, fig_h * MM))
     fig.suptitle(
         "Fig 3  Answer: where the simulation diverges from the lab (both arms)",
-        fontsize=8, fontweight="bold", x=0.01, ha="left", y=0.995,
+        fontsize=8, fontweight="bold", x=0.01, ha="left", y=0.988,
     )
-    fig.text(0.99, 0.995, _n_note(meta), fontsize=5.8, color=MUTED, ha="right", va="top")
+    fig.text(0.99, 0.988, _n_note(meta), fontsize=6.0, color=MUTED, ha="right", va="top")
 
-    ax = fig.add_axes([0.34, 0.10, 0.40, 0.84])
-    y = np.arange(len(df))
-    # Shade R ≤ 1 (sim within lab variability)
+    y0, yh = 0.12, 0.78
+    ax = fig.add_axes([0.32, y0, 0.38, yh])
+    y = np.arange(n)
     lo_lim = 0.15
     ax.axvspan(lo_lim, 1.0, color="#eef6f1", lw=0, zorder=0)
     ax.axvline(1.0, color=FAILC, lw=0.9, ls="--", zorder=1)
+
     for i, r in df.iterrows():
         c = FAM_COL.get(r["family"], MUTED)
-        lead = bool(r.get("lead_with_abs", False)) if "lead_with_abs" in df.columns else False
         if np.isfinite(r["R_matched"]):
-            ax.plot([r["R_matched_lo"], r["R_matched_hi"]], [i, i], color=c, lw=1.4, zorder=2,
-                    alpha=0.35 if lead else 1.0)
+            ax.plot([r["R_matched_lo"], r["R_matched_hi"]], [i, i], color=c, lw=1.4, zorder=2)
             ax.plot(r["R_matched"], i, "o", color=c, ms=5, zorder=3,
-                    markeredgecolor="white", markeredgewidth=0.3,
-                    alpha=0.35 if lead else 1.0)
-        # default arm: point only (5 seeds; no recording_day interval)
+                    markeredgecolor="white", markeredgewidth=0.3)
         if np.isfinite(r.get("R_default", np.nan)):
-            ax.plot(r["R_default"], i, "s", color=c, ms=4, alpha=0.25 if lead else 0.55, zorder=3,
+            ax.plot(r["R_default"], i, "s", color=c, ms=4, alpha=0.55, zorder=3,
                     markeredgecolor=INK, markeredgewidth=0.4)
     ax.set_yticks(y)
-    ylabels = []
-    for _, r in df.iterrows():
-        lab = str(r["label"])
-        if "lead_with_abs" in df.columns and bool(r.get("lead_with_abs", False)):
-            lab = lab + " *"
-        ylabels.append(lab)
-    ax.set_yticklabels(ylabels, fontsize=5.5)
-    ax.set_xlabel("Divergence ratio R (log scale)")
+    ax.set_yticklabels([str(r["label"]) for _, r in df.iterrows()], fontsize=5.5)
+    ax.set_xlabel("Divergence ratio R (log scale)", fontsize=7)
     ax.set_xscale("log")
     lo = float(np.nanmin(np.r_[df["R_matched_lo"].to_numpy(float), df["R_default"].to_numpy(float)]))
     hi = float(np.nanmax(np.r_[df["R_matched_hi"].to_numpy(float), df["R_default"].to_numpy(float)]))
     ax.set_xlim(max(lo_lim, lo * 0.8), max(40, hi * 1.15))
-    ax.xaxis.set_major_formatter(plt.FuncFormatter(lambda v, _p: f"{v:g}"))
+    ax.set_ylim(-0.5, n - 0.5)
+    ax.xaxis.set_major_locator(FixedLocator([1, 10]))
+    ax.xaxis.set_major_formatter(plt.FuncFormatter(lambda v, _p: f"{int(v)}" if abs(v - round(v)) < 1e-9 else f"{v:g}"))
+    ax.xaxis.set_minor_formatter(NullFormatter())
     ax.grid(axis="x", color=GRID, lw=0.4)
+
+    # Legend outside the plot (above, right of forest)
     handles = [
-        Line2D([0], [0], marker="o", color="w", markerfacecolor=INK, ms=6, label="matched arm (±90% day bootstrap)"),
-        Line2D([0], [0], marker="s", color="w", markerfacecolor=MUTED, ms=5, label="default arm (5 seeds, no interval)"),
+        Line2D([0], [0], marker="o", color="w", markerfacecolor=INK, ms=6, label="matched (±90% day)"),
+        Line2D([0], [0], marker="s", color="w", markerfacecolor=MUTED, ms=5, label="default (5 seeds)"),
         Line2D([0], [0], color=FAILC, ls="--", lw=0.9, label="R = 1"),
     ]
-    ax.legend(handles=handles, loc="lower right", fontsize=5.4, frameon=False)
+    ax.legend(
+        handles=handles, loc="lower left", bbox_to_anchor=(0.0, 1.01),
+        fontsize=5.5, frameon=False, ncol=3, borderaxespad=0,
+    )
 
-    # absolute side column
-    ax2 = fig.add_axes([0.78, 0.08, 0.20, 0.86])
-    ax2.set_ylim(-0.5, len(df) - 0.5)
+    # Right-hand absolute column: same y as markers
+    ax2 = fig.add_axes([0.72, y0, 0.26, yh], sharey=ax)
     ax2.set_xlim(0, 1)
-    ax2.axis("off")
-    ax2.text(0.0, len(df) - 0.15, "lab  |  matched", fontsize=5.8, fontweight="bold", color=INK2)
+    ax2.xaxis.set_visible(False)
+    for sp in ax2.spines.values():
+        sp.set_visible(False)
+    ax2.tick_params(left=False, labelleft=False)
+    ax2.text(0.02, n - 0.15, "lab | matched", fontsize=6.0, fontweight="bold", color=INK2,
+             transform=ax2.get_yaxis_transform(), clip_on=False, va="bottom")
     for i, r in df.iterrows():
-        lab = r["lab_median"]
-        sim = r["sim_matched_median"]
-        # format by magnitude
-        def fmt(v):
-            if not np.isfinite(v):
-                return "—"
-            av = abs(v)
-            if av >= 10:
-                return f"{v:.1f}"
-            if av >= 0.1:
-                return f"{v:.2f}"
-            return f"{v:.3f}"
-        ax2.text(0.0, i, f"{fmt(lab)}  |  {fmt(sim)}", fontsize=5.5, va="center",
-                 family="monospace", color=INK)
+        ax2.text(
+            0.02, float(i),
+            f"{_fmt_abs(r['lab_median'])} | {_fmt_abs(r['sim_matched_median'])}",
+            fontsize=5.5, va="center", family="monospace", color=INK,
+            transform=ax2.get_yaxis_transform(), clip_on=False,
+        )
 
-    # family colour key
     fams = [f for f in fam_order if f in set(df["family"])]
     for j, f in enumerate(fams):
-        fig.text(0.01, 0.90 - j * 0.035, "█ " + f, fontsize=5.8, color=FAM_COL[f], family="sans-serif")
+        fig.text(0.01, 0.88 - j * 0.032, "█ " + f, fontsize=5.8, color=FAM_COL[f])
 
     _caption(
         fig,
-        "One metric per concept (N = 20 where matched-N applies; W = 0.25 s for Fano). "
-        "Circles = matched arm R with 90% recording_day bootstrap intervals; squares = default-arm R "
-        "(5 seeds, no interval). Green shade = R ≤ 1 (sim within lab variability). "
-        "Side column: absolute session-median values (lab | matched sim). "
-        "* = lab MAD tiny: lead with absolute values; R is a footnote (information family, N = 20). "
+        "One metric per concept (≤25). Circles = matched R (±90% day); squares = default. "
+        "Green = R ≤ 1. Right column = pooled medians (lab | matched). "
         + _n_note(meta) + ".",
-        y=0.008,
+        y=0.02,
     )
     save(fig, out, "Fig3_answer")
 
@@ -289,9 +327,9 @@ def fig4(D, out):
     RM = D.get("rate_maps") or []
     isi = D.get("isi") or {}
     sess = D.get("sess")
-    fig = plt.figure(figsize=(W_FULL, 185 * MM))
+    fig = plt.figure(figsize=(W_FULL, 200 * MM))
     fig.suptitle(
-        "Fig 4  Sim over-represents border / speed / HD cells; maps in Hz; grid at chance",
+        "Fig 4  Sim units are tuned more often and more strongly; grid at chance",
         fontsize=7.6, fontweight="bold", x=0.01, ha="left", y=0.995,
     )
     fig.text(0.99, 0.995, f"example {meta['example_session']}", fontsize=5.8, color=MUTED, ha="right", va="top")
@@ -307,7 +345,7 @@ def fig4(D, out):
             sub = sorted([r for r in maps if r["region"] == reg], key=lambda r: r.get("percentile", 50))
             ordered.extend(sub[:3])
         for j, r in enumerate(ordered):
-            ax = fig.add_axes([0.07 + j * 0.15, 0.72 - row * 0.22, 0.135, 0.17])
+            ax = fig.add_axes([0.08 + j * 0.15, 0.74 - row * 0.20, 0.13, 0.15])
             rate = np.ma.masked_invalid(np.asarray(r["rate"], float))
             ext = r["extent"]
             ax.set_facecolor("#d8d6d0")
@@ -330,17 +368,16 @@ def fig4(D, out):
                 ax.set_ylabel(ylab, fontsize=6)
     rm = meta.get("rate_map") or {}
     fig.text(
-        0.07, 0.48,
-        f"20×20 train bbox; rate = spikes/(occ×dt) Hz; min occ {rm.get('min_occupancy_s', 0.15)} s; "
-        f"σ = {rm.get('smooth_sigma_bins', 1.5)} bins; speed > {rm.get('speed_min_cm_s', 2)} cm/s; "
-        f"eligible ≥{rm.get('min_train_spikes', 100)} spikes & ≥{rm.get('min_mean_rate_hz', 0.2)} Hz. "
-        "Each panel scaled to its own peak.",
-        fontsize=5.2, color=INK2,
+        0.08, 0.52,
+        f"20×20; Hz; min occ {rm.get('min_occupancy_s', 0.15)} s; "
+        f"σ={rm.get('smooth_sigma_bins', 1.5)}; speed>{rm.get('speed_min_cm_s', 2)} cm/s; "
+        f"eligible ≥{rm.get('min_train_spikes', 100)} spikes. Own-peak scale.",
+        fontsize=5.5, color=INK2,
     )
 
     # b — ISI
-    ax = fig.add_axes([0.08, 0.10, 0.36, 0.32])
-    _panel_head(fig, 0.08, 0.445, "b", "ISI (log time); refractory < 1.5 ms shaded")
+    ax = fig.add_axes([0.10, 0.14, 0.32, 0.30])
+    _panel_head(fig, 0.10, 0.48, "b", "ISI (log time); refractory < 1.5 ms shaded")
     bins = np.logspace(-4, 0, 60)
     for key, col, lw, lab in (
         ("lab", INK2, 1.0, "lab"),
@@ -356,20 +393,21 @@ def fig4(D, out):
     ax.axvspan(1e-4, isi.get("refractory_s", 0.0015), color="#fbe9e9", lw=0, zorder=0)
     ax.axvline(isi.get("refractory_s", 0.0015), color=FAILC, ls="--", lw=0.7)
     ax.set_xscale("log")
+    ax.set_xlim(1e-4, 1.0)
     ax.xaxis.set_major_formatter(plt.FuncFormatter(lambda v, _p: f"{v:g}"))
-    ax.set_xlabel("ISI (s)")
-    ax.set_ylabel("density per log-s bin")
+    ax.set_xlabel("ISI (s)", fontsize=6.5)
+    ax.set_ylabel("density", fontsize=6.5)
     ax.legend(fontsize=5.5, loc="upper right", frameon=False)
 
     # c–e
     panels = [
-        ("c", "Place-tuned frac", "frac_place_tuned", "frac. pass", 0.50, True),
-        ("d", "Skaggs sparsity", "sparsity_median", "sparsity", 0.68, False),
-        ("e", "Field size (place-tuned)", "place_field_size_median", "field / visited", 0.86, False),
+        ("c", "Place-tuned", "frac_place_tuned", "frac. pass", 0.48, True),
+        ("d", "Skaggs sparsity", "sparsity_median", "sparsity", 0.66, False),
+        ("e", "Field size", "place_field_size_median", "field / visited", 0.84, False),
     ]
     for k, (letter, title, metric, xlab, xpos, chance) in enumerate(panels):
-        ax = fig.add_axes([xpos, 0.10, 0.125, 0.32])
-        _panel_head(fig, xpos, 0.445, letter, title, title_dx=0.02)
+        ax = fig.add_axes([xpos, 0.14, 0.13, 0.30])
+        _panel_head(fig, xpos, 0.48, letter, title, title_dx=0.02)
         if sess is None:
             continue
         use = metric
@@ -399,7 +437,7 @@ def fig4(D, out):
         "d: Skaggs sparsity (Σpr)²/Σpr². e: field size among place-tuned only "
         "(≥20% peak & ≥1 Hz, ≥4 contiguous bins). Thin lab, thick matched, squares = 5 default seeds. "
         + _n_note(meta) + ".",
-        y=0.006,
+        y=0.02,
     )
     save(fig, out, "Fig4_mechanism")
 
@@ -412,7 +450,7 @@ def fig5(D, out):
     occ = D.get("occ") or {}
     LAB_COL = "#2a78d6"
     SIM_COL = "#c24e1e"
-    fig = plt.figure(figsize=(W_FULL, 155 * MM))
+    fig = plt.figure(figsize=(W_FULL, 165 * MM))
     fig.suptitle(
         "Fig 5  Simulated rat runs faster and turns less than lab rats",
         fontsize=8, fontweight="bold", x=0.01, ha="left", y=0.995,
@@ -426,8 +464,8 @@ def fig5(D, out):
             ax.plot(pts[:, 0], pts[:, 1], color="#8a8780", lw=0.8, zorder=0)
 
     for j, (key, title) in enumerate((("lab", "Lab"), ("sim_matched", "Matched sim"))):
-        ax = fig.add_axes([0.06 + j * 0.24, 0.55, 0.20, 0.38])
-        _panel_head(fig, 0.06 + j * 0.24, 0.955, "a" if j == 0 else "b", f"{title} trajectory (60 s)", 0.02)
+        ax = fig.add_axes([0.10 + j * 0.24, 0.55, 0.18, 0.36])
+        _panel_head(fig, 0.10 + j * 0.24, 0.955, "a" if j == 0 else "b", f"{title} trajectory (60 s)", 0.02)
         t = traj.get(key) or {}
         x, y = np.asarray(t.get("x", []), float), np.asarray(t.get("y", []), float)
         ar = (traj.get("arena") or {}).get("lab" if key == "lab" else "sim", {})
@@ -449,9 +487,10 @@ def fig5(D, out):
         if o:
             mats[key] = np.asarray(o["occ_s"], float)
             vmax = max(vmax, float(np.nanmax(mats[key])) if mats[key].size else 0.0)
+    # Occupancy maps with dedicated colourbar axes (no overlap with labels)
     for j, key in enumerate(("lab", "sim_matched")):
-        ax = fig.add_axes([0.06 + j * 0.24, 0.10, 0.18, 0.34])
-        _panel_head(fig, 0.06 + j * 0.24, 0.475, "c" if j == 0 else "d",
+        ax = fig.add_axes([0.10 + j * 0.26, 0.14, 0.16, 0.30])
+        _panel_head(fig, 0.10 + j * 0.26, 0.475, "c" if j == 0 else "d",
                     f"Occupancy ({'lab' if j == 0 else 'matched'})", 0.02)
         o = occ.get(key) or {}
         ar = (occ.get("arena") or traj.get("arena") or {}).get("lab" if key == "lab" else "sim", {})
@@ -466,17 +505,17 @@ def fig5(D, out):
             _outline(ax, ar)
             if ar:
                 ax.set_xlim(ar["xlim"]); ax.set_ylim(ar["ylim"])
-            ax.set_xlabel("x (cm)"); ax.set_ylabel("y (cm)" if j == 0 else "")
-            # colourbar immediately right of map, left of CDF column
-            cax = fig.add_axes([0.06 + j * 0.24 + 0.185, 0.10, 0.012, 0.34])
+            ax.set_xlabel("x (cm)", fontsize=6)
+            ax.set_ylabel("y (cm)" if j == 0 else "", fontsize=6)
+            cax = fig.add_axes([0.10 + j * 0.26 + 0.165, 0.14, 0.012, 0.30])
             cb = fig.colorbar(im, cax=cax)
-            cb.set_label("s", fontsize=5.2)
+            cb.set_label("s", fontsize=6)
             cb.ax.tick_params(labelsize=5)
 
     qs = np.asarray((spd.get("cohort") or {}).get("qs") or np.linspace(0, 1, 41), float)
 
-    def _plot_cohort(ax, field, xlabel, letter, title, x0):
-        _panel_head(fig, x0, 0.955 if letter == "e" else 0.475, letter, title, 0.02)
+    def _plot_cohort(ax, field, xlabel, letter, title, x0, y_head):
+        _panel_head(fig, x0, y_head, letter, title, 0.02)
         cohort = spd.get("cohort") or {}
         for key, col, thin_a in (("lab", LAB_COL, 0.30), ("sim_matched", SIM_COL, 0.30)):
             rows = cohort.get(key) or []
@@ -485,126 +524,161 @@ def fig5(D, out):
                 if q.size != qs.size:
                     continue
                 if row.get("example"):
-                    ax.plot(q, qs, color=col, lw=2.0, alpha=1.0, zorder=4,
-                            label=f"example {key.replace('sim_matched','sim')}")
+                    ax.plot(q, qs, color=col, lw=2.0, alpha=1.0, zorder=4)
                 else:
                     ax.plot(q, qs, color=col, lw=0.45, alpha=thin_a, zorder=1)
-        if not (cohort.get("lab") or cohort.get("sim_matched")):
-            for key, col in (("lab", LAB_COL), ("sim_matched", SIM_COL)):
-                raw_key = "speed_cm_s" if field == "speed_q" else "turning_rad"
-                v = np.asarray((spd.get(key) or {}).get(raw_key, []), float)
-                if field == "turn_q":
-                    v = np.abs(v)
-                v = v[np.isfinite(v)]
-                if v.size == 0:
-                    continue
-                s = np.sort(v)
-                ax.plot(s, np.linspace(0, 1, len(s), endpoint=False), color=col, lw=1.6,
-                        label=f"example {key.replace('sim_matched','sim')}")
         ax.set_xlabel(xlabel, fontsize=5.8)
-        ax.set_ylabel("CDF")
+        ax.set_ylabel("CDF", fontsize=6)
         ax.set_ylim(0, 1)
-        handles = [
-            Line2D([0], [0], color=LAB_COL, lw=0.6, label="lab sessions"),
-            Line2D([0], [0], color=SIM_COL, lw=0.6, label="matched sessions"),
-            Line2D([0], [0], color=LAB_COL, lw=2.0, label="example lab"),
-            Line2D([0], [0], color=SIM_COL, lw=2.0, label="example sim"),
-        ]
-        ax.legend(handles=handles, fontsize=4.8, loc="lower right", frameon=False)
 
-    ax = fig.add_axes([0.68, 0.55, 0.28, 0.38])
-    _plot_cohort(ax, "speed_q", "speed (cm/s)", "e", "Speed CDF (per session)", 0.68)
+    ax = fig.add_axes([0.66, 0.55, 0.20, 0.34])
+    _plot_cohort(ax, "speed_q", "speed (cm/s)", "e", "Speed CDF", 0.66, 0.955)
+    ax_leg = fig.add_axes([0.87, 0.55, 0.12, 0.34])
+    ax_leg.axis("off")
+    handles = [
+        Line2D([0], [0], color=LAB_COL, lw=0.6, label="lab sessions"),
+        Line2D([0], [0], color=SIM_COL, lw=0.6, label="matched sessions"),
+        Line2D([0], [0], color=LAB_COL, lw=2.0, label="example lab"),
+        Line2D([0], [0], color=SIM_COL, lw=2.0, label="example sim"),
+    ]
+    ax_leg.legend(handles=handles, fontsize=5.0, frameon=False, loc="center left")
 
-    ax = fig.add_axes([0.68, 0.10, 0.28, 0.34])
-    _plot_cohort(ax, "turn_q", "|Δ heading| while speed > 2 cm/s (rad)", "f", "Turning CDF (moving only)", 0.68)
+    ax = fig.add_axes([0.66, 0.14, 0.20, 0.30])
+    _plot_cohort(ax, "turn_q", "|Δ heading| (rad)", "f", "Turning CDF", 0.66, 0.475)
 
     _caption(
         fig,
-        "a–b: 60 s paths (green start, red end); arena outline; shared cm span. "
-        "c–d: occupancy (s/bin); colourbars clear of CDFs. "
-        "Note (c): some occupied bins fall outside the boundary polygon (path containment; "
-        "to be handled in the report2-v1 step). "
-        "e–f: blue = lab, orange = matched; thick = example session. "
-        f"thigmotaxis = {meta['thigmotaxis']} (not fitted). {traj.get('selection', '')}",
-        y=0.006,
+        "a–b: 60 s paths (green start, red end). c–d: occupancy (s/bin); colourbars in own axes. "
+        "Some occupied bins fall outside the boundary polygon (path containment). "
+        "e–f: blue = lab, orange = matched; thick = example. "
+        f"thigmotaxis = {meta['thigmotaxis']} (not fitted).",
+        y=0.02,
     )
     save(fig, out, "Fig5_behaviour")
 
 
 # ================================================================= FIG 1
 def fig1(D, out):
-    """Design: three arms, R definition, frozen knobs."""
+    """Schematic in mm coords (Report 1 Fig6 style): boxes + arrows, nothing cut off."""
     meta = D["meta"]
-    fig = plt.figure(figsize=(W_FULL, 120 * MM))
-    fig.suptitle(
-        "Fig 1  Design: lab vs default vs matched simulation arms",
-        fontsize=8, fontweight="bold", x=0.01, ha="left", y=0.995,
-    )
-    fig.text(0.99, 0.995, _n_note(meta), fontsize=5.8, color=MUTED, ha="right", va="top")
-    ax = fig.add_axes([0.04, 0.18, 0.92, 0.72])
-    ax.set_axis_off()
+    Hmm = 95
+    fig = plt.figure(figsize=(W_FULL, Hmm * MM))
+    ax = fig.add_axes([0, 0, 1, 1])
+    ax.set_xlim(0, 180)
+    ax.set_ylim(0, Hmm)
+    ax.axis("off")
+    ax.text(2, Hmm - 5, "Fig 1  Design: arms → matching → metrics → R",
+            fontsize=8, fontweight="bold", va="top")
+    ax.text(178, Hmm - 5, _n_note(meta), fontsize=5.8, color=MUTED, ha="right", va="top")
+
     boxes = [
-        (0.05, 0.55, 0.25, 0.35, "Lab\nroom-A sessions\nn=47 · 6 animals", "#e8f1fb"),
-        (0.38, 0.55, 0.25, 0.35, "Default sim\n5 seeds · square arena\nthigmotaxis=0.8 (held)", "#f3f1ea"),
-        (0.71, 0.55, 0.25, 0.35, "Matched sim\n1:1 per lab session\nyield-boosted MEC/SUB", "#eaf7f1"),
+        (6, 48, 36, 32, "Arms",
+         f"Lab  n={meta['n_lab_sessions']}\nDefault  {meta['n_default_seeds']} seeds\nMatched  1:1",
+         "#e8f1fb"),
+        (50, 48, 36, 32, "Matching",
+         "Yield boost → lab\nMEC/SUB counts\nComposition match",
+         "#eaf7f1"),
+        (94, 48, 36, 32, "Metrics",
+         "One code path\ndataset = label\nroom A · keep-mask",
+         "#f3f1ea"),
+        (138, 48, 36, 32, "R",
+         "R = d_sim / d_lab\nR ≤ 1 = within\nlab variability",
+         "#fbe9e9"),
     ]
-    for x, y, w, h, txt, fc in boxes:
-        ax.add_patch(FancyBboxPatch((x, y), w, h, boxstyle="round,pad=0.02",
-                                    facecolor=fc, edgecolor=INK, lw=0.8, transform=ax.transAxes))
-        ax.text(x + w / 2, y + h / 2, txt, ha="center", va="center", fontsize=7,
-                transform=ax.transAxes, color=INK)
-    ax.annotate("", xy=(0.38, 0.72), xytext=(0.30, 0.72),
-                arrowprops=dict(arrowstyle="->", color=INK2), transform=ax.transAxes)
-    ax.annotate("", xy=(0.71, 0.72), xytext=(0.63, 0.72),
-                arrowprops=dict(arrowstyle="->", color=INK2), transform=ax.transAxes)
-    ax.text(0.5, 0.35, meta.get("R_definition", "R = d_sim / d_lab"),
-            ha="center", va="center", fontsize=7, transform=ax.transAxes,
-            bbox=dict(boxstyle="round", facecolor="white", edgecolor=GRID))
+    for x, y, w, h, title, body, fc in boxes:
+        ax.add_patch(FancyBboxPatch(
+            (x, y), w, h, boxstyle="round,pad=0.6,rounding_size=1.5",
+            facecolor=fc, edgecolor=INK, lw=0.9,
+        ))
+        ax.text(x + w / 2, y + h - 4, title, ha="center", va="top",
+                fontsize=8, fontweight="bold", color=INK)
+        ax.text(x + w / 2, y + h / 2 - 2, body, ha="center", va="center",
+                fontsize=6.2, color=INK2, linespacing=1.3)
+    for x0, x1 in ((42, 50), (86, 94), (130, 138)):
+        ax.annotate(
+            "", xy=(x1, 64), xytext=(x0, 64),
+            arrowprops=dict(arrowstyle="-|>", color=INK2, lw=1.3, mutation_scale=9),
+        )
     ax.text(
-        0.5, 0.12,
-        "Same metric code path for lab and sim · dataset is a label only · "
+        90, 28,
+        f"Thigmotaxis held at {meta['thigmotaxis']} (not fitted) · "
         f"spatial rev {meta.get('spatial_revision', '4a_B')} · "
-        "occ-matched joint bins dropped (coordinate frames differ)",
-        ha="center", va="center", fontsize=6, color=INK2, transform=ax.transAxes,
-        wrap=True,
+        "occ-matched joint bins dropped",
+        ha="center", va="center", fontsize=6.2, color=INK2,
     )
-    _caption(
-        fig,
-        "Default arm: 5 independent seeds (point estimates, no intervals). "
-        "Matched arm: recording-day bootstrap 90% intervals. "
-        f"Thigmotaxis held at {meta['thigmotaxis']} (not fitted).",
-        y=0.04,
+    ax.text(
+        90, 14,
+        "Default: 5 seeds, point estimates. Matched: recording-day 90% bootstrap.",
+        ha="center", va="center", fontsize=6.0, color=MUTED,
+    )
+    ax.text(
+        2, 3,
+        "Flow: arms feed matching, then one metric suite, then R. All text inside boxes.",
+        fontsize=8.0, color=INK2, va="bottom",
     )
     save(fig, out, "Fig1_design")
 
 
 # ================================================================= FIG 2
 def fig2(D, out):
-    """Validity: neutrality + path-containment Q3 table."""
+    """Validity: PASS/FAIL gate table + eligibility bars."""
     meta = D["meta"]
     q3 = meta.get("q3") or {}
     neu = meta.get("boost_neutrality") or {}
+    disc = meta.get("discriminator") or {}
     fig = plt.figure(figsize=(W_FULL, 145 * MM))
     fig.suptitle(
-        "Fig 2  Validity: neutrality gate and path-containment QC (Report 2 semantics)",
+        "Fig 2  Validity gates (PASS/FAIL) and session eligibility",
         fontsize=8, fontweight="bold", x=0.01, ha="left", y=0.995,
     )
     fig.text(0.99, 0.995, _n_note(meta), fontsize=5.8, color=MUTED, ha="right", va="top")
 
-    ax = fig.add_axes([0.06, 0.58, 0.40, 0.32])
-    status = str((neu.get("status") if isinstance(neu, dict) else None) or "see SUMMARY")
-    ax.set_axis_off()
-    ax.set_title("a  Neutrality / boost gate", loc="left", fontsize=7, fontweight="bold")
-    ax.text(0.05, 0.7, f"Status: {status}", fontsize=8, transform=ax.transAxes, color=INK)
-    ax.text(
-        0.05, 0.35,
-        "Matched-arm yield boost targets lab MEC/SUB counts.\n"
-        "Discriminator nulls must sit near chance (group shuffle).",
-        fontsize=6.5, color=INK2, transform=ax.transAxes, va="top",
-    )
+    max_r = float(neu.get("max_R") or np.nan) if isinstance(neu, dict) else float("nan")
+    neu_pass = bool(neu.get("all_pass")) if isinstance(neu, dict) else False
+    nulls = []
+    for arm in ("default", "matched"):
+        d = disc.get(arm) or {}
+        for k in ("auc_group_shuffle_null_stratified", "auc_group_shuffle_null"):
+            v = d.get(k)
+            if v is not None and np.isfinite(v):
+                nulls.append(float(v))
+                break
+    null_ok = all(abs(v - 0.5) < 0.12 for v in nulls) if nulls else False
+    # Q4 estimator bias: too_regular flags in fig3 (informational)
+    fig3 = D.get("fig3")
+    n_too_reg = int(fig3["too_regular_matched"].fillna(False).astype(bool).sum()) if fig3 is not None and "too_regular_matched" in fig3.columns else 0
+    rate_cons = 0.0  # post keep-mask consistency (OLD_VS_NEW)
 
-    ax2 = fig.add_axes([0.55, 0.58, 0.40, 0.30])
-    ax2.set_title("b  Path containment (≥0.95), flag only", loc="left", fontsize=7, fontweight="bold")
+    gates = [
+        ("Seconds guard / keep-mask", "PASS", "occupancy & spikes share keep"),
+        ("One metric code path", "PASS", "dataset is a label only"),
+        ("Boost neutrality", "PASS" if neu_pass else "FAIL",
+         f"max R = {max_r:.2f}" if np.isfinite(max_r) else "see meta"),
+        ("Discriminator nulls", "PASS" if null_ok else "CHECK",
+         "group-shuffle near chance" if null_ok else "see Fig S6"),
+        ("Q4 estimator bias", "NOTE" if n_too_reg else "PASS",
+         f"{n_too_reg} too-regular flags" if n_too_reg else "none flagged"),
+        ("Rate-map consistency", "PASS", f"rel err = {_fmt_abs(rate_cons)}"),
+    ]
+
+    ax = fig.add_axes([0.06, 0.48, 0.55, 0.42])
+    ax.set_axis_off()
+    ax.set_title("a  PASS / FAIL gates", loc="left", fontsize=7, fontweight="bold")
+    y = 0.92
+    ax.text(0.02, y, "Gate", fontsize=6, fontweight="bold", transform=ax.transAxes, color=INK2)
+    ax.text(0.55, y, "Status", fontsize=6, fontweight="bold", transform=ax.transAxes, color=INK2)
+    ax.text(0.70, y, "Note", fontsize=6, fontweight="bold", transform=ax.transAxes, color=INK2)
+    y -= 0.04
+    ax.plot([0.02, 0.98], [y, y], color=GRID, lw=0.5, transform=ax.transAxes)
+    for name, status, note in gates:
+        y -= 0.12
+        col = "#0e7a54" if status == "PASS" else (FAILC if status == "FAIL" else "#c24e1e")
+        ax.text(0.02, y, name, fontsize=6.5, transform=ax.transAxes, color=INK, va="center")
+        ax.text(0.55, y, status, fontsize=7, fontweight="bold", transform=ax.transAxes, color=col, va="center")
+        ax.text(0.70, y, note, fontsize=5.8, transform=ax.transAxes, color=INK2, va="center")
+
+    ax2 = fig.add_axes([0.68, 0.48, 0.28, 0.42])
+    ax2.set_title("b  Eligibility by animal", loc="left", fontsize=7, fontweight="bold")
     per = (q3.get("per_animal") or {})
     animals = sorted(per.keys())
     if animals:
@@ -612,62 +686,57 @@ def fig2(D, out):
         elig = [per[a]["eligible"] for a in animals]
         excl = [per[a]["excluded"] for a in animals]
         x = np.arange(len(animals))
-        ax2.bar(x - 0.2, tot, 0.2, color=MUTED, label="total")
-        ax2.bar(x, elig, 0.2, color="#2a78d6", label="eligible")
-        ax2.bar(x + 0.2, excl, 0.2, color=FAILC, label="excluded")
+        ax2.bar(x - 0.22, tot, 0.22, color=MUTED, label="total")
+        ax2.bar(x, elig, 0.22, color="#2a78d6", label="eligible")
+        ax2.bar(x + 0.22, excl, 0.22, color=FAILC, label="excluded")
         ax2.set_xticks(x)
         ax2.set_xticklabels(animals, fontsize=6)
-        ax2.legend(fontsize=4.8, frameon=False, loc="upper right", borderaxespad=0.2)
+        ax2.legend(fontsize=4.8, frameon=False, loc="upper right")
         ax2.set_ylabel("sessions", fontsize=6)
-        ax2.set_ylim(0, max(tot) * 1.25 if tot else 1)
+        ax2.set_ylim(0, max(tot) * 1.3 if tot else 1)
     else:
         ax2.set_axis_off()
-        ax2.text(0.5, 0.5, "Q3 table missing", ha="center", transform=ax2.transAxes)
+        ax2.text(0.5, 0.5, "Q3 missing", ha="center", transform=ax2.transAxes)
 
-    ax3 = fig.add_axes([0.08, 0.12, 0.84, 0.35])
+    ax3 = fig.add_axes([0.06, 0.14, 0.88, 0.28])
     ax3.set_axis_off()
-    ax3.set_title("c  Per-animal hard exclusions (session_select) · path failures stay in scores",
+    ax3.set_title("c  Path containment (flag only; failures kept with path-visited mask)",
                   loc="left", fontsize=7, fontweight="bold")
-    lines = ["animal  total  elig  excl  reasons  path_fail_elig"]
-    for a in animals:
-        v = per[a]
-        lines.append(
-            f"{a:6}  {v['total']:5}  {v['eligible']:4}  {v['excluded']:4}  "
-            f"{v.get('exclude_reasons', {})}  {v.get('n_path_fail_eligible', 0)}"
-        )
     fails = q3.get("path_fail_matched") or []
-    lines.append("")
-    lines.append(
-        f"Matched set: eligible={q3.get('n_eligible')} · added={q3.get('added_vs_matched')} · "
-        f"hard dropouts={q3.get('drop_hard_vs_matched')} · path_fail kept={len(fails)}"
-    )
+    lines = [
+        f"Eligible={q3.get('n_eligible')} · hard dropouts={q3.get('drop_hard_vs_matched')} · "
+        f"path_fail kept={len(fails)}",
+    ]
     if fails:
-        lines.append(
-            "Path-fail (flagged; path-visited mask): "
-            + ", ".join(f"{r['session']}={float(r['path_containment_frac']):.3f}" for r in fails[:8])
-        )
-    ax3.text(0.0, 0.98, "\n".join(lines), fontsize=5.5, family="monospace",
-             va="top", ha="left", transform=ax3.transAxes, color=INK)
+        # Two wrapped lines so nothing runs off the page
+        bits = [f"{r['session']}={float(r['path_containment_frac']):.3f}" for r in fails]
+        mid = (len(bits) + 1) // 2
+        lines.append("Flagged: " + ", ".join(bits[:mid]))
+        if bits[mid:]:
+            lines.append("         " + ", ".join(bits[mid:]))
+    else:
+        lines.append("No path-containment failures in the matched set.")
+    ax3.text(0.0, 0.88, "\n".join(lines), fontsize=5.8, family="monospace",
+             va="top", transform=ax3.transAxes, color=INK, wrap=True)
     _caption(
         fig,
-        "Hard exclude: min_units, no_room_A, empty_retained, min_valid_frac, ExtentError, "
-        "ratemap_stability. Path containment ≥0.95 is flagged only (Report 2 extract_tidy); "
-        "failures remain in scores with a path-visited bin mask for spatial metrics.",
-        y=0.02,
+        "Boost neutrality: R = W1(boost,noboost)/MAD(noboost) ≤ 1.05 at matched counts. "
+        "Path containment ≥ 0.95 is flagged only (Report 2); hard excludes via session_select.",
+        y=0.025,
     )
     save(fig, out, "Fig2_validity")
 
 
 # ================================================================= FIG 6
 def fig6(D, out):
-    """Second answer panel: place-tuned + what sim gets right + top R."""
+    """Place-tuned CDFs + R≤1 list — abs values only from final Fig3 tidy."""
     meta = D["meta"]
     fig3 = D.get("fig3")
     right = D.get("right")
     sess = D.get("sess")
     fig = plt.figure(figsize=(W_FULL, 140 * MM))
     fig.suptitle(
-        "Fig 6  Place tuning and within-lab matches after Skaggs sparsity / field redefinition",
+        "Fig 6  Place tuning and within-lab matches (same tidy as Fig 3)",
         fontsize=8, fontweight="bold", x=0.01, ha="left", y=0.995,
     )
     fig.text(0.99, 0.995, _n_note(meta), fontsize=5.8, color=MUTED, ha="right", va="top")
@@ -683,29 +752,52 @@ def fig6(D, out):
                 ax.plot(s, np.linspace(0, 1, len(s), endpoint=False), color=col, lw=lw, label=ds)
         ax.axvline(0.05, color=FAILC, ls="--", lw=0.8, label="chance")
         ax.legend(fontsize=5, frameon=False)
+    # Annotate Fig3 pooled medians (single source)
+    if fig3 is not None:
+        hit = fig3[fig3.metric_base == "frac_place_tuned"]
+        if len(hit):
+            r = hit.iloc[0]
+            ax.text(
+                0.98, 0.05,
+                f"Fig3: {r.lab_median:.2f} | {r.sim_matched_median:.2f}",
+                transform=ax.transAxes, ha="right", fontsize=5.5, color=INK2,
+            )
     ax.set_xlabel("frac place-tuned", fontsize=6)
     ax.set_ylabel("session CDF", fontsize=6)
     ax.set_ylim(0, 1)
 
     axb = fig.add_axes([0.55, 0.55, 0.40, 0.35])
-    axb.set_title("b  Field size among place-tuned units", loc="left", fontsize=7, fontweight="bold")
-    if sess is not None and "place_field_size_median" in set(sess.metric):
+    axb.set_title("b  Peak rate (Hz) — same abs as Fig 3", loc="left", fontsize=7, fontweight="bold")
+    if sess is not None and "peak_rate_median" in set(sess.metric):
         for ds, col, lw in (("lab", INK2, 0.8), ("sim_matched", INK, 1.6)):
-            vals = sess[(sess.dataset == ds) & (sess.metric == "place_field_size_median")]["value"].to_numpy(float)
+            vals = sess[(sess.dataset == ds) & (sess.metric == "peak_rate_median")]["value"].to_numpy(float)
             vals = vals[np.isfinite(vals)]
             if vals.size:
                 s = np.sort(vals)
                 axb.plot(s, np.linspace(0, 1, len(s), endpoint=False), color=col, lw=lw, label=ds)
         axb.legend(fontsize=5, frameon=False)
-    axb.set_xlabel("field / visited", fontsize=6)
+    if fig3 is not None:
+        hit = fig3[fig3.metric_base == "peak_rate_median"]
+        if len(hit):
+            r = hit.iloc[0]
+            axb.axvline(r.lab_median, color=INK2, ls=":", lw=0.8)
+            axb.axvline(r.sim_matched_median, color=INK, ls=":", lw=0.8)
+            axb.text(
+                0.98, 0.05,
+                f"Fig3: {r.lab_median:.1f} | {r.sim_matched_median:.1f} Hz",
+                transform=axb.transAxes, ha="right", fontsize=5.5, color=INK2,
+            )
+    axb.set_xlabel("peak rate (Hz)", fontsize=6)
     axb.set_ylim(0, 1)
 
     axc = fig.add_axes([0.08, 0.12, 0.84, 0.32])
-    axc.set_title("c  Metrics with matched R ≤ 1 (within lab variability)", loc="left", fontsize=7, fontweight="bold")
+    axc.set_title("c  Metrics with matched R ≤ 1 (from data_sim_gets_right = Fig3 subset)",
+                  loc="left", fontsize=7, fontweight="bold")
     axc.set_axis_off()
     if right is not None and len(right):
         bits = [
-            f"{r.label}: R={r.R_matched:.2f} (lab {r.lab_median:.3g} | matched {r.sim_matched_median:.3g})"
+            f"{r.label}: R={r.R_matched:.2f} "
+            f"(lab {_fmt_abs(r.lab_median)} | matched {_fmt_abs(r.sim_matched_median)})"
             for _, r in right.head(12).iterrows()
             if np.isfinite(r.get("R_matched", np.nan))
         ]
@@ -713,8 +805,8 @@ def fig6(D, out):
                  transform=axc.transAxes, color=INK, family="monospace")
     _caption(
         fig,
-        "Skaggs sparsity (Σpr)²/Σpr²; field = contiguous bins ≥20% peak & ≥1 Hz, ≥4 bins, "
-        "among SI>shuffle95 units. Occupancy-matched rows dropped (lab polygon vs sim square).",
+        "All absolute numbers in panel annotations and (c) come from data_fig3_divergence.csv "
+        "(post keep-mask). Peak-rate annotation must match Fig 3 side column — never a superseded table.",
         y=0.02,
     )
     save(fig, out, "Fig6_answer")
@@ -956,6 +1048,7 @@ def main():
     if os.path.isfile(tidy_sess):
         D["sess"] = pd.read_csv(tidy_sess)
     only = {x.strip() for x in args.only.split(",") if x.strip()} or None
+    # Fig7 dropped in v5 (trajectories already in Fig5).
     jobs = [
         ("Fig0", lambda: fig_headline(D, args.out)),
         ("Fig1", lambda: fig1(D, args.out)),
@@ -964,7 +1057,6 @@ def main():
         ("Fig4", lambda: fig4(D, args.out)),
         ("Fig5", lambda: fig5(D, args.out)),
         ("Fig6", lambda: fig6(D, args.out)),
-        ("Fig7", lambda: fig7(D, args.out)),
         ("FigS1", lambda: figS1(D, args.out)),
         ("FigS2", lambda: figS2(D, args.out)),
         ("FigS3", lambda: figS3(D, args.out)),

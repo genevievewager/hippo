@@ -87,14 +87,10 @@ PRIMARY_CONCEPTS = [
     "spatial_info_median",
     "peak_rate_median",
     "frac_place_tuned",
-    "frac_place_tuned_excess",
-    "frac_border_excess",
-    "frac_hd_excess",
-    "frac_grid_excess",
-    "frac_grid_pass",
     "frac_border_pass",
     "frac_hd_pass",
-    # frac_speed_* dropped from primary tuned-cell list (R≈1.26 after keep-mask; not a primary request)
+    "frac_speed_pass",
+    "frac_grid_pass",
     "participation_ratio",
     "speed_median",
     "decode_error_over_floor",
@@ -201,12 +197,62 @@ def session_medians(metric_path: Path) -> pd.DataFrame:
     return g
 
 
+def _pooled_abs_medians(rows_path: Path) -> pd.DataFrame:
+    """Session-pooled absolute medians (same rule as OLD_VS_NEW / story authority).
+
+    Median over all retained metric_rows values per (metric, dataset), after the
+    same N / bin3cm / Fano-W filters as ``session_medians``. Do **not** take a
+    per-session median first — multi-chunk rows would otherwise shift peak rate
+    from ~7.5 Hz to ~7.0 Hz and desync Fig 3 from the story.
+    """
+    vals: dict[tuple[str, str], list[float]] = {}
+    with rows_path.open() as f:
+        for line in f:
+            r = json.loads(line)
+            m = r["metric"]
+            if m in RANK_EXCLUDE_METRICS or m.endswith("_gt"):
+                continue
+            base = _base(m)
+            n_sensitive = {
+                "coverage_bins_mean", "sparsity_median", "participation_ratio",
+                "decode_error_over_floor", "spatial_info_median", "grid_score_median",
+                "mean_pairwise_corr", "noise_corr_mean", "hd_mean_vector_length_median",
+                "border_score_median",
+            }
+            if any(base == s or base.startswith(s + "_") for s in n_sensitive) and r.get("N") not in (None, 20, 20.0):
+                try:
+                    if abs(float(r["N"]) - 20) > 0.1:
+                        continue
+                except Exception:
+                    continue
+            rs = str(r.get("region_set") or "")
+            if "bin3cm" in rs and base in {
+                "coverage_bins_mean", "sparsity_median", "spatial_info_median",
+                "grid_score_median", "border_score_median", "frac_with_field",
+                "peak_rate_median", "encoding_bits_per_spike_median",
+            }:
+                continue
+            if m == "fano_factor" and r.get("W") not in (None, 0.25, 0.25):
+                continue
+            ds = r.get("dataset")
+            if ds not in ("lab", "sim_matched", "sim_default"):
+                continue
+            v = r.get("value")
+            if v is None or not np.isfinite(float(v)):
+                continue
+            vals.setdefault((base, ds), []).append(float(v))
+    rows = []
+    for (base, ds), xs in vals.items():
+        rows.append({"metric": base, "dataset": ds, "value": float(np.median(xs))})
+    return pd.DataFrame(rows)
+
+
 def write_divergence_both_arms(out: Path) -> pd.DataFrame:
     scores_path = SCORES_PATH if SCORES_PATH.is_file() else DATA_QUALITY_ROOT / "phase3_4a" / "scores_full.json"
     rows_path = METRIC_ROWS_PATH if METRIC_ROWS_PATH.is_file() else DATA_QUALITY_ROOT / "phase3_4a" / "metric_rows_4a.jsonl"
     full = json.loads(scores_path.read_text())
-    sess = session_medians(rows_path)
-    abs_med = sess.groupby(["dataset", "metric"])["value"].median().unstack("dataset")
+    abs_long = _pooled_abs_medians(rows_path)
+    abs_med = abs_long.pivot(index="metric", columns="dataset", values="value")
 
     rows = []
     for base in PRIMARY_CONCEPTS:
@@ -236,6 +282,9 @@ def write_divergence_both_arms(out: Path) -> pd.DataFrame:
             "metric_default": None if rd is None else rd.get("metric"),
         })
     df = pd.DataFrame(rows)
+    # Cap Fig3 at ≤25 primary rows (PRIMARY_CONCEPTS already drops excess / bin3 / context).
+    if len(df) > 25:
+        df = df.head(25)
     # sort by matched R desc within family order
     fam_order = {f: i for i, f in enumerate(["units", "sorting", "spatial", "rhythm", "population", "behaviour", "decoding", "other"])}
     df["_fo"] = df["family"].map(fam_order).fillna(99)
@@ -714,24 +763,32 @@ def main() -> None:
         extract_rate_maps_and_traj(out)
         print(json.dumps({"assets": True}), flush=True)
     else:
-        # Reuse v2 heavy assets when present
-        v2 = DATA_QUALITY_ROOT / "reports" / "report4a_v2" / "data"
-        for name in (
-            "data_rate_maps.json",
-            "data_trajectories_60s.json",
-            "data_isi_pool.json",
-            "data_occupancy.json",
-            "data_speed_turning_example.json",
-        ):
-            src, dst = v2 / name, out / name
-            if src.is_file() and not dst.is_file():
-                dst.write_bytes(src.read_bytes())
-        print(json.dumps({"assets": "reused_v2_heavy"}), flush=True)
+        # Reuse prior heavy assets when present (prefer newest)
+        for prior in ("report4a_v4", "report4a_v3", "report4a_v2"):
+            src_dir = DATA_QUALITY_ROOT / "reports" / prior / "data"
+            copied = False
+            for name in (
+                "data_rate_maps.json",
+                "data_trajectories_60s.json",
+                "data_isi_pool.json",
+                "data_occupancy.json",
+                "data_speed_turning_example.json",
+            ):
+                src, dst = src_dir / name, out / name
+                if src.is_file() and not dst.is_file():
+                    dst.write_bytes(src.read_bytes())
+                    copied = True
+            if copied:
+                print(json.dumps({"assets": f"reused_{prior}_heavy"}), flush=True)
+                break
+        else:
+            print(json.dumps({"assets": "missing_heavy"}), flush=True)
     write_meta(out, div)
     rows_path = METRIC_ROWS_PATH if METRIC_ROWS_PATH.is_file() else DATA_QUALITY_ROOT / "phase3_4a" / "metric_rows_4a.jsonl"
     sess = session_medians(rows_path)
     sess.to_csv(out / "data_session_metrics.csv", index=False)
-    # Absolute lab|matched table for A fixes
+    # Absolute lab|matched table — pooled medians (story / Fig3 authority)
+    pooled = _pooled_abs_medians(rows_path)
     abs_rows = []
     for m in (
         "sparsity_median",
@@ -744,7 +801,7 @@ def main() -> None:
         "frac_hd_pass",
         "frac_grid_pass",
     ):
-        g = sess[sess.metric == m].groupby("dataset")["value"].median()
+        g = pooled[pooled.metric == m].set_index("dataset")["value"]
         abs_rows.append({
             "metric": m,
             "lab": float(g.get("lab", float("nan"))),

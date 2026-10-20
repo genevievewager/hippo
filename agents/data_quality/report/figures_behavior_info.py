@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import sys
+import textwrap
 from pathlib import Path
 
 import matplotlib.pyplot as plt
@@ -18,8 +19,8 @@ from agents.quadrant_n5.figures.figures import GRID, INK, INK2, MM, MUTED, W_FUL
 from agents.data_quality.report.figures_r4 import save  # noqa: E402
 from agents.data_quality.phase3.divergence import _recording_day  # noqa: E402
 
-OUT_DATA = _REPO / "outputs/data_quality/reports/report4a_v4/behavior_info"
-OUT_FIGS = _REPO / "outputs/data_quality/reports/report4a_v4/figs"
+OUT_DATA = _REPO / "outputs/data_quality/reports/report4a_v6/behavior_info"
+OUT_FIGS = _REPO / "outputs/data_quality/reports/report4a_v6/figs"
 DS_COL = {"lab": "#1a1a1a", "sim_matched": "#0b5fff", "sim_default": "#6e6c66"}
 DS_LAB = {"lab": "lab", "sim_matched": "matched", "sim_default": "default"}
 PRIMARY_VARS = [
@@ -78,22 +79,25 @@ def _load_sep_curve():
 
 
 def fig8(D, out_dir: Path):
+    """Fig 7 (renumbered): behaviour information — L→R reading order; e full width."""
+    from agents.quadrant_n5.figures.figures import head_fig, save as _save
+
     dec = _pooled_primary(D["decode"])
     enc = D["enc"]
     if "N_role" in enc.columns:
         enc = enc[enc["N_role"] == "primary"].copy()
     ncurve = D["ncurve"]
     sep_curve = _load_sep_curve()
-    fig = plt.figure(figsize=(W_FULL, 250 * MM))
+    # Fit A4 180 mm frame (~220 mm tall max with caption)
+    fig = plt.figure(figsize=(W_FULL, 220 * MM))
     fig.suptitle(
-        "Fig 8  How much behaviour the population carries (N = 20)",
-        fontsize=8.0, fontweight="bold", x=0.01, ha="left", y=0.995,
+        "Fig 7  How much behaviour the population carries (N = 20)",
+        fontsize=8.0, fontweight="bold", x=0.01, ha="left", y=0.988,
     )
 
-    # (a)
-    ax = fig.add_axes([0.07, 0.68, 0.42, 0.26])
-    ax.text(0.0, 1.02, "a  Information per variable (raw − max(null, 0); ≤ 1)", transform=ax.transAxes,
-            fontsize=7.0, fontweight="bold", va="bottom")
+    # Row 1: a | b  (left → right)
+    ax = fig.add_axes([0.07, 0.68, 0.36, 0.22])
+    head_fig(fig, 0.07, 0.925, "a", "Info per variable (raw − max(null,0); ≤1)")
     vars_ = [v for v in PRIMARY_VARS if v in set(dec["variable"])]
     if "head_direction" in set(dec["variable"]):
         vars_ = vars_ + ["head_direction"]
@@ -119,18 +123,16 @@ def fig8(D, out_dir: Path):
     ax.set_ylim(-0.05, 1.05)
     ax.set_xticks(xpos)
     ax.set_xticklabels([v.replace("_", "\n") for v in vars_], fontsize=5.2)
-    ax.set_ylabel("Info above null (N = 20)", fontsize=6.5)
-    ax.legend(fontsize=5.5, frameon=False, loc="upper right")
+    ax.set_ylabel("Info above null", fontsize=6.5)
     ax.tick_params(labelsize=5.5)
     ax.grid(axis="y", color=GRID, lw=0.4)
-    if "head_direction" in vars_:
-        ax.text(0.99, 0.02, "head_direction = lab-only", transform=ax.transAxes,
-                fontsize=5.0, color=MUTED, ha="right")
+    # legend outside a
+    ax_la = fig.add_axes([0.44, 0.68, 0.08, 0.22])
+    ax_la.axis("off")
+    ax_la.legend(*ax.get_legend_handles_labels(), fontsize=5.2, frameon=False, loc="center left")
 
-    # (b) encoding with bootstrap CIs
-    ax = fig.add_axes([0.58, 0.68, 0.38, 0.26])
-    ax.text(0.0, 1.02, "b  Encoding variance shares (N = 20; 90% day bootstrap)", transform=ax.transAxes,
-            fontsize=7.0, fontweight="bold", va="bottom")
+    ax = fig.add_axes([0.56, 0.68, 0.30, 0.22])
+    head_fig(fig, 0.56, 0.925, "b", "Encoding variance shares (90% day bootstrap)")
     groups = ["position", "wall", "direction", "speed", "accel", "movement_state"]
     gcol = {
         "position": "#2a78d6", "wall": "#1baf7a", "direction": "#7b5ea7",
@@ -164,15 +166,16 @@ def fig8(D, out_dir: Path):
         ve_cis.append((ds, med, lo, hi))
     ax.set_xticks(x)
     ax.set_xticklabels([DS_LAB[d] for d in datasets], fontsize=6.5)
-    ax.set_ylabel("Population variance share", fontsize=6.5)
-    ax.legend(fontsize=4.8, frameon=False, ncol=2, loc="upper right")
+    ax.set_ylabel("Variance share", fontsize=6.5)
     ax.tick_params(labelsize=5.5)
     ax.axhline(0, color=GRID, lw=0.5)
+    ax_lb = fig.add_axes([0.87, 0.68, 0.12, 0.22])
+    ax_lb.axis("off")
+    ax_lb.legend(*ax.get_legend_handles_labels(), fontsize=4.6, frameon=False, loc="center left")
 
-    # (c)
-    ax = fig.add_axes([0.07, 0.36, 0.42, 0.26])
-    ax.text(0.0, 1.02, "c  Information vs N (raw CV R²; secondary)", transform=ax.transAxes,
-            fontsize=7.0, fontweight="bold", va="bottom")
+    # Row 2: c | d
+    ax = fig.add_axes([0.07, 0.38, 0.36, 0.22])
+    head_fig(fig, 0.07, 0.625, "c", "Information vs N (raw CV R²)")
     markers = {"position": "o", "movement_direction": "s", "speed": "^"}
     for var in ("position", "movement_direction", "speed"):
         for ds in ("lab", "sim_matched", "sim_default"):
@@ -182,26 +185,27 @@ def fig8(D, out_dir: Path):
             g = sub.groupby("N")["value"].median()
             ax.plot(g.index, g.values, markers[var], ms=4.5, color=DS_COL[ds], alpha=0.9)
             ax.plot(g.index, g.values, "-", color=DS_COL[ds], lw=0.7, alpha=0.5)
-    ax.axvline(N_PRIMARY, color=FAILC, ls=":", lw=0.8, label="N = 20 primary")
-    handles = [
+    ax.axvline(N_PRIMARY, color=FAILC, ls=":", lw=0.8)
+    ax.set_xlabel("N units", fontsize=6.5)
+    ax.set_ylabel("CV R²", fontsize=6.5)
+    ax.set_xscale("log")
+    ax.grid(color=GRID, lw=0.4)
+    ax.tick_params(labelsize=5.5)
+    handles_c = [
         Line2D([0], [0], marker="o", color=INK, ms=5, lw=0, label="position"),
-        Line2D([0], [0], marker="s", color=INK, ms=5, lw=0, label="movement dir."),
+        Line2D([0], [0], marker="s", color=INK, ms=5, lw=0, label="mov. dir."),
         Line2D([0], [0], marker="^", color=INK, ms=5, lw=0, label="speed"),
         Line2D([0], [0], marker="o", color=DS_COL["lab"], ms=5, lw=0, label="lab"),
         Line2D([0], [0], marker="o", color=DS_COL["sim_matched"], ms=5, lw=0, label="matched"),
         Line2D([0], [0], marker="o", color=DS_COL["sim_default"], ms=5, lw=0, label="default"),
+        Line2D([0], [0], color=FAILC, ls=":", lw=0.8, label="N=20"),
     ]
-    ax.legend(handles=handles, fontsize=5.0, frameon=False, ncol=2, loc="lower right")
-    ax.set_xlabel("N units", fontsize=6.5)
-    ax.set_ylabel("CV R² (session median)", fontsize=6.5)
-    ax.set_xscale("log")
-    ax.grid(color=GRID, lw=0.4)
-    ax.tick_params(labelsize=5.5)
+    ax_lc = fig.add_axes([0.44, 0.38, 0.08, 0.22])
+    ax_lc.axis("off")
+    ax_lc.legend(handles=handles_c, fontsize=4.6, frameon=False, loc="center left")
 
-    # (d)
-    ax = fig.add_axes([0.58, 0.36, 0.38, 0.26])
-    ax.text(0.0, 1.02, "d  MEC vs SUB (N = 20 where available; ≥10 units)", transform=ax.transAxes,
-            fontsize=7.0, fontweight="bold", va="bottom")
+    ax = fig.add_axes([0.56, 0.38, 0.30, 0.22])
+    head_fig(fig, 0.56, 0.625, "d", "MEC vs SUB (N=20; ≥10 units)")
     reg = D["decode"]
     reg = reg[reg["region"].isin(["MEC", "SUB"])].copy()
     vars_d = ["position", "movement_direction", "speed", "wall_distance_bin2"]
@@ -225,26 +229,24 @@ def fig8(D, out_dir: Path):
                 ax.plot(xx, np.median(vals), marker, color=DS_COL[ds], ms=6, mec="white", mew=0.4)
     ax.set_xticks(xpos + 0.05)
     ax.set_xticklabels([v.replace("_", "\n") for v in vars_d], fontsize=5.2)
-    ax.set_ylabel("Info (N ≈ 20)", fontsize=6.5)
+    ax.set_ylabel("Info", fontsize=6.5)
     ax.set_ylim(-0.05, 1.05)
     ax.axhline(0, color=GRID, lw=0.5)
     ax.grid(axis="y", color=GRID, lw=0.4)
-    handles = [
+    ax.tick_params(labelsize=5.5)
+    handles_d = [
         Line2D([0], [0], marker="o", color=INK, ms=5, lw=0, label="MEC"),
         Line2D([0], [0], marker="s", color=INK, ms=5, lw=0, label="SUB"),
         Line2D([0], [0], marker="o", color=DS_COL["lab"], ms=5, lw=0, label="lab"),
         Line2D([0], [0], marker="o", color=DS_COL["sim_matched"], ms=5, lw=0, label="matched"),
     ]
-    ax.legend(handles=handles, fontsize=5.0, frameon=False, loc="upper right")
-    ax.tick_params(labelsize=5.5)
+    ax_ld = fig.add_axes([0.87, 0.38, 0.12, 0.22])
+    ax_ld.axis("off")
+    ax_ld.legend(handles=handles_d, fontsize=5.0, frameon=False, loc="center left")
 
-    # (e) time-separation curve (drift test)
-    ax = fig.add_axes([0.07, 0.07, 0.89, 0.22])
-    ax.text(
-        0.0, 1.03,
-        "e  Place-map r vs within-session block separation (6 equal-duration train blocks)",
-        transform=ax.transAxes, fontsize=7.0, fontweight="bold", va="bottom",
-    )
+    # (e) full width at bottom
+    ax = fig.add_axes([0.07, 0.10, 0.78, 0.20])
+    head_fig(fig, 0.07, 0.325, "e", "Place-map r vs block separation (6 train blocks)")
     slope_txt = []
     if sep_curve:
         for ds in ("lab", "sim_matched"):
@@ -278,34 +280,36 @@ def fig8(D, out_dir: Path):
     ax.set_ylabel("Median place-map r", fontsize=6.5)
     ax.set_xticks([1, 2, 3, 4, 5])
     ax.set_ylim(0.3, 1.02)
-    ax.legend(fontsize=5.5, frameon=False, loc="lower left")
     ax.grid(color=GRID, lw=0.4)
     ax.tick_params(labelsize=5.5)
+    ax_le = fig.add_axes([0.87, 0.10, 0.12, 0.20])
+    ax_le.axis("off")
+    ax_le.legend(*ax.get_legend_handles_labels(), fontsize=5.2, frameon=False, loc="center left")
     if slope_txt:
-        ax.text(
-            0.99, 0.08, "  ·  ".join(slope_txt), transform=ax.transAxes,
-            fontsize=5.2, ha="right", color=INK2,
-        )
+        ax.text(0.01, 0.05, "  ·  ".join(slope_txt), transform=ax.transAxes,
+                fontsize=5.2, ha="left", color=INK2)
 
     sha = (D.get("decisions") or {}).get("hippo_r2v2_commit", "?")[:8]
     fig.text(
-        0.01, 0.005,
-        "Primary N = 20 (20 unit subsamples, median). Net info = raw CV − max(null mean, 0), capped at 1; "
-        "null = circular time-shift. Speed / accel / movement_state / movement_direction from 250 ms backward "
-        f"|Δ(X,Y)|/Δt (Report 2 v2; hippo-r2v2 @{sha}). "
-        "Diamond in b = full VE − null ±90% recording-day bootstrap; small negative unique/shared shares are noise around zero. "
-        "Ridge / population VE is not a valid absolute encoding measure on lab data (≤ 0 even with per-unit CV); "
-        "prefer held-out bits/spike. "
-        "spatial_context exploratory (bbox 15%/25%; phantom corners on lab polygons). "
-        "e: same binning/smoothing/occ threshold as encoding diagnostics; correlate bins valid in both blocks; "
-        "error bars = 90% recording-day bootstrap of session medians. Drift = lab r declines with separation, matched flat. "
-        "Spikes per map half differ (lab ~300 vs sim ~1,400 among place-tuned units) and contribute to the reliability gap.",
-        fontsize=4.6, color=INK2,
+        0.01, 0.015,
+        textwrap.fill(
+            f"Primary N=20. Net info = raw CV − max(null,0). Report 2 v2 speed @{sha}. "
+            "Diamond in b = full VE − null ±90% day bootstrap. Prefer held-out bits/spike over ridge VE on lab. "
+            "e: 90% day bootstrap; lab r declines with separation, matched flat.",
+            130,
+        ),
+        fontsize=8.0, color=INK2, va="bottom",
     )
     out_dir.mkdir(parents=True, exist_ok=True)
-    save(fig, str(out_dir), "Fig8_behavior_info")
+    _save(fig, str(out_dir), "Fig7_behavior_info")
+    # Keep legacy filename alias for any stale callers
+    for ext in ("pdf", "png"):
+        src = out_dir / f"Fig7_behavior_info.{ext}"
+        dst = out_dir / f"Fig8_behavior_info.{ext}"
+        if src.is_file():
+            import shutil
+            shutil.copy2(src, dst)
     plt.close(fig)
-    # persist encoding CIs
     pd.DataFrame([{"dataset": d, "ve_full_minus_null": m, "lo90": lo, "hi90": hi} for d, m, lo, hi in ve_cis]).to_csv(
         OUT_DATA / "encoding_ve_bootstrap.csv", index=False,
     )
@@ -555,7 +559,7 @@ def main():
     merge_fig3(D, _REPO / "outputs/data_quality/reports/report4a_v3/data")
     fig3_info_panel(D, OUT_FIGS)
     print(json.dumps({
-        "fig8": str(OUT_FIGS / "Fig8_behavior_info.png"),
+        "fig7": str(OUT_FIGS / "Fig7_behavior_info.png"),
         "s8": str(OUT_FIGS / "S8_behavior_distributions_sensitivity.png"),
         "fig3": str(OUT_FIGS / "Fig3_information_family.png"),
         "unique_variance": uvt.to_dict(orient="records"),

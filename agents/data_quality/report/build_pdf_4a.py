@@ -8,6 +8,7 @@ import json
 import os
 from pathlib import Path
 
+import numpy as np
 import pandas as pd
 from pypdf import PdfReader, PdfWriter, Transformation
 from reportlab.lib import colors
@@ -56,50 +57,69 @@ def _page_from_story(path: Path, story) -> Path:
     return path
 
 
+def _fig3_row(fig3: pd.DataFrame, base: str):
+    hit = fig3[fig3.metric_base == base]
+    return None if hit.empty else hit.iloc[0]
+
+
 def findings_page(data: Path, out: Path) -> Path:
-    find = pd.read_csv(data / "data_findings.csv")
+    """Prose summary from final Fig3 tidy (story is authority; no raw dump)."""
     meta = json.loads((data / "data_meta.json").read_text())
-    disc = pd.read_csv(data / "data_discriminator.csv")
+    fig3 = pd.read_csv(data / "data_fig3_divergence.csv")
+    disc = pd.read_csv(data / "data_discriminator.csv") if (data / "data_discriminator.csv").is_file() else None
+
+    def fmt_pair(base: str) -> str:
+        r = _fig3_row(fig3, base)
+        if r is None:
+            return "—"
+        return (
+            f"{float(r.lab_median):.2g} lab | {float(r.sim_matched_median):.2g} matched "
+            f"(R = {float(r.R_matched):.2f})"
+        )
+
+    top = fig3.dropna(subset=["R_matched"]).sort_values("R_matched", ascending=False).head(5)
+    top_txt = "; ".join(
+        f"{r.label} R = {float(r.R_matched):.2f}" for _, r in top.iterrows()
+    )
     story = [
-        Paragraph("Report 4a — Findings (measured)", H1),
+        Paragraph("Report 4a — Findings (from final tidy)", H1),
         Paragraph(
-            f"Lab n={meta['n_lab_sessions']} sessions ({meta['n_animals']} animals); "
-            f"matched n={meta['n_matched_sessions']}; default seeds={meta['n_default_seeds']}. "
-            f"thigmotaxis={meta['thigmotaxis']} (not fitted). "
-            f"Censor assumption: {meta['censor_isi_ms']:.1f} ms lab-equivalent duplicate removal.",
+            f"Lab n = {meta['n_lab_sessions']} sessions ({meta['n_animals']} animals); "
+            f"matched n = {meta['n_matched_sessions']}; default seeds = {meta['n_default_seeds']}. "
+            f"thigmotaxis = {meta['thigmotaxis']} (not fitted). "
+            "Numbers below are the same post keep-mask tables as the story page and Fig 3.",
             BODY,
         ),
-        Paragraph("Top divergences (matched arm)", H2),
-    ]
-    matched = find[find.arm == "matched"].head(8)
-    for _, r in matched.iterrows():
-        story.append(
-            Paragraph(
-                f"<b>Q2</b> {r['metric']}: R={r['R']:.2f} "
-                f"[{r['R_lo90']:.2f}, {r['R_hi90']:.2f}]; "
-                f"direction={'sim higher' if r['direction'] > 0 else 'sim lower'}; family={r['family']}.",
-                BODY,
-            )
-        )
-    story.append(Paragraph("Discriminator", H2))
-    for _, r in disc.iterrows():
-        story.append(
-            Paragraph(
-                f"<b>Q10</b> {r['arm']}: AUC(logit)={r['auc_logit']:.3f}; "
-                f"null GroupKFold={r['auc_group_shuffle_null']}; "
-                f"null StratifiedGroupKFold={r['auc_group_shuffle_null_stratified']}.",
-                BODY,
-            )
-        )
-    story.append(
+        Paragraph("Largest matched-arm divergences", H2),
+        Paragraph(top_txt + ".", BODY),
+        Paragraph("Spatial / behaviour absolutes (lab | matched)", H2),
         Paragraph(
-            "Generator has no public refractory parameter; sim GT sub-ms ISIs are a structural candidate (Q3).",
+            f"Place-tuned fraction: {fmt_pair('frac_place_tuned')}. "
+            f"Peak rate: {fmt_pair('peak_rate_median')}. "
+            f"Spatial information: {fmt_pair('spatial_info_median')}. "
+            f"Field size: {fmt_pair('place_field_size_median')}. "
+            f"Speed cells: {fmt_pair('frac_speed_pass')}. "
+            f"Speed median: {fmt_pair('speed_median')}. "
+            f"Turning-angle SD: {fmt_pair('turning_angle_std')}. "
+            f"Refractory violations: {fmt_pair('refractory_violation_rate')}.",
             BODY,
-        )
-    )
+        ),
+        Paragraph("Discriminator (nulls near chance)", H2),
+    ]
+    if disc is not None and len(disc):
+        for _, r in disc.iterrows():
+            null = r.get("auc_group_shuffle_null_stratified", r.get("auc_group_shuffle_null"))
+            null_s = f"{float(null):.2f}" if null is not None and np.isfinite(null) else "—"
+            story.append(
+                Paragraph(
+                    f"{r['arm']}: AUC(logit) = {float(r['auc_logit']):.2f}; "
+                    f"group-shuffle null ≈ {null_s}.",
+                    BODY,
+                )
+            )
     story.append(
         Paragraph(
-            "Calibration (Q13–Q15) deferred to Report 4b (proxy fidelity failed objective gate).",
+            "Calibration (Q13–Q15) deferred to Report 4b. See story page for takeaways and simulator to-do.",
             SM,
         )
     )
@@ -107,75 +127,68 @@ def findings_page(data: Path, out: Path) -> Path:
 
 
 def todo_page(data: Path, out: Path) -> Path:
-    find = pd.read_csv(data / "data_findings.csv")
+    """One numbered request per mechanism (1..n); no duplicate border rows."""
     meta = json.loads((data / "data_meta.json").read_text())
-    matched = find[find.arm == "matched"].head(10)
+    fig3 = pd.read_csv(data / "data_fig3_divergence.csv")
+
+    def R(base: str) -> str:
+        r = _fig3_row(fig3, base)
+        return f"{float(r.R_matched):.1f}" if r is not None and np.isfinite(r.R_matched) else "—"
+
+    items = [
+        (
+            "Refractory period",
+            f"Add a public refractory / min-ISI parameter to spike generation "
+            f"(inhomogeneous Poisson today; no public knob). Target: bring refractory "
+            f"violation R toward 1 (now R = {R('refractory_violation_rate')}). Structural.",
+        ),
+        (
+            "Speed / turning knobs or external trajectories",
+            f"Expose speed_* / rotational_velocity_* (DF6), or accept external trajectories "
+            f"so lab behaviour can be replayed. Speed R = {R('speed_median')}; "
+            f"turning-angle SD R = {R('turning_angle_std')}; "
+            f"thigmotaxis held at {meta['thigmotaxis']} (not fitted). Structural.",
+        ),
+        (
+            "Independent head direction",
+            "Lab head direction differs from movement direction (median ~45°); "
+            "sim HD = movement heading. Add an independent HD drive.",
+        ),
+        (
+            "Tuned-cell prevalence and per-spike information",
+            f"Reduce excess border / HD prevalence and over-strong behavioural encoding "
+            f"(place-tuned R = {R('frac_place_tuned')}; border R = {R('frac_border_pass')}; "
+            f"HD R = {R('frac_hd_pass')}). Speed-cell excess is near the reliability floor "
+            f"after the keep-mask fix (R = {R('frac_speed_pass')}) and is not a primary "
+            f"cell-type request. Raise held-out bits/spike realism among place-tuned units.",
+        ),
+        (
+            "Within-session drift",
+            "Lab place maps are less reliable (adjacent-block r ≈ 0.48 vs 0.89) and drift "
+            "slowly (slope ≈ −0.024/block vs ~0). Add a public nonstationarity / "
+            "representational-drift mechanism so simulated units are not frozen across the session.",
+        ),
+        (
+            "Expose the capture cap (DF7)",
+            "Lab-format cell capture caps each n_* at baseline RatInABox size, so raising "
+            "unit_density_per_mm cannot grow yield past ~100 MEC units. Allow n_* to scale "
+            "above baseline with density (DF7).",
+        ),
+        (
+            "Honour SimConfig.seed (DF5)",
+            "Wire config.seed into the Agent loop (today an unused RNG is built; Agent is "
+            "unseeded). Document public seeding (DF5).",
+        ),
+    ]
     story = [
         Paragraph("Simulator to-do (requests to the other lab)", H1),
         Paragraph(
-            "Each item is a measured divergence phrased as a change request. "
-            "Hypotheses about which knob is responsible are labelled as such.",
+            "One request per mechanism. Numbers from the final post keep-mask Fig 3 tidy.",
             BODY,
         ),
     ]
-    requests = []
-    for _, r in matched.iterrows():
-        base = str(r["metric"]).split("@", 1)[0]
-        if base.startswith("refractory") or "isi" in base:
-            req = (
-                f"Add a public refractory / min-ISI parameter to spike generation "
-                f"(none found; Poisson per bin today). Target: bring refractory violation "
-                f"R toward 1 (now R={r['R']:.1f}). Structural."
-            )
-        elif base in {"turning_angle_std", "speed_median", "speed_mean", "accel_std"}:
-            req = (
-                f"Expose speed_* / rotational_velocity_* (DF6). Behaviour R for {base} "
-                f"is {r['R']:.1f}; thigmotaxis held at {meta['thigmotaxis']} and was not fitted. Structural."
-            )
-        elif "coverage" in base or "sparsity" in base or "grid" in base:
-            req = (
-                f"Review spatial-field / coverage generation for {base} "
-                f"(R={r['R']:.1f}). Hypothesis: place-field / grid parameters."
-            )
-        elif "participation" in base or "pca_var" in base:
-            req = (
-                f"Review population covariance / dimensionality for {base} (R={r['R']:.1f})."
-            )
-        else:
-            req = f"Investigate {base} (R={r['R']:.1f}, family={r['family']})."
-        requests.append(req)
-    # dedupe similar
-    seen = set()
-    for i, req in enumerate(requests, 1):
-        key = req.split("(")[0][:60]
-        if key in seen:
-            continue
-        seen.add(key)
-        story.append(Paragraph(f"<b>{i}.</b> {req}", BODY))
-    story.append(
-        Paragraph(
-            "Also: accept external trajectories (DF6) so lab behaviour can be replayed exactly when knobs are insufficient.",
-            BODY,
-        )
-    )
-    story.append(
-        Paragraph(
-            "<b>HD dissociation:</b> lab head direction differs from movement direction "
-            "(median ~45°); the sim has no such dissociation (sim HD = movement heading). "
-            "Add an independent HD drive.",
-            BODY,
-        )
-    )
-    story.append(
-        Paragraph(
-            "<b>Within-session drift:</b> lab place maps are less reliable "
-            "(adjacent-block r ≈ 0.48 vs 0.89) and drift slowly (slope ≈ −0.024/block vs ~0). "
-            "Add a public nonstationarity / representational-drift mechanism. "
-            "Speed-cell excess is near the reliability floor after the keep-mask fix (R ≈ 1.26) "
-            "and is not a primary cell-type request; border and HD remain.",
-            BODY,
-        )
-    )
+    for i, (title, body) in enumerate(items, 1):
+        story.append(Paragraph(f"<b>{i}. {title}.</b> {body}", BODY))
     return _page_from_story(out / "_todo.pdf", story)
 
 

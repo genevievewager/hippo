@@ -17,7 +17,7 @@ from reportlab.lib.units import mm
 from reportlab.pdfbase import pdfmetrics
 from reportlab.pdfbase.ttfonts import TTFont
 from reportlab.pdfgen import canvas
-from reportlab.platypus import Frame, Paragraph, Spacer
+from reportlab.platypus import Frame, Paragraph, Spacer, Table, TableStyle
 
 HERE = Path(__file__).resolve().parent
 FONT_DIR = HERE.parents[1] / "quadrant_n5" / "figures" / "fonts"
@@ -41,11 +41,13 @@ def _fonts():
 FONT, BOLD = _fonts()
 W, H = A4
 M = 14 * mm
-BODY = ParagraphStyle("b", fontName=FONT, fontSize=8.5, leading=11.4, spaceAfter=4.2)
-H1 = ParagraphStyle("h1", fontName=BOLD, fontSize=12.5, leading=15.5, spaceAfter=6)
-H2 = ParagraphStyle("h2", fontName=BOLD, fontSize=9.5, leading=12, spaceBefore=5, spaceAfter=2.5)
-SM = ParagraphStyle("s", fontName=FONT, fontSize=6.6, leading=8.6, textColor=colors.HexColor("#52514e"))
-TAKE = ParagraphStyle("t", fontName=FONT, fontSize=8.5, leading=11.4, spaceAfter=3.5, leftIndent=8)
+# v6: ≤ 9 pt body; tight leading so the story fits one page with headline below
+BODY = ParagraphStyle("b", fontName=FONT, fontSize=8.5, leading=10.2, spaceAfter=2.5)
+H1 = ParagraphStyle("h1", fontName=BOLD, fontSize=11.0, leading=13.0, spaceAfter=3)
+H2 = ParagraphStyle("h2", fontName=BOLD, fontSize=8.5, leading=10.0, spaceBefore=3, spaceAfter=1.5)
+SM = ParagraphStyle("s", fontName=FONT, fontSize=6.5, leading=8.0, textColor=colors.HexColor("#52514e"), spaceAfter=2)
+TAKE = ParagraphStyle("t", fontName=FONT, fontSize=8.5, leading=10.2, spaceAfter=2.5, leftIndent=6)
+COL = ParagraphStyle("col", fontName=FONT, fontSize=7.5, leading=9.2, spaceAfter=1.5)
 
 
 def _fmt_pct(x: float) -> str:
@@ -298,156 +300,117 @@ def write_story(
             break
     right_txt = "; ".join(right_bits) if right_bits else "none with R ≤ 1 in the primary set"
 
-    turn_note = ""
-    if turn is not None:
-        too_reg = turn.get("too_regular_matched")
-        turn_note = (
-            f"Turning-angle SD (speed > 2 cm/s only) is "
-            f"{float(turn['lab_median']):.2f} vs {float(turn['sim_matched_median']):.2f} rad "
-            f"(R = {_fmt_r(float(turn['R_matched']))}"
-            + ("; flagged too-regular" if too_reg else "")
-            + ")."
+    rr = row("refractory_violation_rate")
+    take1 = (
+        f"<b>1. Refractory structure is missing.</b> "
+        f"Lab units violate a 1.5 ms refractory window in {_fmt_pct(refr_lab)} of ISIs; "
+        f"matched sim does so in {_fmt_pct(refr_sim)} (R = {_fmt_r(float(rr['R_matched']))}). "
+        f"The gap survives a 0.3 ms lab-equivalent censor. "
+        f"The generator is inhomogeneous Poisson with no public refractory / min-ISI knob."
+    )
+    take2 = (
+        f"<b>2. Behaviour is too regular and too fast.</b> "
+        f"Median speed is {float(speed['lab_median']):.2f} vs {float(speed['sim_matched_median']):.2f} cm/s "
+        f"(R = {_fmt_r(float(speed['R_matched']))}). "
+        + (
+            f"Turning-angle SD is {float(turn['lab_median']):.2f} vs {float(turn['sim_matched_median']):.2f} rad "
+            f"(R = {_fmt_r(float(turn['R_matched']))}). "
+            if turn is not None else ""
         )
+        + f"thigmotaxis was held at {meta['thigmotaxis']}; speed / rotational knobs are not public (DF6)."
+    )
+
+    methods_txt = (
+        f"<b>Methods.</b> One code path; R = d_sim/d_lab with 90% day bootstrap. "
+        f"Room A; thigmotaxis = {meta['thigmotaxis']} (held). Exact keep-mask. "
+        f"Fields among place-tuned only. Decode N=20: lab {lab_dec:.2f} vs matched {sim_dec:.2f} of floor. "
+        f"{meta.get('sub_caveat', 'SUB sparse.')}"
+    )
+    caveats_txt = (
+        "<b>Caveats.</b> No occ-matched joint bins (lab polygon ≠ sim square). "
+        "Ridge VE invalid as absolute encoding on lab. "
+        "Spikes/half ~300 lab vs ~1,400 sim. Calibration deferred to Report 4b."
+    )
+    col_w = (W - 2 * M - 4 * mm) / 2
+    two_col = Table(
+        [[Paragraph(methods_txt, COL), Paragraph(caveats_txt, COL)]],
+        colWidths=[col_w, col_w],
+    )
+    two_col.setStyle(TableStyle([
+        ("VALIGN", (0, 0), (-1, -1), "TOP"),
+        ("LEFTPADDING", (0, 0), (-1, -1), 0),
+        ("RIGHTPADDING", (0, 0), (0, 0), 3 * mm),
+        ("RIGHTPADDING", (1, 0), (1, 0), 0),
+        ("TOPPADDING", (0, 0), (-1, -1), 0),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 0),
+    ]))
 
     story = [
         Paragraph(
-            "How far is the simulator from the lab? A paired data-quality audit of "
-            "default and matched simulation arms against real hippocampal recordings",
+            "How far is the simulator from the lab? Paired data-quality audit of "
+            "default and matched arms against hippocampal recordings",
             H1,
         ),
         Paragraph(
-            f"Report 4a · sim vs lab · n = {meta['n_animals']} animals, "
-            f"{meta['n_lab_sessions']} room-A sessions · matched n = {meta['n_matched_sessions']} · "
-            f"default seeds = {meta['n_default_seeds']} · thigmotaxis = {meta['thigmotaxis']} (not fitted) · "
-            f"internal draft, not for distribution",
+            f"Report 4a · n = {meta['n_animals']} animals, {meta['n_lab_sessions']} room-A · "
+            f"matched {meta['n_matched_sessions']} · default {meta['n_default_seeds']} · "
+            f"thigmotaxis = {meta['thigmotaxis']} · internal draft",
             SM,
         ),
-        Spacer(1, 2),
         Paragraph("The question", H2),
         Paragraph(
-            "Before using the simulator as a stand-in for real data, we ask which statistics of "
-            "spikes, spatial coding, population structure and behaviour already match the lab, "
-            "and which diverge. Every metric uses one code path; dataset is a label only. "
-            "Divergence is summarised by R = d_sim / d_lab (lab-MAD-scaled distances of session "
-            "medians, 90% bootstrap by recording day). R ≤ 1 means the sim sits within lab variability.",
+            "Which spike, spatial, population and behaviour statistics already match the lab? "
+            "One code path; dataset is a label. R = d_sim/d_lab; R ≤ 1 = within lab variability.",
             BODY,
         ),
         Paragraph("Three takeaways", H2),
-        Paragraph(
-            f"<b>1. Refractory structure is missing.</b> "
-            f"Lab units violate a 1.5 ms refractory window in {_fmt_pct(refr_lab)} of ISIs "
-            f"(session median); matched sim sorted spikes do so in {_fmt_pct(refr_sim)}. "
-            f"After a lab-equivalent 0.3 ms duplicate-spike removal the gap remains. "
-            f"Ground-truth sim spikes also show sub-millisecond ISIs: the generator is "
-            f"inhomogeneous Poisson with no public refractory / min-ISI parameter. "
-            f"Matched R for refractory violations = {_fmt_r(float(row('refractory_violation_rate')['R_matched']))} "
-            f"[{_fmt_r(float(row('refractory_violation_rate')['R_matched_lo']))}, "
-            f"{_fmt_r(float(row('refractory_violation_rate')['R_matched_hi']))}] (Fig 3, Fig 4).",
-            TAKE,
-        ),
-        Paragraph(
-            f"<b>2. Behaviour is too regular and too fast.</b> "
-            f"Median speed is {float(speed['lab_median']):.2f} cm/s in the lab vs "
-            f"{float(speed['sim_matched_median']):.2f} cm/s in matched sim "
-            f"(R = {_fmt_r(float(speed['R_matched']))}). {turn_note} "
-            f"thigmotaxis was held at {meta['thigmotaxis']}; speed and rotational knobs are not "
-            f"public (DF6). Structural — see simulator to-do (Fig 5).",
-            TAKE,
-        ),
+        Paragraph(take1, TAKE),
+        Paragraph(take2, TAKE),
         Paragraph(_takeaway3(row, meta, behinfo), TAKE),
         Paragraph("What the simulation gets right", H2),
         Paragraph(
-            "Metrics with matched-arm R ≤ 1 (within lab variability) include: "
-            + right_txt
-            + ". Grid-cell fractions are near chance in both arms and are not counted as a match. "
-            "Absolute firing rates are similar (lab median "
-            f"{float(row('firing_rate_hz')['lab_median']):.2f} Hz vs matched "
-            f"{float(row('firing_rate_hz')['sim_matched_median']):.2f} Hz; "
-            f"R = {_fmt_r(float(row('firing_rate_hz')['R_matched']))}).",
+            "Matched R ≤ 1: " + right_txt
+            + f". Firing rate {float(row('firing_rate_hz')['lab_median']):.2f} vs "
+            f"{float(row('firing_rate_hz')['sim_matched_median']):.2f} Hz. Grid near chance — not a match.",
             BODY,
         ),
         Paragraph("Simulator to-do", H2),
         Paragraph(
-            "Add a public refractory / min-ISI parameter (generator is inhomogeneous Poisson). "
-            "Expose speed and rotational knobs (DF6); thigmotaxis was held at "
-            f"{meta['thigmotaxis']} and not fitted. "
-            "<b>Cell-type mix / behaviour drive:</b> reduce excess border and HD cells and "
-            "the over-strong behavioural encoding of position, movement direction and speed "
-            "(speed-cell excess is near the reliability floor after the keep-mask fix, R ≈ 1.26, "
-            "and is not listed as a primary cell-type request). "
-            f"Lab head direction differs from movement direction by a median {hd_txt}; "
-            "the sim has no such dissociation (sim HD = movement heading). "
-            "<b>Within-session drift:</b> lab place maps are less reliable "
-            "(adjacent-block r ≈ 0.48 vs 0.89) and drift slowly "
-            "(slope ≈ −0.024/block vs ~0). Add a public "
-            "nonstationarity / representational-drift mechanism so simulated units are not "
-            "frozen across the session.",
+            "<b>1</b> Refractory · <b>2</b> Speed/turning or external traj (DF6) · "
+            f"<b>3</b> Independent HD (~{hd_txt}) · <b>4</b> Tuned-cell prevalence + bits/spike · "
+            "<b>5</b> Within-session drift · <b>6</b> Capture cap (DF7) · <b>7</b> SimConfig.seed (DF5).",
             BODY,
         ),
-        Paragraph("Caveats", H2),
+        two_col,
         Paragraph(
-            f"{meta.get('sub_caveat', 'SUB is sparse in most lab sessions.')} "
-            f"Analysis is room A only. Thigmotaxis was held at {meta['thigmotaxis']} (not fitted). "
-            "Occupancy-matched joint bins are not used: a grid-index intersection across a lab "
-            "polygon and a sim square in different coordinates is not meaningful; behaviour "
-            "occupancy remains a confound. Field size is reported only among place-tuned units "
-            "(SI > shuffle 95%). Path-containment failures (< 0.95) stay in scores with a "
-            "path-visited bin mask (Report 2 flag semantics). "
-            "Matched-arm unit metrics use composition-matched subsamples to each lab session's "
-            "per-region eligible counts (20 draws, median). "
-            f"Lab decoding at N = 20 is near chance "
-            f"({lab_dec:.2f} of floor) vs matched sim ({sim_dec:.2f} of floor). "
-            f"Lab head direction differs from movement direction by a median {hd_txt}; "
-            "the sim has no such dissociation. "
-            "Primary per-unit encoding measure is held-out Poisson bits/spike "
-            "(gain-calibrated train rate map vs homogeneous). "
-            "Ridge / rate-map variance-explained is not a valid absolute encoding measure "
-            "on lab data (≤ 0 even with per-unit CV). "
-            "Spikes per place-map half differ (lab ~300 vs sim ~1,400 among place-tuned units) "
-            "and contribute to the reliability gap. "
-            "Behavioural-information nets use raw CV − max(null, 0) at N = 20 "
-            "(Report 2 v2 250 ms pos-speed; recheck when Report 2 v2 is final).",
-            BODY,
-        ),
-        Paragraph("How to read the figures", H2),
-        Paragraph(
-            "Headline panel below is a Fig 3 miniature. "
-            "Fig 3: log R (green = R ≤ 1); default arm = squares, no intervals. "
-            "Fig 4: Hz rate maps; ISI; CDFs with chance line at 0.05 for grid frac. "
-            "Fig 5: faster/straighter sim behaviour; blue lab vs orange matched CDFs. "
-            f"{meta['calibration_note']}",
-            BODY,
-        ),
-        Paragraph(
-            "Headline numbers from the matched arm (R with 90% interval): "
-            + "; ".join(
-                f"{r['label']} R = {_fmt_r(r['R_matched'])} "
-                f"[{_fmt_r(r['R_matched_lo'])}, {_fmt_r(r['R_matched_hi'])}]"
-                for _, r in top.iterrows()
-            )
-            + ".",
+            "Headline below: takeaways only. Fig 1 schematic · Fig 2 gates · Fig 3 forest · "
+            "Fig 4 maps · Fig 5 behaviour · Fig 6 place/peak · Fig 7 behaviour info.",
             SM,
         ),
     ]
 
+    hl_h = 48 * mm if headline_png and headline_png.is_file() else 0
     c = canvas.Canvas(str(out_pdf), pagesize=A4)
-    # Text in upper ~58% of page; headline miniature in lower band
-    text_h = H - 2 * M - (52 * mm if headline_png and headline_png.is_file() else 0)
-    f = Frame(M, M + (52 * mm if headline_png and headline_png.is_file() else 0), W - 2 * M, text_h, showBoundary=0)
-    f.addFromList(story, c)
+    # Text frame sits directly above the headline — no blank gap
+    text_bottom = M + hl_h + (2 * mm if hl_h else 0)
+    text_h = H - M - text_bottom
+    f = Frame(M, text_bottom, W - 2 * M, text_h, showBoundary=0,
+              leftPadding=0, rightPadding=0, topPadding=0, bottomPadding=0)
+    remaining = f.addFromList(list(story), c)
+    if remaining:
+        # Overflow: shrink by dropping spacer content is already tight; warn via canvas note
+        c.setFont(FONT, 6)
+        c.setFillColor(colors.HexColor("#c83a39"))
+        c.drawString(M, text_bottom + 1 * mm, f"[story overflow: {len(remaining)} blocks]")
     if headline_png and headline_png.is_file():
         c.drawImage(
             str(headline_png),
-            M,
-            M - 2 * mm,
+            M, M,
             width=W - 2 * M,
-            height=50 * mm,
+            height=hl_h,
             preserveAspectRatio=True,
             anchor="sw",
         )
-        c.setFont(FONT, 6)
-        c.setFillColor(colors.HexColor("#52514e"))
-        c.drawString(M, M + 48 * mm, "Headline (Fig 3 miniature)")
     c.save()
     return out_pdf
 

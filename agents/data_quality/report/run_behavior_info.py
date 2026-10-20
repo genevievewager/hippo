@@ -48,7 +48,7 @@ TRAIN_FRAC, GAP_S, W_S = 0.80, 1.0, 0.25
 SPEED_LOOKBACK_S = 0.25  # Report 2 v2 primary speed
 N_NULL, N_SUBSAMPLES = 20, 20
 N_PRIMARY = 20
-NS = (10, 20, 40)
+NS = (10, 20, 40, 80, 160)  # v7 Fig3b ladder; max = per-session n_u appended in n_curve loop
 ALPHAS = np.logspace(-2, 3, 8)
 MIN_CLASS_FRAC, MIN_REGION_UNITS = 0.05, 10
 R2V2_SHA = "e139ed0955f75ea03209a4973df7ba759ab65302"

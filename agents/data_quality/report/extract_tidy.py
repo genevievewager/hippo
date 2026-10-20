@@ -289,10 +289,16 @@ def write_tidy(out: Path, *, anon: bool = False) -> Path:
     }
     (out / "data_meta.json").write_text(json.dumps(meta, indent=2) + "\n")
 
-    # findings numbers (from ranking only)
+    # findings numbers (from ranking only; never n_units_eligible / family=other dumps)
     findings = []
+    ban_findings = {"n_units_eligible", "n_units"}
     for arm_label, arm_key in (("default", "sim_default"), ("matched", "sim_matched")):
-        ranked = [r for r in (full[arm_key].get("all") or []) if _base_metric(r["metric"]) not in RANK_EXCLUDE_METRICS]
+        ranked = [
+            r for r in (full[arm_key].get("all") or [])
+            if _base_metric(r["metric"]) not in RANK_EXCLUDE_METRICS
+            and _base_metric(r["metric"]) not in ban_findings
+            and _family(r["metric"]) != "other"
+        ]
         for i, r in enumerate(ranked[:15]):
             findings.append(
                 {

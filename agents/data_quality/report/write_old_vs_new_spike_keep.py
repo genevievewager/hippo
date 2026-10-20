@@ -13,7 +13,7 @@ _REPO = Path(__file__).resolve().parents[3]
 SNAP = _REPO / "outputs/data_quality/reports/report4a_v3/_spike_keep_old"
 PHASE = _REPO / "outputs/data_quality/phase3_4a"
 BEH = _REPO / "outputs/data_quality/reports/report4a_v3/behavior_info"
-OUT = _REPO / "outputs/data_quality/reports/report4a_v4"
+OUT = _REPO / "outputs/data_quality/reports/report4a_v5"
 
 SPATIAL = [
     "spatial_info_median", "sparsity_median", "place_field_size_median", "peak_rate_median",
