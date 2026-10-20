@@ -239,33 +239,27 @@ def main() -> int:
     DELIVER.mkdir(parents=True, exist_ok=True)
     REPORT4.mkdir(parents=True, exist_ok=True)
     if ok:
+        # reports/report4: PDFs only
         for src in (pdf, pdf_anon):
-            shutil.copy2(src, DELIVER / src.name)
             shutil.copy2(src, REPORT4 / src.name)
+            shutil.copy2(src, DELIVER / src.name)
         for p in pngs:
             shutil.copy2(p, DELIVER / p.name)
-        # Requested review PNGs
         if (png_dir / "page-01.png").is_file():
             shutil.copy2(png_dir / "page-01.png", DELIVER / "page1.png")
-            shutil.copy2(png_dir / "page-01.png", REPORT4 / "page1.png")
         elif (png_dir / "page-1.png").is_file():
             shutil.copy2(png_dir / "page-1.png", DELIVER / "page1.png")
-            shutil.copy2(png_dir / "page-1.png", REPORT4 / "page1.png")
         fig1_png = FIGS / "Fig1_behavior_info.png"
         if fig1_png.is_file():
             shutil.copy2(fig1_png, DELIVER / "Fig1_native.png")
-            shutil.copy2(fig1_png, REPORT4 / "Fig1_native.png")
         for name in (
-            "BUILD_SUMMARY.json", "number_audit.json", "anon_leak_check.json",
+            "number_audit.json", "anon_leak_check.json",
             "overlap_audit.json", "whitespace_audit.json", "duplicate_audit.json",
             "prose_audit.json",
         ):
-            src = OUT / name if name != "BUILD_SUMMARY.json" else None
-            if name == "BUILD_SUMMARY.json":
-                continue
-            if src and src.is_file():
+            src = OUT / name
+            if src.is_file():
                 shutil.copy2(src, DELIVER / name)
-                shutil.copy2(src, REPORT4 / name)
         summary["delivered"] = True
     else:
         summary["deliver_blocked"] = "one or more audits failed"
@@ -279,8 +273,6 @@ def main() -> int:
 
     (OUT / "BUILD_SUMMARY.json").write_text(json.dumps(summary, indent=2, default=str) + "\n")
     (DELIVER / "BUILD_SUMMARY.json").write_text(json.dumps(summary, indent=2, default=str) + "\n")
-    if summary.get("delivered"):
-        shutil.copy2(OUT / "BUILD_SUMMARY.json", REPORT4 / "BUILD_SUMMARY.json")
     print(json.dumps(summary, indent=2, default=str), flush=True)
     return 0 if summary.get("delivered") else 1
 

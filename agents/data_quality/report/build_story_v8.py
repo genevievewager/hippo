@@ -59,7 +59,7 @@ def write_story_v8(data: Path, out_pdf: Path) -> Path:
     flow = [
         Paragraph(
             "How far is the simulator from the lab? A paired data-quality audit of "
-            "default and matched arms against hippocampal recordings",
+            "default and condition-matched arms against hippocampal recordings",
             H1,
         ),
         Paragraph(
@@ -68,7 +68,7 @@ def write_story_v8(data: Path, out_pdf: Path) -> Path:
         ),
         Paragraph(
             f"{n_an} animals, {n_lab} room-A sessions · "
-            f"matched {n_mat} · thigmotaxis held at {thig} · "
+            f"condition-matched {n_mat} · thigmotaxis default {thig} · "
             "internal draft · numbers frozen (v5 tidy plus N-ladder)",
             SM,
         ),
@@ -84,47 +84,55 @@ def write_story_v8(data: Path, out_pdf: Path) -> Path:
         ),
         Paragraph("What was done", H2),
         Paragraph(
-            f"We paired {n_lab} room-A lab sessions from {n_an} animals with one matched "
-            "simulation per session that inherits the lab recording conditions (keep-mask, "
-            f"thigmotaxis held at {thig}). The same metric code path scores every arm; the "
-            "dataset label is the only switch. Absolute values lead the story (Figures 1–4); "
-            "the divergence ratio appears only in Figure 5. Numbers are frozen at the v5 tidy "
-            "tables, with the N-ladder amendment for population curves.",
+            f"We paired {n_lab} room-A lab sessions from {n_an} animals with one "
+            "condition-matched simulation per session that copies each lab session's recording "
+            "conditions (segment duration, per-region unit counts, arena area). It does not "
+            "copy behaviour or physiology: the simulator cannot take an external trajectory "
+            "and does not expose speed or turning parameters, so the simulated rat moves by "
+            f"the simulator's own model (thigmotaxis at its default of {thig}). The same "
+            "metric code path scores every arm; the dataset label is the only switch. Absolute "
+            "values lead the story (Figures 1–4); the divergence ratio appears only in "
+            "Figure 5. Numbers are frozen at the v5 tidy tables, with the N-ladder amendment "
+            "for population curves.",
             BODY,
         ),
         Paragraph("Three findings", H2),
         Paragraph(
             "<b>1. Simulated populations carry far more behavioural information (Figure 1).</b> "
             "Among place-tuned units, held-out bits per spike are 0.07 in the lab versus 0.43 "
-            "in the matched sim. At twenty units, position is decodable above chance in the "
-            "sim but not in the lab. Lab position information leaves chance only near forty-two "
-            "units and reaches 0.23 at the session maximum, whereas the sim already sits at "
-            "0.38 by forty units. A decoder trained and tested in the sim therefore looks "
-            "optimistic at every population size.",
+            "in the condition-matched sim. At twenty units, position is decodable above chance "
+            "in the sim but not in the lab. Lab position information leaves chance only near "
+            "forty-two units and reaches 0.23 at the session maximum, whereas the sim already "
+            "sits at 0.38 by forty units. A decoder trained and tested in the sim therefore "
+            "looks optimistic at every population size.",
             FIND,
         ),
         Paragraph(
             "<b>2. Simulated cells are tuned too often, too strongly, and never drift (Figure 2).</b> "
-            "The place-tuned fraction is 0.18 in the lab versus 0.37 in the matched sim "
-            "(chance would be about one in twenty). Adjacent-block place-map correlation is "
-            "0.48 versus 0.89; lab maps drift within a session while matched maps stay pinned. "
-            "Rate maps, spatial information, and bits per spike all point the same way: the "
-            "sim is a sharper, more stable place code than the recordings it stands in for.",
+            "The place-tuned fraction is 0.18 in the lab versus 0.37 in the condition-matched "
+            "sim (chance would be about one in twenty). Adjacent-block place-map correlation "
+            "is 0.48 versus 0.89; lab maps drift within a session while condition-matched maps "
+            "stay pinned. Rate maps, spatial information, and bits per spike all point the "
+            "same way: the sim is a sharper, more stable place code than the recordings it "
+            "stands in for.",
             FIND,
         ),
         Paragraph(
             "<b>3. No refractory period; the rat is too fast, too straight, and never still "
             "(Figure 3).</b> "
-            "Matched simulations violate a 1.5-millisecond refractory window far more often "
-            "than lab units. Median speed is higher, turning is tighter, and still periods "
-            "are scarce. In the sim, head direction equals movement heading—so any decoder "
-            "that leans on that residual in the lab will not find it here.",
+            "Condition-matched simulations violate a 1.5-millisecond refractory window far "
+            "more often than lab units. Median speed is higher, turning is tighter, and still "
+            "periods are scarce. In the sim, head direction equals movement heading—so any "
+            "decoder that leans on that residual in the lab will not find it here. The tuning "
+            "and information gaps in Figures 1–2 are measured on top of this behaviour "
+            "mismatch; the reweighting test in Figure 1g shows that behaviour alone does not "
+            "account for them.",
             FIND,
         ),
         Paragraph("What matches", H2),
         Paragraph(
-            "Several unit-level and population summaries already sit close once the keep-mask "
-            "and thigmotaxis are held (Figure 4): mean firing rate, Fano factor, interval "
+            "Several unit-level and population summaries already sit close under the "
+            "condition-matched protocol (Figure 4): mean firing rate, Fano factor, interval "
             "coefficient of variation, within-session rate drift, pairwise correlation, "
             "sparsity, field size, and peak rate. Those are the levers that do not need to "
             "move first. The gaps that remain are information, tuning prevalence, temporal "
@@ -137,20 +145,22 @@ def write_story_v8(data: Path, out_pdf: Path) -> Path:
             "order of forty or more units even to beat chance on position, and well over a "
             "hundred for accuracy that would feel useful in a closed loop. Real place maps "
             "also drift within a session, so a static encoder fitted on the first block will "
-            "quietly degrade. Designs that only pass in the matched sim should be treated as "
-            "upper bounds, not as predictions of lab performance.",
+            "quietly degrade. The information and tuning gaps (Figures 1–2) sit on top of the "
+            "behaviour mismatch, and Figure 1g's reweighting test shows behaviour alone does "
+            "not explain them. Designs that only pass in the condition-matched sim should be "
+            "treated as upper bounds, not as predictions of lab performance.",
             BODY,
         ),
         Paragraph("Caveats", H2),
         Paragraph(
             "All claims are room A only. Subiculum coverage is near-absent, so region "
-            "splits lean on MEC. Thigmotaxis is held, not swept. Population variance "
+            "splits lean on MEC. Thigmotaxis is at its default, not swept. Population variance "
             "explained is not a valid absolute on the lab arm (it sits at or below zero); "
             "we cite bits per spike and decode information above null instead. Occ-matched "
             "joint bins are not available because the lab arena is a polygon and the sim "
             "arena is a square. The default arm (five seeds) is shown on figures for "
-            "orientation; primary claims compare lab against matched. Calibration of the "
-            "remaining gaps is deferred to Report 4b.",
+            "orientation; primary claims compare lab against condition-matched. Calibration "
+            "of the remaining gaps is deferred to Report 4b.",
             BODY,
         ),
         Paragraph(

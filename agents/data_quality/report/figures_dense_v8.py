@@ -40,27 +40,48 @@ from agents.quadrant_n5.figures.figures import (  # noqa: E402
 )
 
 DS_COL = {"lab": "#1a1a1a", "sim_matched": "#0b5fff", "sim_default": "#8f8d87"}
-DS_LAB = {"lab": "lab", "sim_matched": "matched", "sim_default": "default"}
+DS_LAB = {"lab": "lab", "sim_matched": "condition-matched", "sim_default": "default"}
 DS_MRK = {"lab": "o", "sim_matched": "s", "sim_default": "D"}
 
 
 def save(fig, out, name):
-    """Save after text-overlap / panel-edge checks (PDF layer misses rasterized labels)."""
+    """Save after text-overlap / panel-edge / sparse-panel checks."""
     from agents.data_quality.report.overlap_audit import audit_mpl_figure
 
     fig.canvas.draw()
     fails = audit_mpl_figure(fig)
-    bad = [
-        f for f in fails
-        if f.get("kind") in ("fig_text_text", "fig_edge", "panel_edge")
-    ]
+    hard = {
+        "fig_text_text", "fig_edge", "panel_edge", "sparse_panel",
+        "text_image", "text_axes",
+    }
+    # Hard-fail: panel overflow, sparse panels, within-panel text collisions, figure edge.
+    # text_axes / text_image are reported but only fail when fig-level text sits deep in a panel.
+    bad = []
+    for f in fails:
+        k = f.get("kind")
+        if k in ("panel_edge", "sparse_panel", "fig_edge"):
+            bad.append(f)
+        elif k == "fig_text_text" and f.get("within_panel"):
+            bad.append(f)
+        elif k == "text_axes" and len(str(f.get("text") or "")) > 2:
+            bad.append(f)
+        elif k == "text_image":
+            bad.append(f)
     if bad:
         print(json.dumps({
             "mpl_overlap": name, "n": len(bad),
             "within_panel": sum(1 for f in bad if f.get("within_panel")),
             "edge": sum(1 for f in bad if f.get("kind") in ("fig_edge", "panel_edge")),
-            "sample": bad[:8],
+            "sparse": sum(1 for f in bad if f.get("kind") == "sparse_panel"),
+            "sample": bad[:10],
         }, default=str), flush=True)
+        # Redesigned figures must be clean. Untouched figures (1/3/4/S1/Appendix)
+        # may still carry intentional legend overhang — do not hard-fail panel_edge there.
+        hard = bad
+        if name not in ("Fig2_tuning_drift", "Fig5_R_todo"):
+            hard = [f for f in bad if f.get("kind") != "panel_edge"]
+        if hard:
+            raise RuntimeError(f"mpl overlap audit failed for {name}: {len(hard)} issues")
     _save(fig, out, name)
 
 
@@ -71,7 +92,7 @@ def _caption(fig, text, y=0.006, width=138, fontsize=5.9):
 def _n_note(meta):
     return (
         f"n = {meta['n_animals']} animals, {meta['n_lab_sessions']} lab; "
-        f"{meta['n_matched_sessions']} matched; {meta['n_default_seeds']} default"
+        f"{meta['n_matched_sessions']} condition-matched; {meta['n_default_seeds']} default"
     )
 
 
@@ -150,14 +171,14 @@ FAM_COL = {
     "other": "#a3a19b",
 }
 
-# Fig 5b — simulator requests (cite panels only; avoid re-plotting tokens)
-SIM_TODO_LINES = [
-    "Add refractory / min-ISI knob — gap in Fig 3c (lab 0.084% vs matched 0.87%).",
-    "Slow the rat and increase curvature — Fig 3e–f (speed 4.23 vs 7.10; turn SD 0.31 vs 0.11).",
-    "Decouple head from movement heading — lab residual ~45° (Fig 3h).",
-    "Reduce over-tuning / bits — Fig 2b,d + Fig 1 (0.18 vs 0.37 place-tuned; 0.07 vs 0.43 bits).",
-    "Introduce within-session map drift — Fig 2e–f (lab sep-curve falls; matched flat).",
-    "Capture cap (DF7); SimConfig.seed (DF5); external traj / speed–turn knobs (DF6).",
+# Fig 5b — simulator to-do table (frozen numbers; six rows; no mid-phrase wrap)
+SIM_TODO_ROWS = [
+    ("Add refractory / min-ISI knob", "ISI <1.5 ms: 0.084% vs 0.87%", "Fig 3c", "No"),
+    ("Slow the rat; increase curvature", "Speed 4.23 vs 7.10; turn SD 0.31 vs 0.11", "Fig 3e–f", "No"),
+    ("Decouple head from movement heading", "Lab residual ~45°; sim ~0°", "Fig 3h", "No"),
+    ("Reduce over-tuning and bits/spike", "Place-tuned 0.18 vs 0.37; bits 0.07 vs 0.43", "Fig 2b,d; Fig 1", "No"),
+    ("Introduce within-session map drift", "Lab sep-curve falls; condition-matched flat", "Fig 2e–f", "No"),
+    ("Capture cap; seed; traj/speed knobs", "DF7 / DF5 / DF6 — not public today", "Appendix", "Partial (seed)"),
 ]
 
 
@@ -186,7 +207,7 @@ def _paired_strip(ax, lab_s: pd.Series, mat_s: pd.Series, def_med=None):
         ax.plot(1.45, def_med, "D", color=DS_COL["sim_default"], ms=5.5, zorder=4,
                 markeredgecolor="white", markeredgewidth=0.3)
     ax.set_xticks([0, 1])
-    ax.set_xticklabels(["lab", "matched"], fontsize=6)
+    ax.set_xticklabels(["lab", "condition-matched"], fontsize=6)
     ax.set_xlim(-0.75, 1.75 if def_med is None else 1.85)
     ax.axhline(0, color=GRID, lw=0.4)
     ax.grid(axis="y", color=GRID, lw=0.3)
@@ -213,7 +234,7 @@ def fig_spikes(D, out: Path):
     # ---- a: 1 s rasters ----
     _panel(fig, 0.01, 0.968, "a", "1 s rasters (20 units); red ticks = ISI < 1.5 ms")
     refr = float(isi.get("refractory_s", 0.0015))
-    for j, (ds, title) in enumerate((("lab", "lab"), ("sim_matched", "matched"))):
+    for j, (ds, title) in enumerate((("lab", "lab"), ("sim_matched", "condition-matched"))):
         ax = fig.add_axes([0.055 + j * 0.225, 0.755, 0.21, 0.195])
         block = (rasters.get(ds) or {}).get("units") or []
         for u in block:
@@ -280,7 +301,7 @@ def fig_spikes(D, out: Path):
             pts = np.asarray(pts, float)
             ax.plot(pts[:, 0], pts[:, 1], color="#8a8780", lw=0.7, zorder=0)
 
-    for j, (key, title) in enumerate((("lab", "lab"), ("sim_matched", "matched"))):
+    for j, (key, title) in enumerate((("lab", "lab"), ("sim_matched", "condition-matched"))):
         ax = fig.add_axes([0.055 + j * 0.185, 0.445, 0.17, 0.250])
         t = traj.get(key) or {}
         x, y = np.asarray(t.get("x", []), float), np.asarray(t.get("y", []), float)
@@ -368,7 +389,7 @@ def fig_spikes(D, out: Path):
         lab_med = float(np.median(lab_hd)) if lab_hd.size else np.nan
         mat_med = float(np.median(mat_hd)) if mat_hd.size else np.nan
         ax.axvline(lab_med, color=DS_COL["lab"], lw=1.6, label=f"lab med {lab_med:.0f}°")
-        ax.axvline(mat_med, color=DS_COL["sim_matched"], lw=1.6, ls="--", label=f"matched med {mat_med:.0f}°")
+        ax.axvline(mat_med, color=DS_COL["sim_matched"], lw=1.6, ls="--", label=f"condition-matched med {mat_med:.0f}°")
         if step1p is not None and len(step1p[step1p.dataset == "sim_default"]):
             def_hd = float(step1p[step1p.dataset == "sim_default"].iloc[0]["median_hd_vs_move_abs_deg"])
             ax.axvline(def_hd, color=DS_COL["sim_default"], lw=1.2, ls=":", label=f"default {def_hd:.0f}°")
@@ -403,22 +424,38 @@ def fig_tuning(D, out: Path):
     sep = (D["drift_sum"].get("sep_curve") or {})
     drift_sep = D["drift_sep"]
 
-    fig = plt.figure(figsize=(W_FULL, 268 * MM))
+    fig_h_mm = 268.0
+    fig_w_mm = 180.0
+    fig = plt.figure(figsize=(W_FULL, fig_h_mm * MM))
     fig.suptitle(
         "Fig 2  Simulated cells are tuned too often, too strongly, and never drift",
         fontsize=7.6, fontweight="bold", x=0.01, ha="left", y=0.997,
     )
     fig.text(0.99, 0.997, _n_note(meta), fontsize=5.4, color=MUTED, ha="right", va="top")
 
-    # ---- a: map gallery — frozen store is p25/p50/p75 only (6 maps/arm), not SI p10–p90 ----
-    _panel(fig, 0.01, 0.968, "a", "Place-tuned rate maps (Hz); stored p25/p50/p75 assets; per-panel scale")
-    for row_i, ds in enumerate(("lab", "sim_matched")):
+    # ---- layout (mm → figure fraction); gaps between rows ≤ 8 mm ----
+    map_mm = 25.0
+    mw = map_mm / fig_w_mm
+    mh = map_mm / fig_h_mm
+    gap_x = 1.2 / fig_w_mm
+    gap_y_maps = 2.0 / fig_h_mm
+    row_gap = 7.0 / fig_h_mm  # < 8 mm
+    x_maps = 0.085
+    y_top = 0.870
+    y_bot = y_top - mh - gap_y_maps
+
+    _panel(fig, 0.01, 0.975, "a", "Place-tuned rate maps (all stored assets, SI order; per-map scale)")
+
+    for row_i, (ds, ylab) in enumerate((("lab", "lab"), ("sim_matched", "condition-matched"))):
+        yb = y_top if row_i == 0 else y_bot
+        fig.text(
+            0.012, yb + mh / 2, ylab,
+            fontsize=6.2, rotation=90, va="center", ha="center", color=INK2,
+        )
         maps = [r for r in RM if r["dataset"] == ds and r.get("ok", True)]
-        maps = sorted(maps, key=lambda r: (int(r.get("percentile", 50)), float(r.get("spat_info", 0))))
-        # show all stored maps (≤6); pad layout to 5–6 columns
-        maps = maps[:6]
+        maps = sorted(maps, key=lambda r: float(r.get("spat_info", 0)))[:6]
         for j, r in enumerate(maps):
-            ax = fig.add_axes([0.05 + j * 0.10, 0.755 - row_i * 0.165, 0.092, 0.145])
+            ax = fig.add_axes([x_maps + j * (mw + gap_x), yb, mw, mh])
             rate = np.ma.masked_invalid(np.asarray(r["rate"], float))
             ext = r["extent"]
             vmax = float(np.nanmax(r["rate"])) if np.isfinite(r["rate"]).any() else 1.0
@@ -429,20 +466,36 @@ def fig_tuning(D, out: Path):
                 cmap="viridis", vmin=0, vmax=vmax,
                 aspect="equal", interpolation="nearest",
             )
-            ax.set_xticks([]); ax.set_yticks([])
+            ax.set_xticks([])
+            ax.set_yticks([])
             for sp in ax.spines.values():
-                sp.set_color("#6e6c66"); sp.set_linewidth(0.35)
-            pct = r.get("percentile", "?")
-            ax.set_title(
-                f"p{pct}  SI {r['spat_info']:.2f}\n{r['peak_hz']:.1f} Hz",
-                fontsize=4.4, pad=0.8, linespacing=1.0,
+                sp.set_color("#6e6c66")
+                sp.set_linewidth(0.35)
+            lab = f"SI {r['spat_info']:.2f} · {r['peak_hz']:.0f} Hz"
+            ax.text(
+                0.04, 0.06, lab, transform=ax.transAxes,
+                fontsize=7.0, color="white", va="bottom", ha="left",
+                bbox=dict(boxstyle="round,pad=0.15", facecolor="#1a1a1a", edgecolor="none", alpha=0.55),
             )
-            if j == 0:
-                ax.set_ylabel("lab" if ds == "lab" else "matched", fontsize=6)
 
-    # ---- b: tuned fractions ----
-    ax = fig.add_axes([0.66, 0.62, 0.31, 0.32])
-    _panel(fig, 0.66, 0.968, "b", "Fraction tuned (shuffle 95%)")
+    # Row 2: three equal panels — titles via set_title (inside axes band)
+    h2 = 0.235
+    y2 = y_bot - row_gap - h2
+    w2 = 0.285
+    g2 = 0.04
+    x2 = [0.07, 0.07 + w2 + g2, 0.07 + 2 * (w2 + g2)]
+
+    def _ptitle(ax, letter, title):
+        # Title inside the axes so panel_edge stays clean
+        ax.text(
+            0.01, 0.98, f"{letter}  {title}", transform=ax.transAxes,
+            fontsize=6.2, fontweight="bold", va="top", ha="left", color=INK,
+            clip_on=True, zorder=10,
+        )
+
+    # ---- b ----
+    ax = fig.add_axes([x2[0], y2, w2, h2])
+    _ptitle(ax, "b", "Fraction tuned (shuffle 95%)")
     classes = [
         ("frac_place_tuned", "place"),
         ("frac_border_pass", "border"),
@@ -465,8 +518,7 @@ def fig_tuning(D, out: Path):
         for rect, m in zip(bars, meds):
             if np.isfinite(m):
                 ax.text(rect.get_x() + rect.get_width() / 2, m + 0.008, f"{m:.2f}",
-                        ha="center", va="bottom", fontsize=4.8, color=INK)
-    # default as small markers
+                        ha="center", va="bottom", fontsize=5.0, color=INK)
     for ci, (metric, _) in enumerate(classes):
         dv = sess[(sess.dataset == "sim_default") & (sess.metric == metric)]["value"].to_numpy(float)
         dv = dv[np.isfinite(dv)]
@@ -477,13 +529,13 @@ def fig_tuning(D, out: Path):
     ax.set_xticklabels([lab for _, lab in classes], fontsize=6)
     ax.set_ylabel("fraction of units", fontsize=5.5)
     ax.set_ylim(0, 0.55)
-    ax.legend(fontsize=4.8, frameon=False, loc="upper right")
+    ax.legend(fontsize=4.6, frameon=False, loc="upper right")
     ax.tick_params(labelsize=5)
     ax.grid(axis="y", color=GRID, lw=0.3)
 
-    # ---- c: SI among place-tuned ----
-    ax = fig.add_axes([0.08, 0.34, 0.28, 0.22])
-    _panel(fig, 0.01, 0.58, "c", "Spatial information (place-tuned units)")
+    # ---- c ----
+    ax = fig.add_axes([x2[1], y2, w2, h2])
+    _ptitle(ax, "c", "Spatial information (place-tuned)")
     for ds in ("lab", "sim_matched"):
         v = enc_u[(enc_u.dataset == ds) & (enc_u.place_tuned == True)]["spatial_info"].to_numpy(float)
         v = v[np.isfinite(v)]
@@ -500,15 +552,14 @@ def fig_tuning(D, out: Path):
     ax.tick_params(labelsize=5)
     ax.grid(color=GRID, lw=0.3)
 
-    # ---- d: bits/spike paired — bits_ratemap_end → 0.07 | 0.43 ----
-    ax = fig.add_axes([0.42, 0.34, 0.24, 0.22])
-    _panel(fig, 0.42, 0.58, "d", "Held-out bits/spike (place-tuned; paired)")
+    # ---- d ----
+    ax = fig.add_axes([x2[2], y2, w2, h2])
+    _ptitle(ax, "d", "Held-out bits/spike (paired)")
     bits_col = "bits_ratemap_end"
     pt = enc_u[enc_u.place_tuned == True]
     sm = pt.groupby(["dataset", "session"], as_index=False)[bits_col].median()
     lab_s = sm[sm.dataset == "lab"].set_index("session")[bits_col]
     mat_s = sm[sm.dataset == "sim_matched"].set_index("session")[bits_col]
-    # v5 frozen: bits_end_med_place = unit-pooled median among place-tuned (0.07 | 0.43)
     table = (enc_diag.get("table") or {})
     lab_pool = float((table.get("lab") or {}).get("bits_end_med_place"))
     mat_pool = float((table.get("sim_matched") or {}).get("bits_end_med_place"))
@@ -522,19 +573,26 @@ def fig_tuning(D, out: Path):
                    s=9, color=DS_COL["sim_matched"], alpha=0.45, zorder=3, linewidths=0)
     ax.plot(0, lab_pool, "o", color=DS_COL["lab"], ms=8, markeredgecolor="white", markeredgewidth=0.5, zorder=6)
     ax.plot(1, mat_pool, "o", color=DS_COL["sim_matched"], ms=8, markeredgecolor="white", markeredgewidth=0.5, zorder=6)
-    ax.text(0, lab_pool, f"  {lab_pool:.2f}", fontsize=6.0, va="center", color=INK, zorder=7)
-    ax.text(1, mat_pool, f"  {mat_pool:.2f}", fontsize=6.0, va="center", color=INK, zorder=7)
+    ax.text(-0.18, lab_pool, f"{lab_pool:.2f}", fontsize=6.0, va="center", ha="right", color=INK, zorder=7)
+    ax.text(1.18, mat_pool, f"{mat_pool:.2f}", fontsize=6.0, va="center", ha="left", color=INK, zorder=7)
     ax.set_xticks([0, 1])
-    ax.set_xticklabels(["lab", "matched"], fontsize=6)
-    ax.set_xlim(-0.35, 1.55)
+    ax.set_xticklabels(["lab", "condition-matched"], fontsize=5.5)
+    ax.set_xlim(-0.55, 1.55)
     ax.axhline(0, color=GRID, lw=0.4)
     ax.grid(axis="y", color=GRID, lw=0.3)
     ax.set_ylabel("bits / spike", fontsize=5.5)
     ax.tick_params(labelsize=5)
 
-    # ---- e: drift curve (was f) ----
-    ax = fig.add_axes([0.72, 0.34, 0.24, 0.22])
-    _panel(fig, 0.72, 0.58, "e", "Place-map r vs block separation")
+    # Row 3: (e) + (f same width as d); leave caption band below
+    y3 = 0.078
+    h3 = y2 - row_gap - y3
+    xf = x2[2]
+    wf = w2
+    xe = 0.07
+    we = xf - xe - 0.03
+
+    ax = fig.add_axes([xe, y3, we, h3])
+    _ptitle(ax, "e", "Place-map r vs block separation")
     for ds in ("lab", "sim_matched"):
         c = sep.get(ds) or {}
         by = c.get("by_sep") or {}
@@ -547,7 +605,7 @@ def fig_tuning(D, out: Path):
         yerr = np.vstack([np.asarray(meds) - np.asarray(los), np.asarray(his) - np.asarray(meds)])
         ax.errorbar(seps, meds, yerr=yerr, fmt="o-", color=DS_COL[ds], ms=4.5,
                     capsize=2, lw=1.0, label=DS_LAB[ds])
-    ax.set_xlabel("Block separation", fontsize=5.5)
+    ax.set_xlabel("Block separation", fontsize=5.5, labelpad=1)
     ax.set_ylabel("Median place-map r", fontsize=5.5)
     ax.set_xticks([1, 2, 3, 4, 5])
     ax.set_ylim(0.3, 1.02)
@@ -555,9 +613,8 @@ def fig_tuning(D, out: Path):
     ax.tick_params(labelsize=5)
     ax.grid(color=GRID, lw=0.3)
 
-    # ---- f: adjacent-block paired (was g); leave a clear band above the caption ----
-    ax = fig.add_axes([0.08, 0.085, 0.88, 0.205])
-    _panel(fig, 0.01, 0.305, "f", "Adjacent-block reliability (sep = 1; paired)")
+    ax = fig.add_axes([xf, y3, wf, h3])
+    _ptitle(ax, "f", "Adjacent-block reliability (sep = 1)")
     adj = drift_sep[drift_sep.sep == 1]
     lab_a = adj[adj.dataset == "lab"].set_index("session")["r_med"]
     mat_a = adj[adj.dataset == "sim_matched"].set_index("session")["r_med"]
@@ -568,15 +625,12 @@ def fig_tuning(D, out: Path):
 
     _caption(
         fig,
-        "Rate-map gallery (a) shows the frozen place-tuned assets at stored SI percentiles "
-        "(p25/p50/p75; six maps per arm), each on its own colour scale. Tuned fractions (b) "
-        "are session medians against a five-percent chance line; diamonds mark the default arm. "
-        "Spatial information (c) and held-out bits per spike (d) among place-tuned units give "
-        "pooled medians 0.07 lab and 0.43 matched. Place-map correlation versus block "
-        "separation (e) uses a 90% recording-day bootstrap; adjacent-block pairs (f) show the "
-        "same reliability session by session. Half-map splits are omitted from the frozen tidy; "
-        "the drift claim rests on (e) and (f). Absolute values only; R is Figure 5.",
-        y=0.004,
+        "Gallery (a): six stored place-tuned maps per arm in SI order (≥24 mm; SI · peak inside). "
+        "Tuned fractions (b) vs chance 0.05; diamonds = default. SI ECDF (c) and bits/spike (d) "
+        "give pooled medians 0.07 lab | 0.43 condition-matched (values beside medians). "
+        "Map r vs block separation (e, 90% day bootstrap); adjacent-block pairs (f). "
+        "Absolute values; R is Figure 5.",
+        y=0.006, width=145, fontsize=5.4,
     )
     save(fig, str(out), "Fig2_tuning_drift")
 
@@ -918,12 +972,12 @@ def fig_info(D, out: Path, ncurve_ladder: Path | None = None):
     # Keep caption below panel-e x-label band
     _caption(
         fig,
-        "Information above a shuffled null at twenty units (a) is clearer in matched and default "
+        "Information above a shuffled null at twenty units (a) is clearer in condition-matched and default "
         "sims than in the lab (head-direction is lab-only). Position vs N (b): session medians with "
         "a 5–95% band, y clipped to [−0.2, 0.7], lab zero-crossing marked; ladder N in "
         "{10, 20, 40, 80, 160, max}. Region splits (c) and behavioural variance share (d) show the "
         "same gap — lab population VE is not a valid absolute. Decode error/floor (e–f) falls "
-        "faster in the matched arm; reweighted test (g) asks whether covariate mismatch alone "
+        "faster in the condition-matched arm; reweighted test (g) asks whether covariate mismatch alone "
         "explains the gap. Absolute values; R is Figure 5.",
         y=0.002, width=130, fontsize=5.6,
     )
@@ -993,7 +1047,7 @@ def fig4(D, out: Path):
     ]
     fig = plt.figure(figsize=(W_FULL, 250 * MM))
     fig.suptitle(
-        "Fig 4  What the simulator already gets right (matched R ≤ 1)",
+        "Fig 4  What the simulator already gets right (condition-matched R ≤ 1)",
         fontsize=7.6, fontweight="bold", x=0.01, ha="left", y=0.997,
     )
     fig.text(0.99, 0.997, _n_note(meta), fontsize=5.4, color=MUTED, ha="right", va="top")
@@ -1035,17 +1089,17 @@ def fig4(D, out: Path):
             )
     handles = [
         Line2D([0], [0], marker="o", color="w", markerfacecolor=DS_COL["lab"], ms=6, label="lab"),
-        Line2D([0], [0], marker="o", color="w", markerfacecolor=DS_COL["sim_matched"], ms=6, label="matched"),
+        Line2D([0], [0], marker="o", color="w", markerfacecolor=DS_COL["sim_matched"], ms=6, label="condition-matched"),
         Line2D([0], [0], marker="D", color="w", markerfacecolor=DS_COL["sim_default"], ms=6, label="default"),
     ]
     fig.legend(handles=handles, loc="upper right", bbox_to_anchor=(0.99, 0.985),
                fontsize=5.5, frameon=False, ncol=3)
     _caption(
         fig,
-        "Each panel is a paired session strip from lab to matched sim; diamonds mark the default "
-        "arm median across five seeds. Corner numbers are the matched divergence ratio and the "
-        "pooled lab and matched medians for that metric. These are the statistics that already "
-        "sit close once keep-mask and thigmotaxis are held — mean rate, Fano factor, interval "
+        "Each panel is a paired session strip from lab to condition-matched sim; diamonds mark the default "
+        "arm median across five seeds. Corner numbers are the condition-matched divergence ratio and the "
+        "pooled lab and condition-matched medians for that metric. These are the statistics that already "
+        "sit close under the condition-matched protocol — mean rate, Fano factor, interval "
         "CV, rate drift, pairwise correlation, sparsity, field size, and peak rate. Spatial "
         "information among place-tuned units is shown in Figure 2c and is not repeated here. "
         "Absolute values; the full R forest is Figure 5.",
@@ -1056,7 +1110,7 @@ def fig4(D, out: Path):
 
 # ================================================================= FIG 5
 def fig5(D, out: Path):
-    """Divergence forest (R only) + simulator to-do — markers on log axis, not bars from 1."""
+    """Divergence forest (R only) + simulator to-do table."""
     from matplotlib.ticker import FixedLocator, NullFormatter
 
     meta = D["meta"]
@@ -1073,6 +1127,7 @@ def fig5(D, out: Path):
         df = df.iloc[:23].reset_index(drop=True)
 
     n = len(df)
+    fig_w_mm = 180.0
     fig = plt.figure(figsize=(W_FULL, 268 * MM))
     fig.suptitle(
         "Fig 5  Divergence ratio R and simulator to-do",
@@ -1080,43 +1135,71 @@ def fig5(D, out: Path):
     )
     fig.text(0.99, 0.997, _n_note(meta), fontsize=5.4, color=MUTED, ha="right", va="top")
 
-    # ---- a: forest as markers + 90% intervals on log axis ----
-    y0, yh = 0.22, 0.72
-    ax = fig.add_axes([0.34, y0, 0.36, yh])
-    _panel(fig, 0.01, 0.968, "a", "Divergence ratio R (matched ±90% day; □ = default)")
+    # ---- a: forest — top 60% of page; 60 mm left gutter for row labels ----
+    gutter = 60.0 / fig_w_mm  # 0.333
+    right_g = 0.26
+    y_a, h_a = 0.370, 0.595  # ~60% page
+    ax = fig.add_axes([gutter, y_a, 1.0 - gutter - right_g - 0.015, h_a])
+    # Pale label gutter (occupied for whitespace; labels live here, ha=right)
+    ax_gutter = fig.add_axes([0.01, y_a, gutter - 0.015, h_a], sharey=ax)
+    ax_gutter.set_facecolor("#f2f0ea")
+    ax_gutter.set_xlim(0, 1)
+    ax_gutter.set_xticks([])
+    ax_gutter.tick_params(left=False, labelleft=False)
+    for sp in ax_gutter.spines.values():
+        sp.set_visible(False)
+    _panel(fig, 0.01, 0.978, "a", "Divergence ratio R (condition-matched ±90% day; □ = default)")
+
     y = np.arange(n)
     lo_lim = 0.15
+    lo = float(np.nanmin(np.r_[df["R_matched_lo"].to_numpy(float), df["R_default"].to_numpy(float)]))
+    hi = float(np.nanmax(np.r_[df["R_matched_hi"].to_numpy(float), df["R_default"].to_numpy(float)]))
+    x_lo = max(lo_lim, lo * 0.8)
+    x_hi = max(40, hi * 1.15)
+    # R ≤ 1 shaded
+    ax.axvspan(x_lo, 1.0, color="#0e7a54", alpha=0.10, zorder=0, lw=0)
     ax.axvline(1.0, color=FAILC, lw=1.0, ls="--", zorder=1)
-    # Thin separators between families
     fams_row = df["family"].tolist()
     for i in range(1, n):
         if fams_row[i] != fams_row[i - 1]:
             ax.axhline(i - 0.5, color="#b0aea6", lw=0.55, zorder=1)
+    # Default squares first (behind), then intervals, then circles
+    for i, r in df.iterrows():
+        c = FAM_COL.get(r["family"], MUTED)
+        if np.isfinite(r.get("R_default", np.nan)):
+            ax.plot(r["R_default"], i, "s", color="white", ms=4.2, zorder=2,
+                    markeredgecolor=c, markeredgewidth=0.95)
     for i, r in df.iterrows():
         c = FAM_COL.get(r["family"], MUTED)
         if np.isfinite(r["R_matched"]):
             ax.plot([r["R_matched_lo"], r["R_matched_hi"]], [i, i], color=c, lw=1.35, zorder=3)
             ax.plot(r["R_matched"], i, "o", color=c, ms=5.0, zorder=4,
                     markeredgecolor="white", markeredgewidth=0.3)
-        if np.isfinite(r.get("R_default", np.nan)):
-            ax.plot(r["R_default"], i, "s", color="white", ms=4.0, alpha=0.95, zorder=4,
-                    markeredgecolor=c, markeredgewidth=0.9)
+
     ax.set_yticks(y)
-    ax.set_yticklabels([str(r["label"]) for _, r in df.iterrows()], fontsize=5.2)
+    ax.set_yticklabels([])  # labels drawn in gutter so they never enter the plot
     ax.set_xlabel("R (log scale)", fontsize=6)
     ax.set_xscale("log")
-    lo = float(np.nanmin(np.r_[df["R_matched_lo"].to_numpy(float), df["R_default"].to_numpy(float)]))
-    hi = float(np.nanmax(np.r_[df["R_matched_hi"].to_numpy(float), df["R_default"].to_numpy(float)]))
-    ax.set_xlim(max(lo_lim, lo * 0.8), max(40, hi * 1.15))
-    ax.set_ylim(-0.6, n - 0.4)
+    ax.set_xlim(x_lo, x_hi)
+    ax.set_ylim(-0.6, n + 0.35)  # headroom for absolute-value column headers
     ax.xaxis.set_major_locator(FixedLocator([1, 10]))
-    ax.xaxis.set_major_formatter(plt.FuncFormatter(lambda v, _p: f"{int(v)}" if abs(v - round(v)) < 1e-9 else f"{v:g}"))
+
+    ax.xaxis.set_major_formatter(
+        plt.FuncFormatter(lambda v, _p: f"{int(v)}" if abs(v - round(v)) < 1e-9 else f"{v:g}")
+    )
     ax.xaxis.set_minor_formatter(NullFormatter())
     ax.grid(axis="x", color=GRID, lw=0.35)
     ax.tick_params(labelsize=5)
 
-    # Absolute values column — fixed-width aligned
-    ax2 = fig.add_axes([0.72, y0, 0.26, yh], sharey=ax)
+    # Right-aligned labels in the fixed 60 mm gutter (owned by gutter axes)
+    for i, r in df.iterrows():
+        ax_gutter.text(
+            0.98, float(i), str(r["label"]),
+            ha="right", va="center", fontsize=5.4, color=INK, clip_on=True,
+        )
+
+    # Absolute values — monospaced right gutter, two columns with headers
+    ax2 = fig.add_axes([1.0 - right_g, y_a, right_g - 0.012, h_a], sharey=ax)
     ax2.set_xlim(0, 1)
     ax2.xaxis.set_visible(False)
     for sp in ax2.spines.values():
@@ -1125,61 +1208,74 @@ def fig5(D, out: Path):
     for i in range(1, n):
         if fams_row[i] != fams_row[i - 1]:
             ax2.axhline(i - 0.5, color="#b0aea6", lw=0.55, zorder=1)
-    ax2.text(0.02, n - 0.15, "lab          matched", fontsize=5.3, fontweight="bold", color=INK2,
-             transform=ax2.get_yaxis_transform(), clip_on=False, va="bottom", family="monospace")
+    # Headers in the headroom band above row 0 (still inside axes ylim)
+    ax2.text(0.04, n + 0.15, "lab", fontsize=5.0, fontweight="bold", color=INK2,
+             transform=ax2.get_yaxis_transform(), clip_on=True, va="center", family="monospace", ha="left")
+    ax2.text(0.42, n + 0.15, "condition-matched", fontsize=5.0, fontweight="bold", color=INK2,
+             transform=ax2.get_yaxis_transform(), clip_on=True, va="center", family="monospace", ha="left")
     for i, r in df.iterrows():
-        lab_s = f"{_fmt_abs(r['lab_median']):>8}"
-        mat_s = f"{_fmt_abs(r['sim_matched_median']):>8}"
         ax2.text(
-            0.02, float(i),
-            f"{lab_s}   {mat_s}",
-            fontsize=5.2, va="center", family="monospace", color=INK,
-            transform=ax2.get_yaxis_transform(), clip_on=False,
+            0.04, float(i), f"{_fmt_abs(r['lab_median']):>7}",
+            fontsize=5.0, va="center", family="monospace", color=INK,
+            transform=ax2.get_yaxis_transform(), clip_on=True, ha="left",
         )
-    # left family key
-    axk = fig.add_axes([0.01, y0, 0.06, yh])
-    axk.set_xlim(0, 1)
-    axk.set_ylim(-0.6, n - 0.4)
-    axk.axis("off")
-    fams = [f for f in fam_order if f in set(df["family"])]
-    for i, r in df.iterrows():
-        axk.add_patch(Rectangle((0.15, i - 0.35), 0.7, 0.7,
-                                facecolor=FAM_COL.get(r["family"], MUTED), edgecolor="none",
-                                transform=axk.transData))
-    for j, f in enumerate(fams):
-        fig.text(0.01, 0.955 - j * 0.018, "█ " + f, fontsize=5.2, fontweight="bold", color=FAM_COL[f])
+        ax2.text(
+            0.42, float(i), f"{_fmt_abs(r['sim_matched_median']):>7}",
+            fontsize=5.0, va="center", family="monospace", color=INK,
+            transform=ax2.get_yaxis_transform(), clip_on=True, ha="left",
+        )
 
-    # ---- b: sim todo (wrapped; clip so panel-edge audit can catch overflow) ----
-    axb = fig.add_axes([0.04, 0.035, 0.92, 0.165])
+    # ---- b: to-do table — bottom 35% (matplotlib Table; 8 pt; col widths from longest cell)
+    y_b, h_b = 0.030, 0.325
+    axb = fig.add_axes([0.02, y_b, 0.96, h_b])
     axb.axis("off")
-    axb.set_clip_on(True)
-    _panel(fig, 0.01, 0.215, "b", "Simulator to-do (requests + measured gaps)")
-    axb.add_patch(Rectangle((0.0, 0.0), 1.0, 1.0, fill=True, facecolor="#d8d6d0",
-                            edgecolor="#6e6c66", lw=0.7, transform=axb.transAxes))
-    mid = (len(SIM_TODO_LINES) + 1) // 2
-    left = SIM_TODO_LINES[:mid]
-    right = SIM_TODO_LINES[mid:]
-    axb.text(
-        0.02, 0.90,
-        "\n".join(f"• {textwrap.fill(line, 52)}" for line in left),
-        transform=axb.transAxes, va="top", ha="left", fontsize=5.6, color=INK,
-        linespacing=1.35, clip_on=True,
+    _panel(fig, 0.01, y_b + h_b + 0.012, "b", "Simulator to-do")
+
+    headers = [
+        "Request",
+        "Measured gap (lab vs condition-matched)",
+        "Figure",
+        "Fixable with public parameters?",
+    ]
+    rows = [list(r) for r in SIM_TODO_ROWS]
+    cells = [headers] + rows
+    col_chars = [max(len(str(cells[r][c])) for r in range(len(cells))) for c in range(4)]
+    weights = [float(max(c, 8)) for c in col_chars]
+    total = float(sum(weights))
+    col_widths = [w / total for w in weights]
+
+    tab = axb.table(
+        cellText=rows,
+        colLabels=headers,
+        cellLoc="left",
+        colLoc="left",
+        loc="center",
+        colWidths=col_widths,
     )
-    axb.text(
-        0.52, 0.90,
-        "\n".join(f"• {textwrap.fill(line, 52)}" for line in right),
-        transform=axb.transAxes, va="top", ha="left", fontsize=5.6, color=INK,
-        linespacing=1.35, clip_on=True,
-    )
+    tab.auto_set_font_size(False)
+    tab.set_fontsize(8.0)
+    tab.scale(1.0, 1.55)
+    for (r, c), cell in tab.get_celld().items():
+        cell.set_edgecolor("#6e6c66")
+        cell.set_linewidth(0.45)
+        cell.PAD = 0.02
+        if r == 0:
+            cell.set_facecolor("#d8d6d0")
+            cell.set_text_props(fontweight="bold", color=INK)
+        elif r % 2 == 0:
+            cell.set_facecolor("#f2f0ea")
+        else:
+            cell.set_facecolor("#ffffff")
+        cell.get_text().set_color(INK)
 
     _caption(
         fig,
-        "Each row is one frozen metric. Circles mark the matched divergence ratio with a 90% "
-        "recording-day interval on a log axis; open squares mark the default arm. Thin lines "
-        "separate metric families. The right column lists aligned lab and matched absolute "
-        "medians. Panel (b) restates the measured gaps that Figures 1–3 open. This is the only "
-        "figure that plots R.",
-        y=0.005,
+        "Each row is one frozen metric. Circles mark the condition-matched divergence ratio with a 90% "
+        "recording-day interval on a log axis; hollow squares (behind) mark the default arm. The green "
+        "band is R ≤ 1. Thin lines separate metric families. The right gutter lists aligned lab and "
+        "condition-matched absolute medians. Panel (b) is the measured-gap punch list. This is the "
+        "only figure that plots R.",
+        y=0.004, width=140, fontsize=5.5,
     )
     save(fig, str(out), "Fig5_R_todo")
 
@@ -1274,7 +1370,7 @@ def figS1(D, out: Path):
     _caption(
         fig,
         "Session CDFs for metrics that do not appear on Figures 1–5. Thin black is lab, thick "
-        "blue is matched, dotted grey is the default arm. Fifteen panels cover burst fraction, "
+        "blue is condition-matched, dotted grey is the default arm. Fifteen panels cover burst fraction, "
         "short intervals, censored refractory violations, presence ratio, a contamination proxy, "
         "sorted-to-ground-truth spike count, occupancy entropy, dwell time, wall distance, "
         "participation ratio, noise correlation, the first principal-component fraction, decode "
@@ -1304,7 +1400,7 @@ def fig_appendix(D, out: Path):
     max_r = float(neu.get("max_R") or neu.get("max_r") or np.nan)
     neu_pass = bool(neu.get("pass", True)) if neu else True
     null_ok = True
-    for a in ("default", "matched"):
+    for a in ("default", "matched"):  # JSON keys; display label is condition-matched
         d = disc.get(a) or {}
         null = d.get("auc_group_shuffle_null_stratified") or d.get("auc_group_shuffle_null")
         if null is not None and float(null) > 0.65:
@@ -1334,18 +1430,19 @@ def fig_appendix(D, out: Path):
     # b: discriminator bars
     axb = fig.add_axes([0.68, 0.58, 0.28, 0.36])
     _panel(fig, 0.68, 0.968, "b", "Discriminator AUC")
-    arms = ["default", "matched"]
+    arm_keys = ["default", "matched"]  # JSON keys
+    arm_labs = ["default", "condition-matched"]
     aucs, nulls = [], []
-    for a in arms:
+    for a in arm_keys:
         d = disc.get(a) or {}
         aucs.append(float(d.get("auc_logit") or np.nan))
         nulls.append(float(d.get("auc_group_shuffle_null_stratified") or d.get("auc_group_shuffle_null") or np.nan))
-    x = np.arange(len(arms))
+    x = np.arange(len(arm_keys))
     axb.bar(x - 0.15, aucs, 0.28, color=INK, label="AUC", zorder=2)
     axb.bar(x + 0.15, nulls, 0.28, color=MUTED, label="null", zorder=2)
     axb.axhline(0.5, color=FAILC, ls="--", lw=0.7)
     axb.set_xticks(x)
-    axb.set_xticklabels(arms, fontsize=6.5)
+    axb.set_xticklabels(arm_labs, fontsize=5.5)
     axb.set_ylim(0, 1.05)
     axb.legend(fontsize=5.5, frameon=False)
     axb.tick_params(labelsize=5.5)
@@ -1354,7 +1451,10 @@ def fig_appendix(D, out: Path):
     # c: eligibility by animal
     axc = fig.add_axes([0.08, 0.30, 0.88, 0.22])
     fig.text(0.01, 0.535, "c", fontsize=8.5, fontweight="bold", va="bottom", ha="left")
-    axc.set_title("Eligibility by animal", loc="left", fontsize=6.5, fontweight="bold", pad=3)
+    axc.text(
+        0.0, 0.98, "Eligibility by animal", transform=axc.transAxes,
+        fontsize=6.5, fontweight="bold", va="top", ha="left", color=INK, clip_on=True,
+    )
     per = (q3.get("per_animal") or {})
     animals = sorted(per.keys())
     if animals:
@@ -1385,7 +1485,7 @@ def fig_appendix(D, out: Path):
         axe.axhspan(k / 10, (k + 1) / 10, color="#d8d6d0", zorder=0, lw=0, transform=axe.transAxes)
     _panel(fig, 0.01, 0.265, "d", "Path-containment list")
     lines = [
-        f"Eligible sessions = {q3.get('n_eligible')} · hard dropouts vs matched = "
+        f"Eligible sessions = {q3.get('n_eligible')} · hard dropouts vs condition-matched = "
         f"{q3.get('drop_hard_vs_matched')} · path-fail kept = {len(q3.get('path_fail_matched') or [])}.",
     ]
     fails = q3.get("path_fail_matched") or []
@@ -1400,7 +1500,7 @@ def fig_appendix(D, out: Path):
         if bits[mid:]:
             lines.append("  " + ", ".join(bits[mid:]))
     else:
-        lines.append("No path-containment failures in the matched set.")
+        lines.append("No path-containment failures in the condition-matched set.")
     lines.append(str(meta.get("sub_caveat", "") or ""))
     lines.append(str(meta.get("calibration_note", "Calibration deferred to Report 4b.") or ""))
     lines.append("Old-versus-new keep-mask table: CSV only (not in this PDF).")
