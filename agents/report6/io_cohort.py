@@ -62,8 +62,20 @@ def _animal_key_from_dirname(name: str) -> str:
 
 
 def build_alias_map(force: bool = False) -> dict[str, Any]:
-    """Write gitignored alias map; return public view without real IDs if possible."""
+    """Write gitignored alias map; prefer local snapshot paths when present."""
     OUT_ROOT.mkdir(parents=True, exist_ok=True)
+    snap_manifest = OUT_ROOT / "snapshot" / "manifest.json"
+    if snap_manifest.is_file():
+        # Prefer frozen snapshot (avoids races with concurrent Report 2 writers).
+        rows = json.loads(snap_manifest.read_text())
+        blob = {
+            "n_real": sum(1 for r in rows if r["arm"] == "real"),
+            "n_sim": sum(1 for r in rows if r["arm"] == "sim"),
+            "rows": rows,
+            "source": "snapshot",
+        }
+        ALIAS_PATH.write_text(json.dumps(blob, indent=2) + "\n")
+        return blob
     if ALIAS_PATH.is_file() and not force:
         return json.loads(ALIAS_PATH.read_text())
 

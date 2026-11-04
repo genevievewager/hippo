@@ -65,27 +65,29 @@ def stage_null_a(methods: tuple[str, ...] = ("lds", "pca"), arms: tuple[str, ...
 
 
 def stage_null_b() -> None:
+    build_alias_map(force=True)
     lds_ok = set(_lds_cut_aliases(3))
     out = []
+    jobs: list[tuple[str, str]] = []
     for s in iter_sessions(arm="real"):
-        for method in ("pca", "lds"):
-            if method == "lds" and s.alias not in lds_ok:
-                continue
-            print(f"[null_b] {s.alias} {method} n_units={s.n_units}", flush=True)
-            t0 = time.time()
-            r = null_b_surrogate(s, method=method, n_surr=5)
-            r["wall_s"] = time.time() - t0
-            save_json(r, OUT_ROOT / "null_b" / f"{s.alias}_{method}.json")
-            out.append(r)
-            print(f"  done wall_s={r['wall_s']:.1f} n_pass={r.get('n_pass')}", flush=True)
-    # sim PCA only for null b (lighter)
+        jobs.append((s.alias, "pca"))
+        if s.alias in lds_ok:
+            jobs.append((s.alias, "lds"))
     for s in iter_sessions(arm="sim"):
-        print(f"[null_b] {s.alias} pca", flush=True)
+        jobs.append((s.alias, "pca"))
+    for alias, method in jobs:
+        sess = next(x for x in iter_sessions() if x.alias == alias)
+        print(f"[null_b] {alias} {method} n_units={sess.n_units}", flush=True)
         t0 = time.time()
-        r = null_b_surrogate(s, method="pca", n_surr=5)
+        try:
+            r = null_b_surrogate(sess, method=method, n_surr=5)
+        except Exception as e:
+            r = {"alias": alias, "method": method, "error": repr(e)}
+            print(f"  ERROR {e}", flush=True)
         r["wall_s"] = time.time() - t0
-        save_json(r, OUT_ROOT / "null_b" / f"{s.alias}_pca.json")
+        save_json(r, OUT_ROOT / "null_b" / f"{alias}_{method}.json")
         out.append(r)
+        print(f"  done wall_s={r['wall_s']:.1f} n_pass={r.get('n_pass')}", flush=True)
     save_json(out, OUT_ROOT / "null_b" / "summary.json")
 
 
