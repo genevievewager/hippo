@@ -68,15 +68,17 @@ def summarize() -> dict:
 
     n = len(rows) or 1
     frac_qual = sum(1 for r in rows if r["qualifies"]) / n
-    both = [r for r in rows if r["qualifies"] and r["distinguishable"] and r.get("null_a") is True]
-    # if null_a missing, use distinguishable only for interim
-    if any(r.get("null_a") is not None for r in rows):
+    frac_dist = sum(1 for r in rows if r["qualifies"] and r["distinguishable"]) / n
+    null_a_done = [r for r in rows if r.get("null_a") is not None]
+    if null_a_done:
         frac_strict = sum(
             1 for r in rows
             if r["qualifies"] and r["distinguishable"] and r.get("null_a") is True
         ) / n
+        strict_label = "qual+distinguishable+null_a"
     else:
-        frac_strict = sum(1 for r in rows if r["qualifies"] and r["distinguishable"]) / n
+        frac_strict = frac_dist
+        strict_label = "qual+distinguishable (null_a pending)"
     plant_hit = None
     if pl:
         pref = next((r for r in pl if r.get("method") == "pca"), pl[0])
@@ -85,8 +87,10 @@ def summarize() -> dict:
     three = {
         "frac_real_lds_qualifying": round(frac_qual, 3),
         "frac_qual_and_distinguishable_and_null_a": round(frac_strict, 3),
+        "strict_label": strict_label,
         "plant_hit_rate": plant_hit,
-        "note": "null_a/plant may be interim if stages incomplete",
+        "n_null_a_done": len(null_a_done),
+        "note": "rebuild PDF after null_a/plant/null_b complete",
     }
     return {"rows": rows, "three_numbers": three, "n_real": len(rows)}
 

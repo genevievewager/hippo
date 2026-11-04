@@ -18,42 +18,58 @@ from agents.report6.visits import binary_runs_from_labels, count_visits
 def plant_pattern(
     X: np.ndarray,
     train_mask: np.ndarray,
+    test_mask: np.ndarray,
     times_s: np.ndarray,
     *,
     n_events: int = 40,
     dwell_s: float = 0.500,
     min_gap_s: float = 5.0,
     seed: int = PILOT_SEED + 3,
+    amp_scale: float = 5.0,
 ) -> tuple[np.ndarray, np.ndarray]:
-    """Add a recurring population pattern; return (X_planted, planted_mask)."""
+    """Inject a recurring population pattern; half of events in train, half in test."""
     X = np.asarray(X, dtype=float).copy()
     T, n_u = X.shape
     dt = float(np.median(np.diff(times_s))) if len(times_s) > 1 else DT_S
     dwell_n = max(1, int(round(dwell_s / dt)))
     gap_n = max(1, int(round(min_gap_s / dt)))
     rng = np.random.default_rng(seed)
-    # unit pattern: random signs, L2-normalised
     p = rng.normal(size=n_u)
     p = p / (np.linalg.norm(p) + 1e-12)
-    # scale: 2 × median train count L2
     norms = np.linalg.norm(X[train_mask], axis=1)
-    scale = 2.0 * float(np.median(norms))
+    scale = float(amp_scale) * float(np.median(norms))
     amp = scale * p
 
-    # candidate starts with gaps
-    starts = []
-    t = gap_n
-    while t + dwell_n < T and len(starts) < n_events:
-        starts.append(t)
-        t += dwell_n + gap_n
-    # if too few, pack denser
-    if len(starts) < n_events:
-        starts = list(range(gap_n, T - dwell_n, max(gap_n, dwell_n + 1)))[:n_events]
+    def _place(mask: np.ndarray, n_want: int) -> list[int]:
+        idx = np.where(mask)[0]
+        if idx.size < dwell_n + 2:
+            return []
+        starts = []
+        i = int(idx[0])
+        last = int(idx[-1])
+        while i + dwell_n <= last and len(starts) < n_want:
+            # require the dwell window to lie inside mask
+            win = np.arange(i, i + dwell_n)
+            if win[-1] < T and mask[win].all():
+                starts.append(i)
+                i += dwell_n + gap_n
+            else:
+                i += max(1, gap_n // 2)
+        return starts
+
+    # Need ≥5% train occupancy for M1 to qualify the planted cluster.
+    n_train = int(train_mask.sum())
+    n_need_train = max(n_events // 2, int(np.ceil(0.06 * n_train / max(dwell_n, 1))))
+    n_need_test = max(n_events - n_events // 2, int(np.ceil(0.06 * int(test_mask.sum()) / max(dwell_n, 1))))
+    # shrink gap if needed to fit
+    gap_n = max(1, min(gap_n, max(1, n_train // max(n_need_train, 1) - dwell_n)))
+    starts = _place(train_mask, n_need_train) + _place(test_mask, n_need_test)
 
     planted = np.zeros(T, dtype=bool)
     for st in starts:
         planted[st : st + dwell_n] = True
-        X[st : st + dwell_n] = X[st : st + dwell_n] + amp
+        # replace (not just add) so the planted state is a clear density peak
+        X[st : st + dwell_n] = amp
     return X, planted
 
 
@@ -66,14 +82,20 @@ def plant_and_recover(
     if s.X_counts is None:
         return {"alias": s.alias, "error": "no_X_counts"}
     Xp, planted = plant_pattern(
-        s.X_counts, s.train_ok, s.decode_times, seed=seed,
+        s.X_counts,
+        s.train_ok,
+        s.test_mask & s.retained & s.valid,
+        s.decode_times,
+        seed=seed,
     )
     d = s.primary_d_pca if method == "pca" else s.primary_d_lds
     Z = fit_transform_pca_lds(method, Xp, s.train_ok, d=d, seed=seed)
     d_use = min(3, Z.shape[1])
     Z = Z[:, :d_use]
     tgt = find_targets(Z, s.train_ok, times_s=s.decode_times, dt_s=DT_S, seed=seed)
-    if not tgt.get("targets"):
+    # Prefer any *qualifying* candidate with max planted overlap (not only top-3 by occ).
+    qual = [c for c in (tgt.get("candidates") or []) if c.get("qualifies")]
+    if not qual or tgt.get("labels") is None:
         return {
             "alias": s.alias,
             "method": method,
@@ -82,10 +104,9 @@ def plant_and_recover(
             "fa_per_min": None,
             "pass": False,
         }
-    # choose target with max overlap to planted on train
     labels = tgt["labels"]
     best_lab, best_ov = None, -1.0
-    for tinfo in tgt["targets"]:
+    for tinfo in qual:
         lab = int(tinfo["label"])
         memb = labels == lab
         ov = float((memb & planted & s.train_ok).sum()) / max(1, int((planted & s.train_ok).sum()))

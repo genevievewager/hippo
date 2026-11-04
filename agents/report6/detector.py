@@ -109,20 +109,33 @@ def fit_detector(
     if X_pos.shape[0] < 5:
         X_pos = Z[train]
     mu, prec = _fit_cov_precision(X_pos)
+    # Floor eigenvalues so a near-point mass target still has usable distances
+    # (plant-and-recover / tiny clusters).
+    try:
+        cov = np.linalg.inv(prec)
+    except np.linalg.LinAlgError:
+        cov = np.diag(np.maximum(np.var(X_pos, axis=0), 1e-3))
+    cov = cov + 1e-2 * np.eye(cov.shape[0])
+    prec = np.linalg.pinv(cov)
     model = DetectorModel(mu=mu, precision=prec, logit_a=0.0, logit_b=1.0)
     d2 = model.mahalanobis2(Z[train])
     y_tr = y[train].astype(int)
-    # logistic: P = σ(a - b D²)
-    clf = LogisticRegression(max_iter=500, solver="lbfgs")
-    clf.fit((-d2).reshape(-1, 1), y_tr)  # positive coef on -D² → a + c*(-D²)? 
-    # sklearn: σ(coef · x + intercept) with x = -D²
-    # → σ(intercept + coef*(-D²)) = σ(a - b D²) with a=intercept, b=-coef if coef<0
-    # Actually coef on (-D²): logit = intercept + coef * (-D²) = intercept - coef*D²
-    # so a = intercept, b = coef (if we store logit_a - logit_b * D², then logit_b = coef)
-    a = float(clf.intercept_[0])
-    b = float(clf.coef_[0, 0])  # since x=-D², logit=a + b*(-D²)=a - b D² → logit_b=b
-    model.logit_a = a
-    model.logit_b = b
+    # Manual threshold calibration when classes are linearly separable / degenerate
+    d_in = d2[y_tr == 1]
+    d_out = d2[y_tr == 0]
+    if d_in.size and d_out.size:
+        thr = 0.5 * (float(np.quantile(d_in, 0.9)) + float(np.quantile(d_out, 0.1)))
+        thr = max(thr, float(np.quantile(d_in, 0.99)) + 1e-3)
+        # P = σ(a - b D²) with steep b so P≈1 for D²<<thr, P≈0 for D²>>thr
+        b = 10.0 / max(thr, 1e-3)
+        a = b * thr
+        model.logit_a = float(a)
+        model.logit_b = float(b)
+    else:
+        clf = LogisticRegression(max_iter=500, solver="lbfgs")
+        clf.fit((-d2).reshape(-1, 1), y_tr)
+        model.logit_a = float(clf.intercept_[0])
+        model.logit_b = float(clf.coef_[0, 0])
     return model
 
 

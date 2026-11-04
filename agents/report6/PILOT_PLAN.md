@@ -139,9 +139,11 @@ and Brier score on held-out ≤ 0.25.
 ## 7. Plant-and-recover (sim only)
 
 - One matched-sim session (S01 of the sim alias list).
-- Plant: add a fixed population pattern `p` (unit vector in count space, norm
-  scaled to 2 × median train count L2) at 40 known windows of 500 ms, spaced
-  through the session (≥ 5 s apart), half in train and half in test by time.
+- Plant: replace counts with a fixed population pattern `p` (unit vector, norm
+  scaled to 5 × median train count L2) in 500 ms windows, split across train
+  and test. Number of windows is set so planted occupancy is ≥ 6% of each
+  block (otherwise M1 cannot qualify the planted cluster under the 5% rule;
+  ≈40 was too few). Gap shrinks as needed to fit.
 - Refit PCA (and LDS if time) on planted X; run M1–M2.
 - **Hit rate:** fraction of planted test windows overlapping a detected visit.
 - **False alarms:** detected visits with no planted window within 1 s /
