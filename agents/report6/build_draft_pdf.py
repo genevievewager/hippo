@@ -268,8 +268,9 @@ def write_figure_page(pdf: PdfPages, fig_key: str, meta: dict) -> None:
 
 
 def ship(pdf_path: Path, extra: list[Path] | None = None) -> list[str]:
-    # Revision work stays in hippo-r6 only (do not write into hippo/).
+    # Canonical open path is hippo/reports/report6/ (see report6-pdf-ship rule).
     ship_dirs = [
+        Path("/home/gmwager/projects/hippo/reports/report6"),
         ROOT / "reports" / "report6",
     ]
     shipped = []
