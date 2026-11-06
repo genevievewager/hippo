@@ -261,6 +261,23 @@ def main() -> None:
         "three_numbers": summary["three_numbers"],
     }
     (OUT_ROOT / "anon_leak_check.json").write_text(json.dumps(audit, indent=2) + "\n")
+
+    # Ship to canonical reports/report6/ (hippo + hippo-r6), same pattern as Report 1.
+    ship_dirs = [
+        Path("/home/gmwager/projects/hippo/reports/report6"),
+        ROOT / "reports" / "report6",
+    ]
+    for dest in ship_dirs:
+        dest.mkdir(parents=True, exist_ok=True)
+        (dest / "figures").mkdir(parents=True, exist_ok=True)
+        for src in [pdf_path, OUT_ROOT / "summary_counts.json",
+                    OUT_ROOT / "anon_leak_check.json", OUT_ROOT / "SHA256SUMS"]:
+            if src.is_file():
+                (dest / src.name).write_bytes(src.read_bytes())
+        for fig in sorted((OUT_ROOT / "figures").glob("F6_*")):
+            (dest / "figures" / fig.name).write_bytes(fig.read_bytes())
+        audit.setdefault("shipped_to", []).append(str(dest))
+
     print(json.dumps(audit, indent=2))
 
 

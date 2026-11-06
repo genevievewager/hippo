@@ -1,0 +1,12 @@
+# Report 6 PDF ship destination
+
+Whenever the Report 6 pilot PDF is rebuilt or updated, **always** copy it to:
+
+`/home/gmwager/projects/hippo/reports/report6/`
+
+(same path as workspace `reports/report6/`).
+
+- This is the canonical location the user opens — do not leave the PDF only under `hippo-r6/outputs/report6/`.
+- `agents/report6/build_summary_pdf.py` (in hippo-r6) ships to both `hippo/reports/report6/` and `hippo-r6/reports/report6/`.
+- After any PDF rebuild outside that script, copy the new file into `reports/report6/` yourself.
+- Do not remove or bypass this ship step.
