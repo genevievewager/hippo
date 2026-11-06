@@ -146,12 +146,15 @@ def null_b_surrogate(
         ok = r.get("status") == "ok" and bool(r.get("top_distinguishable_pass"))
         passes.append({"i": i, "pass": ok, "status": r.get("status")})
     n_pass = sum(1 for p in passes if p["pass"])
+    # Revision C2: at most 20% of surrogates succeed (≤1/5 LDS; ≤4/20 PCA).
+    max_pass = max(0, int(round(0.20 * n_surr)))
     return {
         "alias": s.alias,
         "method": method,
         "n_surr": n_surr,
         "n_pass": n_pass,
-        "null_b_pass": n_pass <= 1,
+        "max_pass": max_pass,
+        "null_b_pass": n_pass <= max_pass,
         "surrogates": passes,
     }
 

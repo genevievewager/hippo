@@ -92,7 +92,7 @@ def write_summary_page(pdf: PdfPages, summary: dict) -> None:
     ax.set_ylim(0, 1)
 
     y = 0.968
-    ax.text(MARGIN / A4_W, y, "Report 6 — Draft", fontsize=7.5, color="#555",
+    ax.text(MARGIN / A4_W, y, "Report 6 draft", fontsize=7.5, color="#555",
             transform=ax.transAxes, va="top")
     y -= 0.022
     ax.text(MARGIN / A4_W, y, "Latent-space target clamp (pilot)",
@@ -100,7 +100,7 @@ def write_summary_page(pdf: PdfPages, summary: dict) -> None:
     y -= 0.024
     ax.text(
         MARGIN / A4_W, y,
-        "One-page summary  ·  anonymized sessions S01–S10  ·  no behavior in target definition",
+        "One-page summary  ·  anonymized sessions S01-S10  ·  no behavior in target definition",
         fontsize=7.5, color="#444", transform=ax.transAxes, va="top",
     )
     y -= 0.018

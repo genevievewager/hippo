@@ -6,7 +6,7 @@ from __future__ import annotations
 
 PAGE1_QUESTION = (
     "Question. Can we pick a region of the neural population state (a \"target\") "
-    "using only spike activity — not position or speed — and still show that the "
+    "using only spike activity (not position or speed) and still show that the "
     "region is a real, recurring state that can be detected on held-out time?"
 )
 
@@ -69,8 +69,8 @@ PAGE1_SAY_ALOUD = [
 ]
 
 PAGE1_READING_GUIDE = (
-    "Figure 6.0 is the pass/fail board — start there. Figure 6.0b lists the raw "
-    "numbers. Figures 6.1–6.5 walk through the pipeline, targets, detection and "
+    "Figure 6.0 is the pass/fail board: start there. Figure 6.0b lists the raw "
+    "numbers. Figures 6.1-6.5 walk through the pipeline, targets, detection and "
     "surrogate, population agreement and hard-split reproducibility, and "
     "plant-and-recover. Retired tests (whole-series time shift; bootstrap refit) "
     "are on the supplement page. Each figure page has a bold takeaway and a "
@@ -79,21 +79,21 @@ PAGE1_READING_GUIDE = (
 
 PAGE1_BOARD_NOTE = (
     "PASS = meets the pre-registered rule for that test. Dash = not run yet. "
-    "Counts are per run (session by method). Surrogate, split-population and "
-    "reproducibility cells use PCA until the LDS runs are complete."
+    "Counts are per run (session by method). Survives-surrogate, split-population "
+    "and reproducibility cells use PCA until the LDS runs are complete."
 )
 
 PAGE1_TABLE_COLS = [
     "Session",
     "Recurs",
     "Distinguishable",
-    "Surrogate",
+    "Survives surrogate",
     "Split-pop",
     "Same subsp.",
     "Same tiles",
 ]
 
-# Fig 6.1b — columns: test, question, how, pass if, a fail means
+# Fig 6.1b columns: test, question, how, pass if, a fail means
 FIG61B_ROWS: list[tuple[str, str, str, str, str]] = [
     (
         "Recurs",
@@ -212,7 +212,7 @@ SUPPLEMENT_PANELS_NOTE = (
 BOARD_CRITERIA = [
     ("qualifies", "Recurs"),
     ("distinguishable", "Distinguishable"),
-    ("null_b", "Survives the surrogate"),
+    ("null_b", "Survives surrogate"),
     ("split", "Split-population"),
     ("same_subspace", "Same subspace (A vs B)"),
     ("same_tiles", "Same tiles (A vs B)"),

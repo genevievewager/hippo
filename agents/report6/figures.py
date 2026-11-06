@@ -224,7 +224,7 @@ def fig60_results_board() -> Path:
                   fontsize=9, fontweight="bold", pad=6)
 
     fig.suptitle(
-        "Report 6 pilot — recurring, separable neural targets; surrogate and "
+        "Report 6 pilot: recurring, separable neural targets; surrogate and "
         "hard-split reproducibility carry the \"real state\" claim",
         fontsize=9, fontweight="bold", y=0.98,
     )
@@ -489,9 +489,9 @@ def fig63_detection_nulls() -> Path | None:
         ax.set_ylabel(f"# surrogate passes / {n_expected}", fontsize=8)
 
     ax = fig.add_subplot(gs[1, 0])
-    _surrogate_panel(ax, "pca", 20, "c  Surrogate — PCA")
+    _surrogate_panel(ax, "pca", 20, "c  Surrogate: PCA")
     ax = fig.add_subplot(gs[1, 1])
-    _surrogate_panel(ax, "lds", 5, "d  Surrogate — LDS")
+    _surrogate_panel(ax, "lds", 5, "d  Surrogate: LDS")
 
     fig.suptitle(
         "Detection on held-out data; the surrogate asks whether coordination "
@@ -543,14 +543,14 @@ def fig64_split_boot() -> Path | None:
     ax.set_axis_off()
     ax.text(
         0.02, 0.95,
-        "b–f  Hard-split reproducibility\n(pending amendment stop point 2)",
+        "b-f  Hard-split reproducibility\n(pending amendment stop point 2)",
         transform=ax.transAxes, va="top", fontsize=9, fontweight="bold",
     )
     ax.text(
         0.02, 0.72,
         "Alternating 60 s blocks (S1), first vs second half (S2),\n"
         "principal angles, coordinate error, ARI, matched tiles.\n"
-        "Bootstrap refit panel retired — see supplement.",
+        "Bootstrap refit panel retired (see supplement).",
         transform=ax.transAxes, va="top", fontsize=8, color="#333",
     )
 
@@ -603,7 +603,7 @@ def fig65_plant() -> Path | None:
     both = all(r.get("pass") for r in pl)
     badge = "PASS" if both else "mixed"
     fig.suptitle(
-        f"Plant-and-recover on matched sim ({alias}) — overall {badge}",
+        f"Plant-and-recover on matched sim ({alias}): overall {badge}",
         fontsize=9, fontweight="bold", y=0.96,
     )
     return _save(fig, "F6_5")
@@ -718,7 +718,7 @@ def fig_s_retired() -> Path:
                  loc="left", fontsize=8, fontweight="bold", pad=4)
 
     fig.suptitle(
-        "Supplement — retired pilot tests (kept for the record)",
+        "Supplement: retired pilot tests (kept for the record)",
         fontsize=10, fontweight="bold", y=0.98,
     )
     return _save(fig, "F6_S_retired")

@@ -1,0 +1,17 @@
+# Data-free location-amendment config (UPDATE_2026-11-04_location.md).
+# Session-named values go only in gitignored outputs.
+
+block_s: 60.0
+purge_cap_s: 5.0
+window_s: 0.25
+dt_s: 0.05
+angle_stable_deg: 30.0
+M_grid: [5, 10, 20]
+d_grid: [2, 3, 5, 10, 20]
+n1_pca_repeats: 50
+n1_lds_repeats: 5
+n2_random_frames: 1000
+seed: 20261104
+primary_split: S1
+splits: [S1, S2, S0]
+tile_d_pilot: 3

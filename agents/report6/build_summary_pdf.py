@@ -106,7 +106,7 @@ def summarize() -> dict:
 
 def write_summary_page(pdf: PdfPages, summary: dict) -> None:
     fig = plt.figure(figsize=(W, 260 * MM), facecolor="white")
-    fig.text(0.05, 0.96, "Report 6 pilot — latent-target clamp (one-page summary)",
+    fig.text(0.05, 0.96, "Report 6 pilot: latent-target clamp (one-page summary)",
              fontsize=12, fontweight="bold", va="top")
     fig.text(
         0.05, 0.92,

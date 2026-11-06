@@ -64,31 +64,77 @@ def stage_null_a(methods: tuple[str, ...] = ("lds", "pca"), arms: tuple[str, ...
     save_json(out, OUT_ROOT / "null_a" / "summary.json")
 
 
-def stage_null_b() -> None:
-    build_alias_map(force=True)
-    lds_ok = set(_lds_cut_aliases(3))
-    out = []
-    jobs: list[tuple[str, str]] = []
+def _merge_null_b_summary() -> list[dict]:
+    """Rebuild summary.json from per-session files (PCA + LDS)."""
+    rows = []
+    d = OUT_ROOT / "null_b"
+    if d.is_dir():
+        for p in sorted(d.glob("*.json")):
+            if p.name == "summary.json":
+                continue
+            try:
+                rows.append(json.loads(p.read_text()))
+            except Exception:
+                continue
+    save_json(rows, d / "summary.json")
+    return rows
+
+
+def stage_null_b_lds(*, n_surr: int = 5) -> None:
+    """Revision C2: LDS surrogate on all 10 real sessions (n_surr=5)."""
+    build_alias_map(force=False)
+    out_dir = OUT_ROOT / "null_b"
+    out_dir.mkdir(parents=True, exist_ok=True)
     for s in iter_sessions(arm="real"):
-        jobs.append((s.alias, "pca"))
-        if s.alias in lds_ok:
-            jobs.append((s.alias, "lds"))
-    for s in iter_sessions(arm="sim"):
-        jobs.append((s.alias, "pca"))
-    for alias, method in jobs:
-        sess = next(x for x in iter_sessions() if x.alias == alias)
-        print(f"[null_b] {alias} {method} n_units={sess.n_units}", flush=True)
+        print(f"[null_b_lds] {s.alias} n_units={s.n_units} n_surr={n_surr}", flush=True)
         t0 = time.time()
         try:
-            r = null_b_surrogate(sess, method=method, n_surr=5)
+            r = null_b_surrogate(s, method="lds", n_surr=n_surr)
         except Exception as e:
-            r = {"alias": alias, "method": method, "error": repr(e)}
+            r = {"alias": s.alias, "method": "lds", "error": repr(e)}
             print(f"  ERROR {e}", flush=True)
         r["wall_s"] = time.time() - t0
-        save_json(r, OUT_ROOT / "null_b" / f"{alias}_{method}.json")
-        out.append(r)
-        print(f"  done wall_s={r['wall_s']:.1f} n_pass={r.get('n_pass')}", flush=True)
-    save_json(out, OUT_ROOT / "null_b" / "summary.json")
+        save_json(r, out_dir / f"{s.alias}_lds.json")
+        print(
+            f"  done wall_s={r['wall_s']:.1f} n_pass={r.get('n_pass')} "
+            f"pass={r.get('null_b_pass')}",
+            flush=True,
+        )
+    _merge_null_b_summary()
+
+
+def stage_null_b_pca(*, n_surr: int = 20) -> None:
+    """Revision C2: PCA surrogate at 20 per session, real and sim."""
+    build_alias_map(force=False)
+    out_dir = OUT_ROOT / "null_b"
+    out_dir.mkdir(parents=True, exist_ok=True)
+    jobs = list(iter_sessions(arm="real")) + list(iter_sessions(arm="sim"))
+    for s in jobs:
+        print(
+            f"[null_b_pca] {s.alias} {s.arm} n_units={s.n_units} n_surr={n_surr}",
+            flush=True,
+        )
+        t0 = time.time()
+        try:
+            r = null_b_surrogate(s, method="pca", n_surr=n_surr)
+        except Exception as e:
+            r = {"alias": s.alias, "method": "pca", "arm": s.arm, "error": repr(e)}
+            print(f"  ERROR {e}", flush=True)
+        r["arm"] = s.arm
+        r["wall_s"] = time.time() - t0
+        save_json(r, out_dir / f"{s.alias}_pca.json")
+        print(
+            f"  done wall_s={r['wall_s']:.1f} n_pass={r.get('n_pass')}/"
+            f"{r.get('n_surr')} pass={r.get('null_b_pass')}",
+            flush=True,
+        )
+    _merge_null_b_summary()
+
+
+def stage_null_b() -> None:
+    """Legacy entry: PCA then LDS (prefer null_b_pca / null_b_lds stages)."""
+    stage_null_b_pca(n_surr=20)
+    stage_null_b_lds(n_surr=5)
 
 
 def stage_split() -> None:
@@ -188,8 +234,8 @@ def main() -> None:
     ap.add_argument(
         "stage",
         choices=[
-            "alias", "m0m2", "null_a", "null_b", "split", "boot", "plant",
-            "m4", "all_light", "cohort",
+            "alias", "m0m2", "null_a", "null_b", "null_b_pca", "null_b_lds",
+            "split", "boot", "plant", "m4", "all_light", "cohort",
         ],
     )
     args = ap.parse_args()
@@ -207,6 +253,12 @@ def main() -> None:
         return
     if args.stage == "null_b":
         stage_null_b()
+        return
+    if args.stage == "null_b_pca":
+        stage_null_b_pca(n_surr=20)
+        return
+    if args.stage == "null_b_lds":
+        stage_null_b_lds(n_surr=5)
         return
     if args.stage == "split":
         stage_split()
