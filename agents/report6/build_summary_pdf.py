@@ -145,7 +145,9 @@ def write_summary_page(pdf: PdfPages, summary: dict) -> None:
 
 def append_figure_pages(pdf: PdfPages) -> list[str]:
     used = []
-    for name in ["F6_1", "F6_2", "F6_3", "F6_4", "F6_5"]:
+    for name in [
+        "F6_0_board", "F6_numbers", "F6_1", "F6_2", "F6_3", "F6_4", "F6_5",
+    ]:
         png = FIG_DIR / f"{name}.png"
         if not png.is_file():
             continue
@@ -154,7 +156,6 @@ def append_figure_pages(pdf: PdfPages) -> list[str]:
         ax = fig.add_axes([0, 0, 1, 1])
         ax.imshow(img)
         ax.set_axis_off()
-        # caption strip
         pdf.savefig(fig, facecolor="white")
         plt.close(fig)
         used.append(name)
@@ -162,29 +163,39 @@ def append_figure_pages(pdf: PdfPages) -> list[str]:
 
 
 CAPTIONS = {
+    "F6_0_board": (
+        "Results board. Per-session PASS/FAIL for each pre-registered criterion "
+        "(LDS primary). Headline fractions: qualifying targets, distinguishable, "
+        "and those that also fail null (a); plant hit rate on sim."
+    ),
+    "F6_numbers": (
+        "Numeric table for the real cohort: occupancy, visits, held-out ΔP, and "
+        "PASS/FAIL for nulls, split-population κ, and bootstrap Jaccard."
+    ),
     "F6_1": (
         "Idea and validation table. A latent-space target is defined from neural "
         "activity alone (M0–M2) and must pass recurrence, held-out separability, "
         "split-population agreement, refit stability, structured nulls, and "
-        "plant-and-recover (n stated per later panels)."
+        "plant-and-recover."
     ),
     "F6_2": (
-        "Targets per session for real HF cohort and matched sim (k=0). Bars: "
-        "training occupancy (%) and visit count for the top qualifying target "
-        "under LDS and PCA. Dashed line: 5% occupancy threshold."
+        "Top qualifying target per session for real HF cohort and matched sim "
+        "(k=0). Bars: training occupancy (%); orange: visit count. Dashed = 5% "
+        "occupancy; dotted = 10 visits."
     ),
     "F6_3": (
-        "Held-out detection (ΔP vs neighbours), calibration, null (a) circular "
-        "time shifts (20), and null (b) correlation-breaking surrogates (5) "
-        "with manifold refit where run."
+        "Held-out ΔP vs neighbours, calibration, null (a) circular time shifts "
+        "(20; PASS if ≤4), and null (b) correlation-breaking surrogates (5; "
+        "PASS if ≤1) with manifold refit where run. Green = PASS, red = FAIL."
     ),
     "F6_4": (
-        "Split-population Cohen κ and bootstrap refit Jaccard after Procrustes "
-        "(PCA all real sessions; LDS on the three smallest-n_units sessions)."
+        "Split-population Cohen κ (PASS if ≥0.2 and above chance) and bootstrap "
+        "refit Jaccard after Procrustes (PASS if median ≥0.3). PCA on all real "
+        "sessions; LDS on the three smallest-n_units sessions."
     ),
     "F6_5": (
         "Plant-and-recover on one matched-sim session: hit rate on planted test "
-        "windows and false alarms per minute after refit."
+        "windows and false alarms per minute after refit (PCA and LDS)."
     ),
 }
 
