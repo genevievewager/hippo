@@ -35,17 +35,16 @@ CAPTIONS: dict[str, dict[str, str]] = {
     "F6_numbers": {
         "title": "Figure 6.0b  Session-by-session numbers",
         "takeaway": (
-            "Every session has a recurring, separable target; hard-split columns use "
-            "the pre-registered conjunction at Report 2's decoding d."
+            "Hard-split columns are numbers at d = 3 and at Report 2's d, not "
+            "PASS/FAIL cells."
         ),
         "caption": (
-            "For each real session we report training occupancy and visit count of the "
-            "top target, held-out separability (delta P), and PASS/FAIL for the "
-            "PCA and LDS surrogates, the split-population test, and the hard-split "
-            "rows (same subspace; same tiles; resolvable). "
-            "Occupancy is typically about 25-50 % of training time; any top target "
-            "above 50 % is called most of the cloud. "
-            "Null (a) and bootstrap refit are retired (see supplement)."
+            "Per real session: occupancy %, visits, delta P; surrogate pass counts "
+            "(PCA / LDS); split-population kappa; n_stable at d = 3 and at Report 2's "
+            "d (N1 p95 in parentheses); median rigid coordinate error at d = 3; "
+            "r/sigma at 250 ms and 1 s; ARI S1 and S2 at d = 3 (N1 p95 in parentheses "
+            "for S1). Occupancy above 50 % is most of the cloud. "
+            "Null (a) and bootstrap are retired (supplement)."
         ),
     },
     "F6_1": {
@@ -103,14 +102,32 @@ CAPTIONS: dict[str, dict[str, str]] = {
             "stable-dimension count is the headline; r/sigma vs W tests structure."
         ),
         "caption": (
-            "(a) Split-population (per run). (b) n_stable against d (S1, u out). "
+            "(a) Split-population (per run). (b) n_stable against d with the N1 p95 "
+            "floor (dotted) and the pre-registered n_stable ≥ 2 line (dashed). "
             "(c) Fraction of sessions passing each criterion against d; Report 2 "
-            "primary d marked. (d) Per-axis rigid error for one example session "
-            "with the S0 ceiling. (e) ARI by session for S1, S2, S0 at d = 3 with "
-            "N1 p95. (f) Sim condensed and real pass counts. (g) median r/sigma "
-            "against W at d = 3 with the line at 2; if tiles capture state, the "
-            "1 s value should be about twice the 250 ms value. (h) Tile-match "
-            "reminder. PCA targets are primary. Bootstrap panel retired (supplement)."
+            "primary d marked. (d) Per-axis rigid error for one example with the S0 "
+            "ceiling. (e) ARI by session for S1, S2, S0 at d = 3 with N1 p95. "
+            "(f) Hard-split conjunction pass counts: real 1/10 at Report 2 d and "
+            "2/10 at d = 3; sim 0/10 at Report 2 d. "
+            "(g) median r/sigma against W at d = 3: median 1 s / 250 ms = 1.56, "
+            "with 6 of 10 at or above 1.5 (structure direction, not pure noise). "
+            "(h) Example session: first two aligned axes, A-tiles colored, aligned "
+            "B centroids overlaid, matched pairs joined. PCA targets are primary. "
+            "Bootstrap panel retired (supplement)."
+        ),
+    },
+    "F6_appendix": {
+        "title": "Appendix  Drift, d-grid numbers, LDS split-pop, full test table",
+        "takeaway": (
+            "Numbers that do not fit the main figures: null-(a) drift check, "
+            "hard-split across d, LDS split-population, and the full pass-rule table."
+        ),
+        "caption": (
+            "(a) First vs second half training occupancy of the top LDS target for "
+            "the null-(a) outlier session. (b) n_stable across the d grid and ARI at "
+            "d = 3 for each real session (S1, u out). (c) LDS split-population kappa "
+            "on its three sessions. (d) Full question / pass-if / fail table at "
+            "readable type (≥ 7 pt)."
         ),
     },
     "F6_5": {

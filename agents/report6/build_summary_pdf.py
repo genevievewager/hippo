@@ -49,9 +49,10 @@ def summarize() -> dict:
         qual = len(te) > 0
         dist = bool(te[0]["distinguishable_pass"]) if te else False
         na_row = next((r for r in na if r.get("alias") == alias and r.get("method") == "lds"), None)
-        nb_row = next((r for r in nb if r.get("alias") == alias and r.get("method") == "lds"), None)
+        # PCA defines targets; prefer PCA surrogate for the strict count.
+        nb_row = next((r for r in nb if r.get("alias") == alias and r.get("method") == "pca"), None)
         if nb_row is None:
-            nb_row = next((r for r in nb if r.get("alias") == alias and r.get("method") == "pca"), None)
+            nb_row = next((r for r in nb if r.get("alias") == alias and r.get("method") == "lds"), None)
         # Prefer LDS row when present (matches F6.0 board); else PCA.
         sp_row = next((r for r in sp if r.get("alias") == alias and r.get("method") == "lds"), None)
         if sp_row is None:
@@ -78,28 +79,28 @@ def summarize() -> dict:
     n = len(rows) or 1
     frac_qual = sum(1 for r in rows if r["qualifies"]) / n
     frac_dist = sum(1 for r in rows if r["qualifies"] and r["distinguishable"]) / n
-    null_a_done = [r for r in rows if r.get("null_a") is not None]
-    if null_a_done:
+    nb_done = [r for r in rows if r.get("null_b") is not None]
+    if nb_done:
         frac_strict = sum(
             1 for r in rows
-            if r["qualifies"] and r["distinguishable"] and r.get("null_a") is True
+            if r["qualifies"] and r["distinguishable"] and r.get("null_b") is True
         ) / n
-        strict_label = "qual+distinguishable+null_a"
+        strict_label = "qual+distinguishable+surrogate_pca"
     else:
         frac_strict = frac_dist
-        strict_label = "qual+distinguishable (null_a pending)"
+        strict_label = "qual+distinguishable (surrogate pending)"
     plant_hit = None
     if pl:
         pref = next((r for r in pl if r.get("method") == "pca"), pl[0])
         plant_hit = pref.get("hit_rate")
 
     three = {
-        "frac_real_lds_qualifying": round(frac_qual, 3),
-        "frac_qual_and_distinguishable_and_null_a": round(frac_strict, 3),
+        "frac_real_qualifying": round(frac_qual, 3),
+        "frac_qual_and_distinguishable_and_surrogate": round(frac_strict, 3),
         "strict_label": strict_label,
         "plant_hit_rate": plant_hit,
-        "n_null_a_done": len(null_a_done),
-        "note": "rebuild PDF after null_a/plant/null_b complete",
+        "n_surrogate_pca_done": len(nb_done),
+        "note": "PCA defines targets; null (a) and bootstrap retired",
     }
     return {"rows": rows, "three_numbers": three, "n_real": len(rows)}
 

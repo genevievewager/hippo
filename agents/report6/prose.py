@@ -57,54 +57,55 @@ PAGE1_TESTS = [
     ),
 ]
 
+# Four one-line statements for the deck.
 PAGE1_SAY_ALOUD = [
-    "1. 10 of 10 real sessions have at least one recurring neural target that is "
-    "separable on held-out time.",
-    "2. 9 of 10 real sessions keep that target when coordination between units is "
-    "destroyed (PCA surrogate at 20: S03 passes at the boundary, 4 of 20, and is "
-    "also the session whose top target covers most of the cloud; S09 fails the "
-    "surrogate test). PCA defines targets; the LDS density rule is the weaker "
-    "definition and survives the surrogate in 4 of 10. Split-population: 9 of 13 "
-    "session-by-method runs pass.",
-    "3. Plant-and-recover in simulation: every planted visit found, no false "
-    "alarms.",
-    "4. Pre-registered hard-split conjunction at Report 2's decoding d: 1 of 10 "
-    "sessions pass (count noise adds about one unit of uncertainty per dimension "
-    "while structure sits in the leading ones). Post hoc, in the targets' own "
-    "space d = 3, 2 of 10 pass the same three rules; the stable-dimension count "
-    "is the headline of this test (at least two angles under 30 degrees and above "
-    "the N1 floor). The first three non-gain dimensions are an unstable choice in "
-    "4 of 10 sessions.",
+    "1. 10 of 10 real sessions have at least one recurring neural target that is separable on held-out time.",
+    "2. 9 of 10 keep that target under the PCA surrogate; split-population passes in 9 of 13 session-by-method runs; LDS surrogate 4 of 10.",
+    "3. Plant-and-recover: every planted visit found, no false alarms.",
+    "4. Hard-split at Report 2's d: 1 of 10; at d = 3 (post hoc): 2 of 10; stable-dimension count is the headline.",
 ]
 
-PAGE1_READING_GUIDE = (
-    "Figure 6.0 is the pass/fail board: start there. Figure 6.0b lists the raw "
-    "numbers. Figures 6.1-6.5 walk through the pipeline, targets, detection and "
-    "surrogate, population agreement and hard-split reproducibility, and "
-    "plant-and-recover. Retired tests (whole-series time shift; bootstrap refit) "
-    "are on the supplement page. Each figure page has a bold takeaway and a "
-    "caption written for a reader who has not followed the project day to day."
+PAGE1_FINDINGS = (
+    "Every real session has a recurring, held-out-separable target "
+    "(Fig 6.0, 6.2, 6.3). PCA defines targets (9 of 10 survive the surrogate; "
+    "S03 is a boundary pass at 4 of 20 and occupies most of the cloud; S09 fails "
+    "the population tests); LDS is the weaker density rule (4 of 10; Fig 6.3d). "
+    "Split-population: 9 of 13 runs (Fig 6.4a). Pre-registered hard-split "
+    "conjunction at Report 2's decoding d: 1 of 10; post hoc at d = 3: 2 of 10; "
+    "n_stable < 2 in 4 of 10 at d = 3 (Fig 6.4b-c). S2 tile agreement is a little "
+    "below S1 but above the N1 floor in 9 of 10 (Fig 6.0b, 6.4e). Window length: "
+    "median r/sigma at 1 s is 1.56 times the 250 ms value, with 6 of 10 at or "
+    "above 1.5 (Fig 6.4g)."
 )
 
+PAGE1_IMPLICATIONS = (
+    "Recurring neural targets exist without behavior in the definition, and the "
+    "population tests (surrogate, split-pop) carry most of the \"real state\" "
+    "claim. Independent halves reproduce a low-dimensional subspace more "
+    "reliably than a full Report 2 decoding space: count noise grows with d "
+    "while structure sits in the leading dimensions. Longer windows raise tile "
+    "resolution in the direction expected for structure, not pure noise."
+)
+
+PAGE1_CAVEATS = (
+    "Within-session only; no behavioral description of the targets; beta animal "
+    "not run; LDS hard-split level unrun; 250 ms resolution; S03 most of the "
+    "cloud; S09 fails the population tests."
+)
+
+PAGE1_HOW_TO_READ = (
+    "Start with Fig 6.0a (pass/fail) and 6.0b (numbers); then 6.1-6.5 for "
+    "pipeline, targets, detection/surrogate, hard-split, and plant. Retired "
+    "tests and the appendix table are after Fig 6.5."
+)
+
+# Board footnote lives only under Fig 6.0a (not on page 1).
 PAGE1_BOARD_NOTE = (
-    "PASS = meets the pre-registered rule for that test. Counts are per run "
-    "(session by method). Survives-surrogate uses PCA as the target definition; "
-    "LDS has its own surrogate row (4 of 10). Hard-split rows are the "
-    "pre-registered conjunction: same subspace (n_stable >= 2 and above N1 p95), "
-    "same tiles (ARI above N1 p95), resolvable (median r/sigma >= 2 and frac<r >= 0.5)."
+    "Counts are per run (session by method). Surrogate, split-population and "
+    "reproducibility cells use PCA; LDS appears only in its own surrogate row."
 )
 
-PAGE1_TABLE_COLS = [
-    "Session",
-    "Recurs",
-    "Distinguishable",
-    "Surv. surr. (PCA)",
-    "Surv. surr. (LDS)",
-    "Split-pop",
-    "Same subsp.",
-    "Same tiles",
-    "Resolvable",
-]
+PAGE1_TABLE_COLS: list[str] = []  # unused; page-1 board removed
 
 # Fig 6.1b columns: test, question, how, pass if, a fail means
 FIG61B_ROWS: list[tuple[str, str, str, str, str]] = [
@@ -179,21 +180,18 @@ FIG61B_ROWS: list[tuple[str, str, str, str, str]] = [
     ),
 ]
 
+FIG61_ONE_LINE_RULES = [
+    (name, pass_if) for name, _q, _how, pass_if, _fail in FIG61B_ROWS
+]
+
 FIG61_CAPTION = (
     "Left: the analysis steps. We start from the causal latents fitted for "
     "Report 2 (a linear dynamical system, LDS, with PCA beside it). On training "
     "time only we find dense regions, the candidate targets, train a detector on "
-    "each, and evaluate it only on held-out time. Right: every test the target has "
-    "to pass, the question it answers, and what a failure would mean. The first "
-    "two tests say the region exists and can be found on new data. The next two "
-    "say it belongs to the population rather than to a few units; PCA defines "
-    "targets, and the LDS density rule is the weaker definition. The three "
-    "reproducibility rows say the same place is found again when everything is "
-    "refitted on the other half of the session, which is the error bar on \"here\". "
-    "The last row is a sanity check in simulation. Behavior is never used to "
-    "define a target. Two tests from the pilot were retired (supplement): the "
-    "whole-series time shift, which cannot fail for a region defined by density, "
-    "and the bootstrap refit, which reuses most of the data it is tested against."
+    "each, and evaluate it only on held-out time. Right: one-line pass rules; the "
+    "full question/how/fail table is on the appendix page. PCA defines targets; "
+    "the LDS density rule is the weaker definition. Behavior is never used to "
+    "define a target. Two tests from the pilot were retired (supplement)."
 )
 
 SUPPLEMENT_NULL_A = (
@@ -230,7 +228,6 @@ SUPPLEMENT_PANELS_NOTE = (
     + SUPPLEMENT_ALIGNMENT_FIX
 )
 
-# Board rows (Fig 6.0a / page-1 table), revision B5 + step-6 board rows
 BOARD_CRITERIA = [
     ("qualifies", "Recurs"),
     ("distinguishable", "Distinguishable"),
@@ -242,7 +239,6 @@ BOARD_CRITERIA = [
     ("resolvable", "Resolvable"),
 ]
 
-# Hard-split / window text inserts (step 6)
 HARD_SPLIT_OUTCOME = (
     "At Report 2's decoding d the pre-registered conjunction passes in 1 of 10 "
     "sessions: count noise adds about one uncertain unit per dimension while the "
@@ -253,9 +249,9 @@ HARD_SPLIT_OUTCOME = (
 
 WINDOW_EXPECTATION = (
     "Window length. The pilot bins are 250 ms. If the tiles capture a real state, "
-    "median r/sigma at W = 1 s should be about twice the 250 ms value (more spikes "
-    "per bin, same geometry); if they are mostly count noise it stays near 1. The "
-    "purge g scales with the new tau_ac and is recorded per session."
+    "median r/sigma at W = 1 s should be about twice the 250 ms value; if they are "
+    "mostly count noise it stays near 1. Observed median ratio 1.56, with 6 of 10 "
+    "at or above 1.5. The purge g scales with the new tau_ac and is recorded."
 )
 
 TILE_LOW_D_NOTE = (
@@ -264,9 +260,3 @@ TILE_LOW_D_NOTE = (
     "d = 40): tiles belong in low d or in the stable subspace in the next round. "
     "At 250 ms a single bin places the state only to within about one tile."
 )
-
-PAGE1_READING_GUIDE = (
-    PAGE1_READING_GUIDE + " " + HARD_SPLIT_OUTCOME + " "
-    + WINDOW_EXPECTATION + " " + TILE_LOW_D_NOTE
-)
-

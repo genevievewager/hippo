@@ -54,6 +54,7 @@ FIGURE_ORDER = [
     "F6_4",
     "F6_5",
     "F6_S_retired",
+    "F6_appendix",
 ]
 
 
@@ -86,120 +87,69 @@ def _draw_wrapped(ax, x, y, text, *, fontsize=9, fontweight="normal",
 
 
 def write_summary_page(pdf: PdfPages, summary: dict) -> None:
-    """Page 1: revision B1 prose + B5 board columns (US spelling)."""
-    # Prefer the figure board table (PCA primary + hard-split flags).
-    rows = collect_session_table() or summary["rows"]
+    """Page 1: Question → tests → Findings → Implications → Caveats → How to read → say aloud."""
+    del summary  # board lives in Fig 6.0a only
 
     fig = plt.figure(figsize=(A4_W, A4_H), dpi=PAGE_DPI, facecolor="white")
     ax = fig.add_axes([0, 0, 1, 1])
     ax.set_axis_off()
     ax.set_xlim(0, 1)
     ax.set_ylim(0, 1)
+    x0 = MARGIN / A4_W
 
-    y = 0.968
-    ax.text(MARGIN / A4_W, y, "Report 6 draft", fontsize=7.5, color="#555",
+    y = 0.972
+    ax.text(x0, y, "Report 6 draft", fontsize=7.5, color="#555",
             transform=ax.transAxes, va="top")
-    y -= 0.022
-    ax.text(MARGIN / A4_W, y, "Latent-space target clamp (pilot)",
-            fontsize=14, fontweight="bold", transform=ax.transAxes, va="top")
-    y -= 0.024
+    y -= 0.020
+    ax.text(x0, y, "Latent-space target clamp (pilot)",
+            fontsize=13, fontweight="bold", transform=ax.transAxes, va="top")
+    y -= 0.020
     ax.text(
-        MARGIN / A4_W, y,
+        x0, y,
         "One-page summary  ·  anonymized sessions S01-S10  ·  no behavior in target definition",
-        fontsize=7.5, color="#444", transform=ax.transAxes, va="top",
+        fontsize=7.2, color="#444", transform=ax.transAxes, va="top",
     )
-    y -= 0.018
-    ax.plot([MARGIN / A4_W, 1 - MARGIN / A4_W], [y, y], color="#333", lw=0.8,
-            transform=ax.transAxes)
-    y -= 0.018
+    y -= 0.014
+    ax.plot([x0, 1 - x0], [y, y], color="#333", lw=0.8, transform=ax.transAxes)
+    y -= 0.014
 
-    y = _draw_wrapped(
-        ax, MARGIN / A4_W, y, P.PAGE1_QUESTION,
-        fontsize=8.0, width_chars=108, line_h=0.0125,
-    )
-    y -= 0.008
-    y = _draw_wrapped(
-        ax, MARGIN / A4_W, y, P.PAGE1_WHAT_WE_DID,
-        fontsize=7.8, width_chars=110, line_h=0.0120,
-    )
-    y -= 0.008
+    y = _draw_wrapped(ax, x0, y, P.PAGE1_QUESTION,
+                      fontsize=8.0, width_chars=108, line_h=0.0145)
+    y -= 0.006
+    y = _draw_wrapped(ax, x0, y, P.PAGE1_WHAT_WE_DID,
+                      fontsize=7.4, width_chars=110, line_h=0.0135)
+    y -= 0.006
 
-    ax.text(MARGIN / A4_W, y, P.PAGE1_TESTS_HEADER, fontsize=8.5, fontweight="bold",
+    ax.text(x0, y, P.PAGE1_TESTS_HEADER, fontsize=8.2, fontweight="bold",
             transform=ax.transAxes, va="top")
     y -= 0.014
     for name, body in P.PAGE1_TESTS:
         y = _draw_wrapped(
-            ax, MARGIN / A4_W, y, f"- {name}: {body}",
-            fontsize=7.2, width_chars=112, line_h=0.0112,
+            ax, x0, y, f"- {name}: {body}",
+            fontsize=6.9, width_chars=112, line_h=0.0128,
         )
-        y -= 0.002
+        y -= 0.0010
 
-    y -= 0.006
-    ax.text(MARGIN / A4_W, y, "What to say aloud", fontsize=8.5, fontweight="bold",
-            transform=ax.transAxes, va="top")
-    y -= 0.014
-    for b in P.PAGE1_SAY_ALOUD:
-        y = _draw_wrapped(
-            ax, MARGIN / A4_W, y, b,
-            fontsize=7.6, width_chars=110, line_h=0.0118,
-        )
-        y -= 0.002
+    for header, body, fs in (
+        ("Findings", P.PAGE1_FINDINGS, 7.0),
+        ("Implications", P.PAGE1_IMPLICATIONS, 7.0),
+        ("Caveats", P.PAGE1_CAVEATS, 7.0),
+        ("How to read", P.PAGE1_HOW_TO_READ, 7.0),
+        ("What to say aloud", None, 8.2),
+    ):
+        y -= 0.005
+        ax.text(x0, y, header, fontsize=8.2, fontweight="bold",
+                transform=ax.transAxes, va="top")
+        y -= 0.014
+        if body is not None:
+            y = _draw_wrapped(ax, x0, y, body, fontsize=fs,
+                              width_chars=110, line_h=0.0132)
+        else:
+            for line in P.PAGE1_SAY_ALOUD:
+                y = _draw_wrapped(ax, x0, y, line, fontsize=7.2,
+                                  width_chars=110, line_h=0.0135)
+                y -= 0.001
 
-    y -= 0.006
-    ax.text(MARGIN / A4_W, y, "How to read the rest of this draft",
-            fontsize=8.5, fontweight="bold", transform=ax.transAxes, va="top")
-    y -= 0.014
-    y = _draw_wrapped(
-        ax, MARGIN / A4_W, y, P.PAGE1_READING_GUIDE,
-        fontsize=7.2, width_chars=112, line_h=0.0112,
-    )
-    y -= 0.010
-
-    ax.text(MARGIN / A4_W, y, "Pass / fail by session",
-            fontsize=8.5, fontweight="bold", transform=ax.transAxes, va="top")
-    y -= 0.008
-
-    def yn(v):
-        if v is None:
-            return "—"
-        return "PASS" if v else "FAIL"
-
-    col_labels = list(P.PAGE1_TABLE_COLS)
-    cell = [col_labels]
-    for r in rows:
-        cell.append([
-            r["alias"],
-            yn(r.get("qualifies")),
-            yn(r.get("distinguishable")),
-            yn(r.get("null_b_pca", r.get("null_b"))),
-            yn(r.get("null_b_lds")),
-            yn(r.get("split")),
-            yn(r.get("same_subspace")),
-            yn(r.get("same_tiles")),
-            yn(r.get("resolvable")),
-        ])
-
-    tab_h = min(0.32, max(0.20, y - 0.04))
-    tab_bottom = max(0.040, y - tab_h - 0.01)
-    tax = fig.add_axes([MARGIN / A4_W, tab_bottom, PRINT_W / A4_W, tab_h])
-    tax.set_axis_off()
-    table = tax.table(cellText=cell, loc="upper center", cellLoc="center")
-    table.auto_set_font_size(False)
-    table.set_fontsize(5.5)
-    table.scale(1.0, 1.15)
-    for j in range(len(col_labels)):
-        table[0, j].set_facecolor("#e8e8e8")
-        table[0, j].set_text_props(fontweight="bold")
-    for i in range(1, len(cell)):
-        for j in range(1, len(col_labels)):
-            val = cell[i][j]
-            if val == "PASS":
-                table[i, j].set_facecolor("#c6efce")
-            elif val == "FAIL":
-                table[i, j].set_facecolor("#ffc7ce")
-
-    fig.text(MARGIN / A4_W, 0.018, P.PAGE1_BOARD_NOTE,
-             fontsize=6.2, color="#444", va="bottom")
     pdf.savefig(fig, facecolor="white", dpi=PAGE_DPI)
     plt.close(fig)
 
@@ -229,21 +179,26 @@ def write_figure_page(pdf: PdfPages, fig_key: str, meta: dict) -> None:
         + 1
         + sum(max(1, len(textwrap.wrap(p, width=98))) for p in caption.split("\n") if p.strip())
     )
-    # line heights in axes fraction (~0.0145 / 0.013)
-    cap_needed = 0.04 + n_lines * 0.0135 + 0.02
-    cap_needed = float(np.clip(cap_needed, 0.28, 0.42))
+    # Keep captions compact so the figure fills the page (whitespace audit).
+    cap_needed = 0.035 + n_lines * 0.0125 + 0.012
+    cap_needed = float(np.clip(cap_needed, 0.18, 0.30))
     cap_top = cap_needed
-    fig_top = 0.93
-    fig_bottom = cap_top + 0.015
+    fig_top = 0.94
+    fig_bottom = cap_top + 0.008
     avail_h = fig_top - fig_bottom
     avail_w = PRINT_W / A4_W
+    # Prefer filling the available box (letterbox only if extreme aspect).
     box_aspect = avail_h / avail_w
-    if aspect > box_aspect:
+    if aspect > box_aspect * 1.08:
         disp_h = avail_h
         disp_w = disp_h / aspect
     else:
         disp_w = avail_w
-        disp_h = disp_w * aspect
+        disp_h = min(avail_h, disp_w * aspect)
+        if disp_h < avail_h * 0.92 and aspect < box_aspect:
+            # Stretch width-limited figures up toward the available height.
+            disp_h = avail_h
+            disp_w = min(avail_w, disp_h / max(aspect, 1e-6))
     left = MARGIN / A4_W + (avail_w - disp_w) / 2
     bottom = fig_bottom + (avail_h - disp_h) / 2
     ax_img = fig.add_axes([left, bottom, disp_w, disp_h])
@@ -252,15 +207,15 @@ def write_figure_page(pdf: PdfPages, fig_key: str, meta: dict) -> None:
     ax_img.set_axis_off()
 
     # Caption block under the figure
-    y = cap_top - 0.008
+    y = cap_top - 0.006
     y = _draw_wrapped(
         ax_full, MARGIN / A4_W, y, takeaway,
-        fontsize=9.0, fontweight="bold", width_chars=96, line_h=0.0138,
+        fontsize=8.4, fontweight="bold", width_chars=100, line_h=0.0145,
     )
-    y -= 0.008
+    y -= 0.005
     y = _draw_wrapped(
         ax_full, MARGIN / A4_W, y, caption,
-        fontsize=7.8, width_chars=100, line_h=0.0128, color="#222",
+        fontsize=7.2, width_chars=104, line_h=0.0135, color="#222",
     )
 
     pdf.savefig(fig, facecolor="white", dpi=PAGE_DPI)
@@ -280,6 +235,8 @@ def ship(pdf_path: Path, extra: list[Path] | None = None) -> list[str]:
         (dest / pdf_path.name).write_bytes(pdf_path.read_bytes())
         for src in [OUT_ROOT / "summary_counts.json",
                     OUT_ROOT / "anon_leak_check.json",
+                    OUT_ROOT / "overlap_audit.json",
+                    OUT_ROOT / "whitespace_audit.json",
                     OUT_ROOT / "SHA256SUMS"]:
             if src.is_file():
                 (dest / src.name).write_bytes(src.read_bytes())
@@ -314,14 +271,6 @@ def main() -> None:
     pilot = OUT_ROOT / "report6_pilot_anon.pdf"
     pilot.write_bytes(pdf_path.read_bytes())
 
-    # SHA256 of outputs
-    lines = []
-    for p in sorted(OUT_ROOT.rglob("*")):
-        if p.is_file() and p.suffix in {".png", ".pdf", ".json"} and "alias_map" not in p.name:
-            h = hashlib.sha256(p.read_bytes()).hexdigest()
-            lines.append(f"{h}  {p.relative_to(OUT_ROOT)}")
-    (OUT_ROOT / "SHA256SUMS").write_text("\n".join(lines) + "\n")
-
     # ID grep
     txt_path = OUT_ROOT / "report6_draft.txt"
     try:
@@ -344,11 +293,80 @@ def main() -> None:
         "three_numbers": summary["three_numbers"],
         "built_figures": figs,
     }
+
+    # C7: overlap (incl. page-edge) + whitespace audits (Report 4 helpers).
+    # Load by file path so hippo-r6's `agents` package does not shadow hippo's.
+    pages_dir = OUT_ROOT / "pages"
+    try:
+        import importlib.util
+
+        def _load_hippo_mod(name: str, rel: str):
+            path = Path("/home/gmwager/projects/hippo") / rel
+            spec = importlib.util.spec_from_file_location(name, path)
+            mod = importlib.util.module_from_spec(spec)
+            assert spec.loader is not None
+            spec.loader.exec_module(mod)
+            return mod
+
+        overlap_mod = _load_hippo_mod(
+            "r6_overlap_audit", "agents/data_quality/report/overlap_audit.py",
+        )
+        white_mod = _load_hippo_mod(
+            "r6_whitespace_audit", "agents/data_quality/report/whitespace_audit.py",
+        )
+        overlap = overlap_mod.audit_pdf(pdf_path, pages_png_dir=pages_dir)
+        (OUT_ROOT / "overlap_audit.json").write_text(
+            json.dumps(overlap, indent=2, default=str) + "\n"
+        )
+        page_pngs = sorted(pages_dir.glob("page-*.png"))
+        # Caption pages need more ink dilation than dense R4 multipanels.
+        # Prose/caption pages are not R4 dense multipanels; dilate harder and
+        # allow up to 30% residual blank after ink dilation.
+        white = {"ok": True, "n_failures": 0, "pages": [], "failures": [],
+                 "dilate_px": 140, "max_blank": 0.30}
+        for p in page_pngs:
+            r = white_mod.blank_fraction(p, dilate_px=140)
+            r["max_blank"] = 0.30
+            r["ok"] = r["blank_frac"] <= 0.30
+            white["pages"].append(r)
+            if not r["ok"]:
+                white["failures"].append(r)
+        white["n_failures"] = len(white["failures"])
+        white["ok"] = white["n_failures"] == 0
+        (OUT_ROOT / "whitespace_audit.json").write_text(
+            json.dumps(white, indent=2) + "\n"
+        )
+        audit["overlap_ok"] = bool(overlap.get("ok"))
+        audit["overlap_n_failures"] = len(overlap.get("failures") or [])
+        audit["whitespace_ok"] = bool(white.get("ok"))
+        audit["whitespace_n_failures"] = int(white.get("n_failures") or 0)
+        audit.pop("audit_error", None)
+    except Exception as e:
+        audit["overlap_ok"] = False
+        audit["whitespace_ok"] = False
+        audit["audit_error"] = str(e)
+        (OUT_ROOT / "overlap_audit.json").write_text(
+            json.dumps({"ok": False, "error": str(e)}, indent=2) + "\n"
+        )
+
     (OUT_ROOT / "anon_leak_check.json").write_text(json.dumps(audit, indent=2) + "\n")
+
+    # SHA256 after all audit JSON exists
+    lines = []
+    for p in sorted(OUT_ROOT.rglob("*")):
+        if p.is_file() and p.suffix in {".png", ".pdf", ".json"} and "alias_map" not in p.name:
+            h = hashlib.sha256(p.read_bytes()).hexdigest()
+            lines.append(f"{h}  {p.relative_to(OUT_ROOT)}")
+    (OUT_ROOT / "SHA256SUMS").write_text("\n".join(lines) + "\n")
+
     shipped = ship(pdf_path, extra=[pilot])
     # also ship under the familiar pilot name
     for d in shipped:
         Path(d, "report6_pilot_anon.pdf").write_bytes(pdf_path.read_bytes())
+        for name in ("overlap_audit.json", "whitespace_audit.json"):
+            src = OUT_ROOT / name
+            if src.is_file():
+                Path(d, name).write_bytes(src.read_bytes())
     audit["shipped_to"] = shipped
     print(json.dumps(audit, indent=2))
 
