@@ -26,11 +26,15 @@ from agents.report6.build_summary_pdf import summarize  # noqa: E402
 from agents.report6.captions import CAPTIONS  # noqa: E402
 from agents.report6.figures import build_all_available, FIG_DIR  # noqa: E402
 from agents.report6.paths import OUT_ROOT  # noqa: E402
+from agents.report6 import prose as P  # noqa: E402
 
 # A4 inches
 A4_W, A4_H = 8.27, 11.69
-MARGIN = 0.65
+MARGIN = 0.55
 PRINT_W = A4_W - 2 * MARGIN
+# Matplotlib PdfPages resamples imshow bitmaps to figure/savefig dpi.
+# Default ~100 PPI made every figure page soft; match print-quality PNGs.
+PAGE_DPI = 300
 
 ID_PAT = re.compile(
     r"\b(?:\d{3,4}_\d{6,8}\w*|\b(?:1120|1130|1140|1150|1170|7394)_\w+)\b"
@@ -45,6 +49,7 @@ FIGURE_ORDER = [
     "F6_3",
     "F6_4",
     "F6_5",
+    "F6_S_retired",
 ]
 
 
@@ -77,117 +82,104 @@ def _draw_wrapped(ax, x, y, text, *, fontsize=9, fontweight="normal",
 
 
 def write_summary_page(pdf: PdfPages, summary: dict) -> None:
-    """Page 1: narrative one-page summary a non-expert can read."""
-    three = summary["three_numbers"]
+    """Page 1: revision B1 prose + B5 board columns (US spelling)."""
     rows = summary["rows"]
-    n = summary["n_real"]
-    fq = three["frac_real_lds_qualifying"]
-    fs = three["frac_qual_and_distinguishable_and_null_a"]
-    ph = three.get("plant_hit_rate")
 
-    fig = plt.figure(figsize=(A4_W, A4_H), facecolor="white")
+    fig = plt.figure(figsize=(A4_W, A4_H), dpi=PAGE_DPI, facecolor="white")
     ax = fig.add_axes([0, 0, 1, 1])
     ax.set_axis_off()
     ax.set_xlim(0, 1)
     ax.set_ylim(0, 1)
 
-    y = 0.955
-    ax.text(MARGIN / A4_W, y, "Report 6 — Draft", fontsize=8, color="#555",
-            transform=ax.transAxes, va="top")
-    y -= 0.028
-    ax.text(MARGIN / A4_W, y, "Latent-space target clamp (pilot)",
-            fontsize=16, fontweight="bold", transform=ax.transAxes, va="top")
-    y -= 0.032
-    ax.text(MARGIN / A4_W, y,
-            "One-page summary  ·  anonymised sessions S01–S10  ·  no behaviour in target definition",
-            fontsize=8, color="#444", transform=ax.transAxes, va="top")
-    y -= 0.025
-    ax.plot([MARGIN / A4_W, 1 - MARGIN / A4_W], [y, y], color="#333", lw=0.8,
-            transform=ax.transAxes)
-    y -= 0.03
-
-    y = _draw_wrapped(
-        ax, MARGIN / A4_W, y,
-        "Question. Can we pick a region of the neural population state (a “target”) "
-        "using only spike activity — not position or speed — and still show that the "
-        "region is a real, recurring state that can be detected on held-out time?",
-        fontsize=9.2, width_chars=98, line_h=0.0155,
-    )
-    y -= 0.012
-    y = _draw_wrapped(
-        ax, MARGIN / A4_W, y,
-        "What we did. On 10 real hippocampal-formation sessions we reused causal LDS "
-        "(and PCA) latents already fitted for Report 2. On training time we found dense "
-        "regions (k-means on the first three latent dimensions), kept those with ≥5% "
-        "occupancy and ≥10 visits, trained a Mahalanobis detector with hysteresis, and "
-        "scored only held-out time. We then ran two nulls (time shift; correlation-breaking "
-        "surrogate), a split-population agreement test, bootstrap refit stability, and a "
-        "plant-and-recover check on matched simulation.",
-        fontsize=9.2, width_chars=98, line_h=0.0155,
-    )
-    y -= 0.014
-
-    ax.text(MARGIN / A4_W, y, "What to say aloud", fontsize=10, fontweight="bold",
+    y = 0.968
+    ax.text(MARGIN / A4_W, y, "Report 6 — Draft", fontsize=7.5, color="#555",
             transform=ax.transAxes, va="top")
     y -= 0.022
-    bullets = [
-        f"1.  {fq*100:.0f}% of real sessions have at least one qualifying LDS target (n = {n}).",
-        f"2.  Only {fs*100:.0f}% of sessions also pass held-out detection and the time-shift null "
-        f"(null a) — density targets usually survive scrambling time.",
-        f"3.  Plant-and-recover hit rate on simulation: "
-        f"{'n/a' if ph is None else f'{ph*100:.0f}%'} (false alarms = 0 / min).",
-    ]
-    for b in bullets:
-        y = _draw_wrapped(ax, MARGIN / A4_W, y, b, fontsize=9.5, width_chars=95,
-                          line_h=0.016, fontweight="normal")
-        y -= 0.006
-
-    y -= 0.008
-    ax.text(MARGIN / A4_W, y, "How to read the rest of this draft",
-            fontsize=10, fontweight="bold", transform=ax.transAxes, va="top")
-    y -= 0.02
-    y = _draw_wrapped(
-        ax, MARGIN / A4_W, y,
-        "Figure 6.0 is the pass/fail board — start there. Figure 6.0b lists the raw numbers. "
-        "Figures 6.1–6.5 walk through the pipeline, targets, detection/nulls, population "
-        "agreement, and plant-and-recover. Each figure page has a bold takeaway and a "
-        "caption written for a reader who has not followed the project day to day.",
-        fontsize=9, width_chars=98, line_h=0.015,
+    ax.text(MARGIN / A4_W, y, "Latent-space target clamp (pilot)",
+            fontsize=14, fontweight="bold", transform=ax.transAxes, va="top")
+    y -= 0.024
+    ax.text(
+        MARGIN / A4_W, y,
+        "One-page summary  ·  anonymized sessions S01–S10  ·  no behavior in target definition",
+        fontsize=7.5, color="#444", transform=ax.transAxes, va="top",
     )
-    y -= 0.016
+    y -= 0.018
+    ax.plot([MARGIN / A4_W, 1 - MARGIN / A4_W], [y, y], color="#333", lw=0.8,
+            transform=ax.transAxes)
+    y -= 0.018
 
-    ax.text(MARGIN / A4_W, y, "Pass / fail by session (LDS targets)",
-            fontsize=10, fontweight="bold", transform=ax.transAxes, va="top")
-    y -= 0.01
+    y = _draw_wrapped(
+        ax, MARGIN / A4_W, y, P.PAGE1_QUESTION,
+        fontsize=8.0, width_chars=108, line_h=0.0125,
+    )
+    y -= 0.008
+    y = _draw_wrapped(
+        ax, MARGIN / A4_W, y, P.PAGE1_WHAT_WE_DID,
+        fontsize=7.8, width_chars=110, line_h=0.0120,
+    )
+    y -= 0.008
 
-    # Table in lower part of page
+    ax.text(MARGIN / A4_W, y, P.PAGE1_TESTS_HEADER, fontsize=8.5, fontweight="bold",
+            transform=ax.transAxes, va="top")
+    y -= 0.014
+    for name, body in P.PAGE1_TESTS:
+        y = _draw_wrapped(
+            ax, MARGIN / A4_W, y, f"- {name}: {body}",
+            fontsize=7.2, width_chars=112, line_h=0.0112,
+        )
+        y -= 0.002
+
+    y -= 0.006
+    ax.text(MARGIN / A4_W, y, "What to say aloud", fontsize=8.5, fontweight="bold",
+            transform=ax.transAxes, va="top")
+    y -= 0.014
+    for b in P.PAGE1_SAY_ALOUD:
+        y = _draw_wrapped(
+            ax, MARGIN / A4_W, y, b,
+            fontsize=7.6, width_chars=110, line_h=0.0118,
+        )
+        y -= 0.002
+
+    y -= 0.006
+    ax.text(MARGIN / A4_W, y, "How to read the rest of this draft",
+            fontsize=8.5, fontweight="bold", transform=ax.transAxes, va="top")
+    y -= 0.014
+    y = _draw_wrapped(
+        ax, MARGIN / A4_W, y, P.PAGE1_READING_GUIDE,
+        fontsize=7.2, width_chars=112, line_h=0.0112,
+    )
+    y -= 0.010
+
+    ax.text(MARGIN / A4_W, y, "Pass / fail by session",
+            fontsize=8.5, fontweight="bold", transform=ax.transAxes, va="top")
+    y -= 0.008
+
     def yn(v):
         if v is None:
             return "—"
         return "PASS" if v else "FAIL"
 
-    col_labels = ["Session", "Qual", "Detect", "Null a", "Null b", "Split", "Boot"]
+    col_labels = list(P.PAGE1_TABLE_COLS)
     cell = [col_labels]
     for r in rows:
         cell.append([
             r["alias"],
-            yn(r["qualifies"]),
-            yn(r["distinguishable"]),
-            yn(r["null_a"]),
-            yn(r["null_b"]),
-            yn(r["split"]),
-            yn(r["boot"]),
+            yn(r.get("qualifies")),
+            yn(r.get("distinguishable")),
+            yn(r.get("null_b")),
+            yn(r.get("split")),
+            yn(r.get("same_subspace")),
+            yn(r.get("same_tiles")),
         ])
 
-    # Place table as an inset axes
-    tab_h = 0.38
-    tab_bottom = max(0.06, y - tab_h - 0.02)
+    tab_h = min(0.28, max(0.18, y - 0.05))
+    tab_bottom = max(0.045, y - tab_h - 0.01)
     tax = fig.add_axes([MARGIN / A4_W, tab_bottom, PRINT_W / A4_W, tab_h])
     tax.set_axis_off()
     table = tax.table(cellText=cell, loc="upper center", cellLoc="center")
     table.auto_set_font_size(False)
-    table.set_fontsize(7.5)
-    table.scale(1.0, 1.45)
+    table.set_fontsize(6.5)
+    table.scale(1.0, 1.25)
     for j in range(len(col_labels)):
         table[0, j].set_facecolor("#e8e8e8")
         table[0, j].set_text_props(fontweight="bold")
@@ -199,11 +191,9 @@ def write_summary_page(pdf: PdfPages, summary: dict) -> None:
             elif val == "FAIL":
                 table[i, j].set_facecolor("#ffc7ce")
 
-    fig.text(MARGIN / A4_W, 0.028,
-             "PASS = meets the pre-registered rule for that test. Dash = not run (runtime cut). "
-             "Null a = time shift; Null b = correlation-breaking surrogate.",
-             fontsize=7, color="#444", va="bottom")
-    pdf.savefig(fig, facecolor="white")
+    fig.text(MARGIN / A4_W, 0.018, P.PAGE1_BOARD_NOTE,
+             fontsize=6.2, color="#444", va="bottom")
+    pdf.savefig(fig, facecolor="white", dpi=PAGE_DPI)
     plt.close(fig)
 
 
@@ -213,11 +203,11 @@ def write_figure_page(pdf: PdfPages, fig_key: str, meta: dict) -> None:
     if not png.is_file():
         return
 
-    img = PILImage.open(png)
+    img = PILImage.open(png).convert("RGB")
     iw, ih = img.size
     aspect = ih / iw
 
-    fig = plt.figure(figsize=(A4_W, A4_H), facecolor="white")
+    fig = plt.figure(figsize=(A4_W, A4_H), dpi=PAGE_DPI, facecolor="white")
     # Header
     ax_full = fig.add_axes([0, 0, 1, 1])
     ax_full.set_axis_off()
@@ -250,7 +240,8 @@ def write_figure_page(pdf: PdfPages, fig_key: str, meta: dict) -> None:
     left = MARGIN / A4_W + (avail_w - disp_w) / 2
     bottom = fig_bottom + (avail_h - disp_h) / 2
     ax_img = fig.add_axes([left, bottom, disp_w, disp_h])
-    ax_img.imshow(np.asarray(img))
+    # nearest: avoid bilinear soft-blur when the bitmap is near native page dpi
+    ax_img.imshow(np.asarray(img), interpolation="nearest", aspect="equal")
     ax_img.set_axis_off()
 
     # Caption block under the figure
@@ -265,13 +256,13 @@ def write_figure_page(pdf: PdfPages, fig_key: str, meta: dict) -> None:
         fontsize=7.8, width_chars=100, line_h=0.0128, color="#222",
     )
 
-    pdf.savefig(fig, facecolor="white")
+    pdf.savefig(fig, facecolor="white", dpi=PAGE_DPI)
     plt.close(fig)
 
 
 def ship(pdf_path: Path, extra: list[Path] | None = None) -> list[str]:
+    # Revision work stays in hippo-r6 only (do not write into hippo/).
     ship_dirs = [
-        Path("/home/gmwager/projects/hippo/reports/report6"),
         ROOT / "reports" / "report6",
     ]
     shipped = []
