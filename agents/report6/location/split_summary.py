@@ -115,6 +115,8 @@ def s1_masks(
         "n_bins_purged_or_out": int((assign < 0).sum()),
         "frac_A": float(a.sum() / max(1, retained.sum())),
         "frac_B": float(b.sum() / max(1, retained.sum())),
+        "mask_A": a,
+        "mask_B": b,
     }
 
 
@@ -145,6 +147,29 @@ def s2_masks(
         "n_bins_purged_or_out": int((assign < 0).sum()),
         "frac_A": float(a.sum() / max(1, retained.sum())),
         "frac_B": float(b.sum() / max(1, retained.sum())),
+        "mask_A": a,
+        "mask_B": b,
+    }
+
+
+def s0_masks(n_bins: int, retained: np.ndarray) -> dict[str, Any]:
+    """Interleaved bins (ceiling); no purge."""
+    retained = np.asarray(retained, dtype=bool)
+    assign = np.full(n_bins, -1, dtype=int)
+    idx = np.arange(n_bins)
+    assign[idx % 2 == 0] = 0
+    assign[idx % 2 == 1] = 1
+    assign[~retained] = -1
+    a = assign == 0
+    b = assign == 1
+    return {
+        "n_bins_A": int(a.sum()),
+        "n_bins_B": int(b.sum()),
+        "n_bins_purged_or_out": int((assign < 0).sum()),
+        "frac_A": float(a.sum() / max(1, retained.sum())),
+        "frac_B": float(b.sum() / max(1, retained.sum())),
+        "mask_A": a,
+        "mask_B": b,
     }
 
 
@@ -167,6 +192,11 @@ def summarize_session(s: SessionData, cfg: dict[str, Any]) -> dict[str, Any]:
         dt_s=dt,
     )
     s2 = s2_masks(n, s.retained, g_s=g, dt_s=dt)
+    s0 = s0_masks(n, s.retained)
+
+    def _public(split: dict[str, Any]) -> dict[str, Any]:
+        return {k: v for k, v in split.items() if not k.startswith("mask_")}
+
     return {
         "alias": s.alias,
         "arm": s.arm,
@@ -175,8 +205,10 @@ def summarize_session(s: SessionData, cfg: dict[str, Any]) -> dict[str, Any]:
         "n_bins_retained": int(np.asarray(s.retained, dtype=bool).sum()),
         "tau_ac_s": tau,
         "g_s": g,
-        "S1": s1,
-        "S2": s2,
+        "S1": _public(s1),
+        "S2": _public(s2),
+        "S0": _public(s0),
+        "_masks": {"S1": s1, "S2": s2, "S0": s0},  # in-memory only; stripped on save
     }
 
 
@@ -203,8 +235,9 @@ def main() -> None:
     rows = []
     for s in list(iter_sessions(arm="real")) + list(iter_sessions(arm="sim")):
         r = summarize_session(s, cfg)
-        rows.append(r)
-        save_json(r, LOC_OUT / "splits" / f"{r['alias']}.json")
+        public = {k: v for k, v in r.items() if k != "_masks"}
+        rows.append(public)
+        save_json(public, LOC_OUT / "splits" / f"{r['alias']}.json")
 
     save_json(rows, LOC_OUT / "split_summary.json")
 

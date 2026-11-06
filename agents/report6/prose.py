@@ -61,12 +61,14 @@ PAGE1_SAY_ALOUD = [
     "1. 10 of 10 real sessions have at least one recurring neural target that is "
     "separable on held-out time.",
     "2. 9 of 10 real sessions keep that target when coordination between units is "
-    "destroyed; 9 of 13 session-by-method runs pass the split-population test.",
+    "destroyed (PCA surrogate at 20: S03 passes at the boundary, 4 of 20, and is "
+    "also the session whose top target covers most of the cloud; S09 fails the "
+    "surrogate test); 9 of 13 session-by-method runs pass the split-population test.",
     "3. Plant-and-recover in simulation: every planted visit found, no false "
     "alarms.",
     "4. Reproducibility across independent halves: [filled in from the amendment's "
     "results table; the sign count over animals].",
-]
+)
 
 PAGE1_READING_GUIDE = (
     "Figure 6.0 is the pass/fail board: start there. Figure 6.0b lists the raw "

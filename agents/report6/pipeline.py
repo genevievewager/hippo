@@ -144,10 +144,20 @@ def null_b_surrogate(
         Z = fit_transform_pca_lds(method, Xs, s.train_ok, d=d, seed=seed + i)
         r = run_m1_m2_on_Z(Z, s, method=method, seed=seed + i)
         ok = r.get("status") == "ok" and bool(r.get("top_distinguishable_pass"))
-        passes.append({"i": i, "pass": ok, "status": r.get("status")})
+        occ = None
+        te = r.get("targets_eval") or []
+        if te and te[0].get("target") is not None:
+            occ = te[0]["target"].get("occupancy")
+        elif r.get("status") == "ok":
+            # qualifying target absent
+            occ = 0.0
+        passes.append({
+            "i": i, "pass": ok, "status": r.get("status"), "occupancy": occ,
+        })
     n_pass = sum(1 for p in passes if p["pass"])
     # Revision C2: at most 20% of surrogates succeed (≤1/5 LDS; ≤4/20 PCA).
     max_pass = max(0, int(round(0.20 * n_surr)))
+    occs = [p["occupancy"] for p in passes if p.get("occupancy") is not None]
     return {
         "alias": s.alias,
         "method": method,
@@ -155,6 +165,9 @@ def null_b_surrogate(
         "n_pass": n_pass,
         "max_pass": max_pass,
         "null_b_pass": n_pass <= max_pass,
+        "median_surrogate_occupancy": (
+            float(np.median(np.asarray(occs, dtype=float))) if occs else None
+        ),
         "surrogates": passes,
     }
 
