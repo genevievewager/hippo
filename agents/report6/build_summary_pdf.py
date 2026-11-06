@@ -52,8 +52,17 @@ def summarize() -> dict:
         nb_row = next((r for r in nb if r.get("alias") == alias and r.get("method") == "lds"), None)
         if nb_row is None:
             nb_row = next((r for r in nb if r.get("alias") == alias and r.get("method") == "pca"), None)
-        sp_row = next((r for r in sp if r.get("alias") == alias), None)
-        bt_row = next((r for r in bt if r.get("alias") == alias), None)
+        # Prefer LDS row when present (matches F6.0 board); else PCA.
+        sp_row = next((r for r in sp if r.get("alias") == alias and r.get("method") == "lds"), None)
+        if sp_row is None:
+            sp_row = next((r for r in sp if r.get("alias") == alias and r.get("method") == "pca"), None)
+        if sp_row is None:
+            sp_row = next((r for r in sp if r.get("alias") == alias), None)
+        bt_row = next((r for r in bt if r.get("alias") == alias and r.get("method") == "lds"), None)
+        if bt_row is None:
+            bt_row = next((r for r in bt if r.get("alias") == alias and r.get("method") == "pca"), None)
+        if bt_row is None:
+            bt_row = next((r for r in bt if r.get("alias") == alias), None)
         rows.append({
             "alias": alias,
             "qualifies": qual,
