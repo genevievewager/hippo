@@ -21,29 +21,28 @@ CAPTIONS: dict[str, dict[str, str]] = {
             "Recurs: the target is visited often enough in training. "
             "Distinguishable: on held-out time the detector scores the target higher "
             "than neighboring regions. "
-            "Survives the surrogate: after independently time-shifting each unit and "
-            "refitting, success should be rare (at most 20 %). "
+            "Survives the surrogate (PCA): after independently time-shifting each unit "
+            "and refitting, success should be rare (at most 20 %). LDS has its own "
+            "surrogate row (4 of 10); PCA defines targets. "
             "Split-population: two random halves of the units agree on when the state "
             "is in the target. "
-            "Same subspace / same tiles: independent fits on alternating halves of the "
-            "session recover the same latent space and the same regions (hard-split "
-            "test; filled when the amendment finishes). "
-            "Counts are per run (session by method). Survives-surrogate, split-population and "
-            "reproducibility cells use PCA until the LDS runs are complete. "
+            "Same subspace / same tiles / resolvable: the pre-registered hard-split "
+            "conjunction (n_stable, ARI, r/sigma and frac<r). "
+            "Counts are per run (session by method). "
             "Bottom boxes: headline rates for the lab meeting, plus plant-and-recover."
         ),
     },
     "F6_numbers": {
         "title": "Figure 6.0b  Session-by-session numbers",
         "takeaway": (
-            "Every session has a recurring, separable target; reproducibility columns "
-            "are filled from the hard-split amendment."
+            "Every session has a recurring, separable target; hard-split columns use "
+            "the pre-registered conjunction at Report 2's decoding d."
         ),
         "caption": (
             "For each real session we report training occupancy and visit count of the "
             "top target, held-out separability (delta P), and PASS/FAIL for the "
-            "surrogate, the split-population test, and the hard-split reproducibility "
-            "rows (stable dimensions; coordinate error; ARI on S1 and S2). "
+            "PCA and LDS surrogates, the split-population test, and the hard-split "
+            "rows (same subspace; same tiles; resolvable). "
             "Occupancy is typically about 25-50 % of training time; any top target "
             "above 50 % is called most of the cloud. "
             "Null (a) and bootstrap refit are retired (see supplement)."
@@ -68,6 +67,9 @@ CAPTIONS: dict[str, dict[str, str]] = {
             "(left axis). Orange points: number of separate visits (right axis; a new "
             "visit requires at least 1 s outside first). "
             "Dashed line: 5 % occupancy minimum; dotted line: 10-visit minimum. "
+            "Gray markers: 1/M (uniform share if M equal tiles). Surrogate targets "
+            "match the real targets' occupancy, so the recurrence rule filters "
+            "candidates and is not evidence on its own; compare occupancy to 1/M. "
             "Panels a-b are real hippocampal-formation recordings (LDS and PCA). "
             "Panels c-d are matched simulations with the same unit count (subsample "
             "k = 0). Shared y-limits across panels. Any top target above 50 % "
@@ -89,24 +91,26 @@ CAPTIONS: dict[str, dict[str, str]] = {
             "most 4 of 20 succeed). S03 is a pass at the boundary (4 of 20) and is "
             "also the session whose top target covers most of the cloud; S09 fails. "
             "(d) Surrogate results for LDS at 5 surrogates per session (pass if at "
-            "most 1 of 5 succeed). "
+            "most 1 of 5 succeed; 4 of 10 PASS). The LDS density rule is the weaker "
+            "definition; PCA defines targets. "
             "The whole-series time-shift null is retired (supplement)."
         ),
     },
     "F6_4": {
         "title": "Figure 6.4  Population agreement and hard-split reproducibility",
         "takeaway": (
-            "Neuron-halves should agree on the target; independent halves of the "
-            "session should recover the same subspace, coordinates, and tiles."
+            "Pre-registered conjunction at Report 2's decoding d: 1 of 10; "
+            "stable-dimension count is the headline; r/sigma vs W tests structure."
         ),
         "caption": (
-            "(a) Split-population test (per run, session by method): two disjoint "
-            "unit halves, each with its own latent fit; Cohen's kappa of in-target "
-            "time series. Dashed line: kappa = 0.2. "
-            "(b)-(e) Hard-split reproducibility (amendment): principal angles, "
-            "coordinate error, ARI, matched-tile shifts, with an example session. "
-            "(f) Matched sim condensed. "
-            "The bootstrap refit panel is retired (supplement)."
+            "(a) Split-population (per run). (b) n_stable against d (S1, u out). "
+            "(c) Fraction of sessions passing each criterion against d; Report 2 "
+            "primary d marked. (d) Per-axis rigid error for one example session "
+            "with the S0 ceiling. (e) ARI by session for S1, S2, S0 at d = 3 with "
+            "N1 p95. (f) Sim condensed and real pass counts. (g) median r/sigma "
+            "against W at d = 3 with the line at 2; if tiles capture state, the "
+            "1 s value should be about twice the 250 ms value. (h) Tile-match "
+            "reminder. PCA targets are primary. Bootstrap panel retired (supplement)."
         ),
     },
     "F6_5": {

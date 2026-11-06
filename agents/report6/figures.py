@@ -61,21 +61,72 @@ def _yn(v) -> str:
     return "PASS" if v else "FAIL"
 
 
+def _pca_level_table() -> dict[str, Any] | None:
+    """Prefer d-grid / N1=50 tables when present; else the default table."""
+    for name in (
+        "pca_level_table_dgrid.json",
+        "pca_level_table_n1_50.json",
+        "pca_level_table.json",
+    ):
+        blob = _load(DATA_DIR / "location" / name)
+        if blob and blob.get("rows"):
+            return blob
+    return None
+
+
+def _hard_split_flags(alias: str, tab: dict[str, Any] | None) -> dict[str, Any]:
+    """Pre-registered conjunction at primary d (S1, u out); PCA defines targets."""
+    out = {
+        "same_subspace": None,
+        "same_tiles": None,
+        "resolvable": None,
+        "n_stable": None,
+        "primary_d": None,
+        "session_pass": None,
+    }
+    if not tab:
+        return out
+    rows = [
+        r for r in tab["rows"]
+        if r.get("alias") == alias
+        and r.get("arm") == "real"
+        and r.get("split") == "S1"
+        and r.get("drop_u") is True
+        and r.get("is_primary_d")
+    ]
+    if not rows:
+        return out
+    r = rows[0]
+    out["same_subspace"] = r.get("pass_n_stable")
+    out["same_tiles"] = r.get("pass_ari")
+    out["resolvable"] = r.get("pass_tiles")
+    out["n_stable"] = r.get("n_stable")
+    out["primary_d"] = r.get("primary_d")
+    flags = [out["same_subspace"], out["same_tiles"], out["resolvable"]]
+    if all(f is not None for f in flags):
+        out["session_pass"] = all(bool(f) for f in flags)
+    return out
+
+
 def collect_session_table() -> list[dict[str, Any]]:
-    """One row per real session with all criterion outcomes (LDS primary)."""
+    """One row per real session; PCA primary for surrogate / hard-split board."""
     m0 = _load(DATA_DIR / "m0_m2" / "all.json") or []
     na = _load(DATA_DIR / "null_a" / "summary.json") or []
     nb = _load(DATA_DIR / "null_b" / "summary.json") or []
     sp = _load(DATA_DIR / "split" / "summary.json") or []
     bt = _load(DATA_DIR / "boot" / "summary.json") or []
+    loc = _pca_level_table()
 
     rows = []
     for sess in m0:
         if sess.get("arm") != "real":
             continue
         alias = sess["alias"]
+        # Board / page-1: PCA targets are primary for qualify/detect numbers too
+        # when present; fall back to LDS for legacy occupancy strip.
+        pca = (sess.get("methods") or {}).get("pca") or {}
         lds = (sess.get("methods") or {}).get("lds") or {}
-        te = (lds.get("targets_eval") or [])
+        te = (pca.get("targets_eval") or lds.get("targets_eval") or [])
         top = te[0] if te else None
         na_r = _idx(na, alias=alias, method="lds")
         nb_lds = _idx(nb, alias=alias, method="lds")
@@ -84,6 +135,7 @@ def collect_session_table() -> list[dict[str, Any]]:
         sp_pca = _idx(sp, alias=alias, method="pca")
         bt_lds = _idx(bt, alias=alias, method="lds")
         bt_pca = _idx(bt, alias=alias, method="pca")
+        hs = _hard_split_flags(alias, loc)
         rows.append({
             "alias": alias,
             "animal": sess.get("methods", {}).get("lds", {}).get("animal")
@@ -97,26 +149,31 @@ def collect_session_table() -> list[dict[str, Any]]:
             "distinguishable": None if not top else bool(top.get("distinguishable_pass")),
             "null_a": None if na_r is None else bool(na_r.get("null_a_pass")),
             "null_a_npass": None if na_r is None else na_r.get("n_pass"),
-            "null_b": None if (nb_lds or nb_pca) is None else bool(
-                (nb_lds or nb_pca).get("null_b_pass")
+            "null_b_pca": None if nb_pca is None else bool(nb_pca.get("null_b_pass")),
+            "null_b_lds": None if nb_lds is None else bool(nb_lds.get("null_b_pass")),
+            # Legacy key: PCA primary
+            "null_b": None if nb_pca is None else bool(nb_pca.get("null_b_pass")),
+            "null_b_method": "pca",
+            "null_b_npass": None if nb_pca is None else nb_pca.get("n_pass"),
+            "split": None if (sp_pca or sp_lds) is None else bool(
+                (sp_pca or sp_lds).get("pass")
             ),
-            "null_b_method": "lds" if nb_lds is not None else ("pca" if nb_pca else None),
-            "null_b_npass": None if (nb_lds or nb_pca) is None else (nb_lds or nb_pca).get("n_pass"),
-            "split": None if (sp_lds or sp_pca) is None else bool(
-                (sp_lds or sp_pca).get("pass")
+            "split_kappa": None if (sp_pca or sp_lds) is None else (
+                sp_pca or sp_lds
+            ).get("kappa"),
+            "boot": None if (bt_pca or bt_lds) is None else bool(
+                (bt_pca or bt_lds).get("pass")
             ),
-            "split_kappa": None if (sp_lds or sp_pca) is None else (sp_lds or sp_pca).get("kappa"),
-            "boot": None if (bt_lds or bt_pca) is None else bool(
-                (bt_lds or bt_pca).get("pass")
-            ),
-            "boot_jaccard": None if (bt_lds or bt_pca) is None else (
-                bt_lds or bt_pca
+            "boot_jaccard": None if (bt_pca or bt_lds) is None else (
+                bt_pca or bt_lds
             ).get("median_jaccard"),
-            # Hard-split amendment (filled at stop point 2+); None until then.
-            "same_subspace": None,
-            "same_tiles": None,
+            "same_subspace": hs["same_subspace"],
+            "same_tiles": hs["same_tiles"],
+            "resolvable": hs["resolvable"],
+            "n_stable": hs["n_stable"],
+            "primary_d": hs["primary_d"],
+            "hard_split_pass": hs["session_pass"],
         })
-    # fill animal from public cohort if missing
     cohort = _load(DATA_DIR / "cohort_public.json") or []
     by_a = {r["alias"]: r for r in cohort}
     for r in rows:
@@ -303,25 +360,33 @@ def fig62_targets() -> Path | None:
     data = _load(DATA_DIR / "m0_m2" / "all.json")
     if not data:
         return None
+    occ_cmp = _load(DATA_DIR / "null_b" / "occupancy_compare.json") or []
 
     def top_stats(arm: str, method: str):
-        aliases, occ, vis, dwell = [], [], [], []
+        aliases, occ, vis, inv_m, surr_occ = [], [], [], [], []
         for sess in data:
             if sess.get("arm") != arm:
                 continue
             blob = (sess.get("methods") or {}).get(method) or {}
             te = blob.get("targets_eval") or []
-            aliases.append(sess["alias"].replace("SIM", "S") if arm == "sim" else sess["alias"])
+            m1 = blob.get("m1") or {}
+            k = int(m1.get("k") or 0)
+            alias = sess["alias"]
+            aliases.append(alias.replace("SIM", "S") if arm == "sim" else alias)
             if te:
                 t = te[0]["target"]
                 occ.append(100 * t["occupancy"])
                 vis.append(t["n_visits"])
-                dwell.append(t["median_dwell_s"])
             else:
                 occ.append(0.0)
                 vis.append(0)
-                dwell.append(np.nan)
-        return aliases, occ, vis, dwell
+            inv_m.append(100.0 / k if k > 0 else np.nan)
+            oc = _idx(occ_cmp, alias=alias, method=method)
+            if oc and oc.get("median_surrogate_occupancy") is not None:
+                surr_occ.append(100.0 * float(oc["median_surrogate_occupancy"]))
+            else:
+                surr_occ.append(np.nan)
+        return aliases, occ, vis, inv_m, surr_occ
 
     panels = [
         (0, 0, "real", "lds", "a  Real · LDS"),
@@ -332,8 +397,8 @@ def fig62_targets() -> Path | None:
     packed = []
     all_occ, all_vis = [], []
     for spec in panels:
-        aliases, occ, vis, _ = top_stats(spec[2], spec[3])
-        packed.append((spec, aliases, occ, vis))
+        aliases, occ, vis, inv_m, surr_occ = top_stats(spec[2], spec[3])
+        packed.append((spec, aliases, occ, vis, inv_m, surr_occ))
         all_occ.extend(occ)
         all_vis.extend(vis)
 
@@ -347,12 +412,18 @@ def fig62_targets() -> Path | None:
     )
 
     legend_handles = None
-    for (r, c, _arm, _method, title), aliases, occ, vis in packed:
+    for (r, c, _arm, _method, title), aliases, occ, vis, inv_m, surr_occ in packed:
         ax = fig.add_subplot(gs[r, c])
         x = np.arange(len(aliases))
         w = 0.38
         b = ax.bar(x - w / 2, occ, width=w, color=ACCENT, label="occupancy %")
         h5 = ax.axhline(5, color="gray", ls="--", lw=0.8, label="5% rule")
+        (m1ln,) = ax.plot(
+            x, inv_m, "s", color="#666", ms=3.5, label="1/M %", zorder=5,
+        )
+        (surrln,) = ax.plot(
+            x, surr_occ, "x", color="#888", ms=4, label="surr. med occ %", zorder=5,
+        )
         ax.set_ylim(0, occ_max)
         ax.tick_params(axis="y", labelcolor=ACCENT, labelsize=7)
         if c == 0:
@@ -370,13 +441,13 @@ def fig62_targets() -> Path | None:
         ax.set_xticklabels(aliases, fontsize=6, rotation=45, ha="right")
         ax.set_title(title, loc="left", fontsize=8, fontweight="bold", pad=4)
         if legend_handles is None:
-            legend_handles = [b, h5, ln, h10]
+            legend_handles = [b, h5, m1ln, surrln, ln, h10]
 
     if legend_handles is not None:
         fig.legend(
             legend_handles,
-            ["occupancy %", "5% rule", "visits", "10 visits"],
-            loc="lower center", ncol=4, fontsize=7.5, frameon=False,
+            ["occupancy %", "5% rule", "1/M %", "surr. med occ %", "visits", "10 visits"],
+            loc="lower center", ncol=6, fontsize=6.5, frameon=False,
             bbox_to_anchor=(0.5, 0.01),
         )
 
@@ -455,7 +526,8 @@ def fig63_detection_nulls() -> Path | None:
     def _surrogate_panel(ax, method: str, n_expected: int, title_prefix: str) -> None:
         rows = [
             r for r in nb
-            if isinstance(r.get("alias"), str)
+            if isinstance(r, dict)
+            and isinstance(r.get("alias"), str)
             and r["alias"].startswith("S")
             and not r["alias"].startswith("SIM")
             and r.get("method") == method
@@ -508,17 +580,23 @@ def fig63_detection_nulls() -> Path | None:
 # ---------------------------------------------------------------------------
 
 def fig64_split_boot() -> Path | None:
-    """Panel (a) split-population only; hard-split panels fill in after amendment."""
+    """Split-pop (a) + hard-split d-grid panels (b-f) + W and per-axis (g-h)."""
     sp = _load(DATA_DIR / "split" / "summary.json") or []
-    if not sp:
+    loc = _pca_level_table()
+    w1 = _load(DATA_DIR / "location" / "pca_level_table_w1s.json")
+    w05 = _load(DATA_DIR / "location" / "pca_level_table_w500ms.json")
+    w025 = _load(DATA_DIR / "location" / "pca_level_table.json")
+    if not sp and not loc:
         return None
 
-    fig = plt.figure(figsize=(W_FULL, 95 * MM), facecolor="white")
+    fig = plt.figure(figsize=(W_FULL, 240 * MM), facecolor="white")
     gs = fig.add_gridspec(
-        1, 2, wspace=0.40,
-        left=0.16, right=0.98, top=0.84, bottom=0.12,
+        4, 2, hspace=0.55, wspace=0.35,
+        left=0.10, right=0.98, top=0.94, bottom=0.04,
+        height_ratios=[0.9, 1.0, 1.0, 0.9],
     )
 
+    # (a) split-population
     ax = fig.add_subplot(gs[0, 0])
     rows = [r for r in sp if r.get("kappa") is not None]
     rows = sorted(rows, key=lambda r: (r["alias"], r.get("method", "")))
@@ -528,36 +606,255 @@ def fig64_split_boot() -> Path | None:
         cols = [PASS_C if r.get("pass") else FAIL_C for r in rows]
         ax.barh(range(len(xs)), ys, color=cols)
         ax.set_yticks(range(len(xs)))
-        ax.set_yticklabels(xs, fontsize=7)
+        ax.set_yticklabels(xs, fontsize=6)
         ax.axvline(0.2, color="black", ls="--", lw=0.9)
         ax.set_xlim(0, 1)
-        ax.set_xlabel("Cohen kappa", fontsize=8)
+        ax.set_xlabel("Cohen kappa", fontsize=7)
         n_ok = sum(1 for r in rows if r.get("pass"))
         ax.set_title(
-            f"a  Split-population  ({n_ok}/{len(rows)} PASS; per run)",
-            loc="left", fontsize=8, fontweight="bold", pad=4,
+            f"a  Split-population ({n_ok}/{len(rows)} PASS)",
+            loc="left", fontsize=8, fontweight="bold", pad=3,
         )
         ax.invert_yaxis()
 
+    def _s1_u(tab, arm="real"):
+        if not tab:
+            return []
+        return [
+            r for r in tab["rows"]
+            if r.get("arm") == arm and r.get("split") == "S1" and r.get("drop_u")
+        ]
+
+    s1 = _s1_u(loc)
+
+    # (b) principal angles vs d for one example + n_stable vs d all sessions
     ax = fig.add_subplot(gs[0, 1])
+    if s1:
+        # n_stable vs d, real sessions
+        aliases = sorted({r["alias"] for r in s1})
+        for alias in aliases:
+            sub = sorted(
+                [r for r in s1 if r["alias"] == alias],
+                key=lambda r: r["d"],
+            )
+            ax.plot(
+                [r["d"] for r in sub], [r["n_stable"] for r in sub],
+                "-o", ms=2.5, lw=0.8, alpha=0.75, label=alias,
+            )
+            # mark Report 2 primary d
+            prim = next((r for r in sub if r.get("is_primary_d")), None)
+            if prim:
+                ax.axvline(prim["d"], color="#aaa", lw=0.4, alpha=0.3)
+        ax.axhline(2, color="black", ls="--", lw=0.8)
+        ax.set_xlabel("d", fontsize=7)
+        ax.set_ylabel("n_stable", fontsize=7)
+        ax.set_title(
+            "b  Stable dims vs d (S1, u out; dashed = 2)",
+            loc="left", fontsize=8, fontweight="bold", pad=3,
+        )
+        ax.tick_params(labelsize=6)
+
+    # (c) three pass criteria vs d (fraction of sessions)
+    ax = fig.add_subplot(gs[1, 0])
+    if s1:
+        ds = sorted({r["d"] for r in s1 if r["d"] <= 20 or r.get("is_primary_d")})
+        # use grid ds preferentially
+        ds_plot = sorted({r["d"] for r in s1 if r["d"] in (2, 3, 5, 10, 20)})
+        if not ds_plot:
+            ds_plot = sorted({r["d"] for r in s1})
+        xs, fr_ns, fr_ari, fr_tile = [], [], [], []
+        for d in ds_plot:
+            sub = [r for r in s1 if r["d"] == d]
+            if not sub:
+                continue
+            xs.append(d)
+            fr_ns.append(np.mean([bool(r.get("pass_n_stable")) for r in sub]))
+            fr_ari.append(np.mean([
+                bool(r.get("pass_ari")) for r in sub if r.get("pass_ari") is not None
+            ] if any(r.get("pass_ari") is not None for r in sub) else [0]))
+            fr_tile.append(np.mean([
+                bool(r.get("pass_tiles")) for r in sub if r.get("pass_tiles") is not None
+            ] if any(r.get("pass_tiles") is not None for r in sub) else [0]))
+        ax.plot(xs, fr_ns, "-o", label="same subsp.", ms=4)
+        ax.plot(xs, fr_ari, "-s", label="same tiles", ms=4)
+        ax.plot(xs, fr_tile, "-^", label="resolvable", ms=4)
+        # Report 2 primary ds as ticks
+        prims = sorted({r["primary_d"] for r in s1})
+        for pd in prims[:3]:
+            ax.axvline(pd, color="#bbb", ls=":", lw=0.7)
+        ax.set_ylim(-0.05, 1.05)
+        ax.set_xlabel("d", fontsize=7)
+        ax.set_ylabel("fraction PASS", fontsize=7)
+        ax.legend(fontsize=6, frameon=False, loc="best")
+        ax.set_title(
+            "c  Criteria vs d (Report 2 primary d dotted)",
+            loc="left", fontsize=8, fontweight="bold", pad=3,
+        )
+
+    # (d) per-axis rigid error for example session at d=3
+    ax = fig.add_subplot(gs[1, 1])
+    ex = next((r for r in s1 if r["alias"] == "S03" and r["d"] == 3), None)
+    if ex is None and s1:
+        ex = next((r for r in s1 if r["d"] == 3), s1[0])
+    if ex and ex.get("e_rigid_per_axis_frac"):
+        e_ax = ex["e_rigid_per_axis_frac"]
+        ax.bar(range(1, len(e_ax) + 1), e_ax, color=ACCENT)
+        ax.set_xlabel("aligned axis", fontsize=7)
+        ax.set_ylabel("median |e_k| / scale_k", fontsize=7)
+        ax.set_title(
+            f"d  Per-axis rigid error ({ex['alias']}, d={ex['d']})",
+            loc="left", fontsize=8, fontweight="bold", pad=3,
+        )
+        # S0 ceiling from same alias
+        s0 = next(
+            (r for r in (loc or {}).get("rows", [])
+             if r.get("alias") == ex["alias"] and r.get("split") == "S0"
+             and r.get("drop_u") and r.get("d") == ex["d"]),
+            None,
+        )
+        if s0 and s0.get("e_rigid_median_all") is not None:
+            ax.axhline(s0["e_rigid_median_all"], color="gray", ls="--", lw=0.8,
+                       label="S0 e_med")
+            ax.legend(fontsize=6, frameon=False)
+
+    # (e) ARI by session at d=3 for S1/S2/S0 + N1 p95
+    ax = fig.add_subplot(gs[2, 0])
+    if loc:
+        aliases = sorted({
+            r["alias"] for r in loc["rows"]
+            if r.get("arm") == "real"
+        })
+        width = 0.25
+        x = np.arange(len(aliases))
+        for i, split in enumerate(("S1", "S2", "S0")):
+            ys, yerr_lo = [], []
+            for a in aliases:
+                r = next(
+                    (rr for rr in loc["rows"]
+                     if rr.get("alias") == a and rr.get("split") == split
+                     and rr.get("drop_u") and rr.get("d") == 3),
+                    None,
+                )
+                ys.append(np.nan if r is None else r.get("ari"))
+            ax.bar(x + (i - 1) * width, ys, width=width, label=split)
+        # N1 p95 markers for S1
+        for j, a in enumerate(aliases):
+            r = next(
+                (rr for rr in loc["rows"]
+                 if rr.get("alias") == a and rr.get("split") == "S1"
+                 and rr.get("drop_u") and rr.get("d") == 3),
+                None,
+            )
+            if r and r.get("ari_n1_p95") is not None:
+                ax.plot(j, r["ari_n1_p95"], "k_", ms=8)
+        ax.set_xticks(x)
+        ax.set_xticklabels(aliases, fontsize=6, rotation=45, ha="right")
+        ax.set_ylim(0, 1.05)
+        ax.legend(fontsize=6, frameon=False, ncol=3)
+        ax.set_title(
+            "e  ARI at d=3 (N1 p95 as black ticks on S1)",
+            loc="left", fontsize=8, fontweight="bold", pad=3,
+        )
+
+    # (f) sim condensed: pass counts at d=3 and primary
+    ax = fig.add_subplot(gs[2, 1])
     ax.set_axis_off()
-    ax.text(
-        0.02, 0.95,
-        "b-f  Hard-split reproducibility\n(pending amendment stop point 2)",
-        transform=ax.transAxes, va="top", fontsize=9, fontweight="bold",
+    lines = ["f  Sim condensed (S1, u out)", ""]
+    if loc:
+        for which, pred in (
+            ("d=3", lambda r: r.get("d") == 3),
+            ("primary", lambda r: r.get("is_primary_d")),
+        ):
+            sub = [
+                r for r in loc["rows"]
+                if r.get("arm") == "sim" and r.get("split") == "S1"
+                and r.get("drop_u") and pred(r)
+            ]
+            n = len(sub)
+            n_pass = sum(
+                1 for r in sub
+                if r.get("pass_n_stable") and r.get("pass_ari") and r.get("pass_tiles")
+            )
+            lines.append(f"  {which}: {n_pass}/{n} conjunction PASS")
+        real_sub = [
+            r for r in loc["rows"]
+            if r.get("arm") == "real" and r.get("split") == "S1"
+            and r.get("drop_u") and r.get("is_primary_d")
+        ]
+        n_pass = sum(
+            1 for r in real_sub
+            if r.get("pass_n_stable") and r.get("pass_ari") and r.get("pass_tiles")
+        )
+        lines.append("")
+        lines.append(f"  Real primary conjunction: {n_pass}/{len(real_sub)}")
+        d3 = [
+            r for r in loc["rows"]
+            if r.get("arm") == "real" and r.get("split") == "S1"
+            and r.get("drop_u") and r.get("d") == 3
+        ]
+        n_pass3 = sum(
+            1 for r in d3
+            if r.get("pass_n_stable") and r.get("pass_ari") and r.get("pass_tiles")
+        )
+        lines.append(f"  Real d=3 (post hoc): {n_pass3}/{len(d3)}")
+        unstable = sum(1 for r in d3 if (r.get("n_stable") or 0) < 2)
+        lines.append(f"  d=3 with n_stable<2: {unstable}/{len(d3)}")
+    ax.text(0.02, 0.98, "\n".join(lines), transform=ax.transAxes, va="top",
+            fontsize=7.5, family="monospace")
+
+    # (g) r/sigma vs W
+    ax = fig.add_subplot(gs[3, 0])
+    w_tabs = []
+    for W, tab in ((0.25, w025 or loc), (0.5, w05), (1.0, w1)):
+        if not tab:
+            continue
+        w_tabs.append((W, tab))
+    if w_tabs:
+        aliases = sorted({
+            r["alias"] for _, tab in w_tabs for r in tab["rows"]
+            if r.get("arm") == "real" and r.get("split") == "S1"
+            and r.get("drop_u") and r.get("d") == 3
+        })
+        for a in aliases:
+            xs, ys = [], []
+            for W, tab in w_tabs:
+                r = next(
+                    (rr for rr in tab["rows"]
+                     if rr.get("alias") == a and rr.get("split") == "S1"
+                     and rr.get("drop_u") and rr.get("d") == 3),
+                    None,
+                )
+                if r and r.get("median_r_over_sigma_noise") is not None:
+                    xs.append(W)
+                    ys.append(r["median_r_over_sigma_noise"])
+            if xs:
+                ax.plot(xs, ys, "-o", ms=3, lw=0.8, alpha=0.8)
+        ax.axhline(2, color="black", ls="--", lw=0.9)
+        ax.set_xlabel("W (s)", fontsize=7)
+        ax.set_ylabel("median r / sigma", fontsize=7)
+        ax.set_title(
+            "g  r/sigma vs W at d=3 (expect ~2x at 1 s if structure)",
+            loc="left", fontsize=8, fontweight="bold", pad=3,
+        )
+
+    # (h) note / tile match reminder
+    ax = fig.add_subplot(gs[3, 1])
+    ax.set_axis_off()
+    note = (
+        "h  Tile match at d=3\n"
+        "Targets = tiles meeting occ/visits on A.\n"
+        "Pass if ARI > N1 p95, frac<r >= 0.5,\n"
+        "median r/sigma >= 2.\n\n"
+        "Tiles belong in low d / stable\n"
+        "subspace next round (S0 ARI can\n"
+        "fall to ~0.39 at primary d)."
     )
-    ax.text(
-        0.02, 0.72,
-        "Alternating 60 s blocks (S1), first vs second half (S2),\n"
-        "principal angles, coordinate error, ARI, matched tiles.\n"
-        "Bootstrap refit panel retired (see supplement).",
-        transform=ax.transAxes, va="top", fontsize=8, color="#333",
-    )
+    ax.text(0.02, 0.98, note, transform=ax.transAxes, va="top", fontsize=7.5)
 
     fig.suptitle(
-        "Population agreement (split-pop) and hard-split reproducibility "
-        "(amendment)",
-        fontsize=9, fontweight="bold", y=0.97,
+        "Population agreement and hard-split reproducibility "
+        "(PCA; pre-registered conjunction at Report 2 d)",
+        fontsize=9, fontweight="bold", y=0.985,
     )
     return _save(fig, "F6_4")
 
@@ -621,7 +918,7 @@ def fig66_metric_cards() -> Path:
 
     cols = [
         "Session", "occ%", "visits", "delta P",
-        "surrogate", "split", "subspace", "tiles",
+        "surrPCA", "surrLDS", "split", "subsp", "tiles", "resolv",
     ]
     cell = [cols]
     for r in rows:
@@ -630,25 +927,26 @@ def fig66_metric_cards() -> Path:
             "—" if r["occupancy"] is None else f"{100*r['occupancy']:.0f}",
             "—" if r["visits"] is None else str(r["visits"]),
             "—" if r["delta_p"] is None else f"{r['delta_p']:.2f}",
-            _yn(r["null_b"]),
+            _yn(r.get("null_b_pca", r.get("null_b"))),
+            _yn(r.get("null_b_lds")),
             _yn(r["split"]),
             _yn(r.get("same_subspace")),
             _yn(r.get("same_tiles")),
+            _yn(r.get("resolvable")),
         ])
     table = ax.table(cellText=cell, loc="center", cellLoc="center")
     table.auto_set_font_size(False)
-    table.set_fontsize(8)
-    table.scale(1.0, 1.55)
+    table.set_fontsize(7)
+    table.scale(1.0, 1.45)
     for i in range(1, len(cell)):
-        for j in (4, 5, 6, 7):
+        for j in range(4, len(cols)):
             val = cell[i][j]
             if val == "PASS":
                 table[i, j].set_facecolor("#c6efce")
             elif val == "FAIL":
                 table[i, j].set_facecolor("#ffc7ce")
     fig.suptitle(
-        "Report 6 numbers (real cohort; counts per run; subspace/tiles pending "
-        "hard-split)",
+        "Report 6 numbers (real cohort; PCA targets; hard-split at Report 2 d)",
         fontsize=9, fontweight="bold", y=0.96,
     )
     return _save(fig, "F6_numbers")

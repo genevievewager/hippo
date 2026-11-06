@@ -63,12 +63,19 @@ PAGE1_SAY_ALOUD = [
     "2. 9 of 10 real sessions keep that target when coordination between units is "
     "destroyed (PCA surrogate at 20: S03 passes at the boundary, 4 of 20, and is "
     "also the session whose top target covers most of the cloud; S09 fails the "
-    "surrogate test); 9 of 13 session-by-method runs pass the split-population test.",
+    "surrogate test). PCA defines targets; the LDS density rule is the weaker "
+    "definition and survives the surrogate in 4 of 10. Split-population: 9 of 13 "
+    "session-by-method runs pass.",
     "3. Plant-and-recover in simulation: every planted visit found, no false "
     "alarms.",
-    "4. Reproducibility across independent halves: [filled in from the amendment's "
-    "results table; the sign count over animals].",
-)
+    "4. Pre-registered hard-split conjunction at Report 2's decoding d: 1 of 10 "
+    "sessions pass (count noise adds about one unit of uncertainty per dimension "
+    "while structure sits in the leading ones). Post hoc, in the targets' own "
+    "space d = 3, 2 of 10 pass the same three rules; the stable-dimension count "
+    "is the headline of this test (at least two angles under 30 degrees and above "
+    "the N1 floor). The first three non-gain dimensions are an unstable choice in "
+    "4 of 10 sessions.",
+]
 
 PAGE1_READING_GUIDE = (
     "Figure 6.0 is the pass/fail board: start there. Figure 6.0b lists the raw "
@@ -80,19 +87,23 @@ PAGE1_READING_GUIDE = (
 )
 
 PAGE1_BOARD_NOTE = (
-    "PASS = meets the pre-registered rule for that test. Dash = not run yet. "
-    "Counts are per run (session by method). Survives-surrogate, split-population "
-    "and reproducibility cells use PCA until the LDS runs are complete."
+    "PASS = meets the pre-registered rule for that test. Counts are per run "
+    "(session by method). Survives-surrogate uses PCA as the target definition; "
+    "LDS has its own surrogate row (4 of 10). Hard-split rows are the "
+    "pre-registered conjunction: same subspace (n_stable >= 2 and above N1 p95), "
+    "same tiles (ARI above N1 p95), resolvable (median r/sigma >= 2 and frac<r >= 0.5)."
 )
 
 PAGE1_TABLE_COLS = [
     "Session",
     "Recurs",
     "Distinguishable",
-    "Survives surrogate",
+    "Surv. surr. (PCA)",
+    "Surv. surr. (LDS)",
     "Split-pop",
     "Same subsp.",
     "Same tiles",
+    "Resolvable",
 ]
 
 # Fig 6.1b columns: test, question, how, pass if, a fail means
@@ -175,7 +186,8 @@ FIG61_CAPTION = (
     "each, and evaluate it only on held-out time. Right: every test the target has "
     "to pass, the question it answers, and what a failure would mean. The first "
     "two tests say the region exists and can be found on new data. The next two "
-    "say it belongs to the population rather than to a few units. The three "
+    "say it belongs to the population rather than to a few units; PCA defines "
+    "targets, and the LDS density rule is the weaker definition. The three "
     "reproducibility rows say the same place is found again when everything is "
     "refitted on the other half of the session, which is the error bar on \"here\". "
     "The last row is a sanity check in simulation. Behavior is never used to "
@@ -205,17 +217,56 @@ SUPPLEMENT_BOOT = (
     "13 runs passed with Jaccard 0.75 to 0.97. Replaced by the hard-split test."
 )
 
-SUPPLEMENT_PANELS_NOTE = (
-    "The original panels (old Fig 6.3c and 6.4b) are kept here unchanged for the "
-    "record."
+SUPPLEMENT_ALIGNMENT_FIX = (
+    "Hard-split alignment bug (fixed). An early pass applied the Procrustes "
+    "rotation twice when scoring rigid coordinate error; the S0 interleaved-bin "
+    "check caught it (e_med near 1 while e_aff near 0). Fixture tests are in "
+    "tests/test_report6_location_pca.py."
 )
 
-# Board rows (Fig 6.0a / page-1 table), revision B5
+SUPPLEMENT_PANELS_NOTE = (
+    "The original panels (old Fig 6.3c and 6.4b) are kept here unchanged for the "
+    "record. "
+    + SUPPLEMENT_ALIGNMENT_FIX
+)
+
+# Board rows (Fig 6.0a / page-1 table), revision B5 + step-6 board rows
 BOARD_CRITERIA = [
     ("qualifies", "Recurs"),
     ("distinguishable", "Distinguishable"),
-    ("null_b", "Survives surrogate"),
+    ("null_b_pca", "Survives surrogate (PCA)"),
+    ("null_b_lds", "Survives surrogate (LDS)"),
     ("split", "Split-population"),
-    ("same_subspace", "Same subspace (A vs B)"),
-    ("same_tiles", "Same tiles (A vs B)"),
+    ("same_subspace", "Same subspace"),
+    ("same_tiles", "Same tiles"),
+    ("resolvable", "Resolvable"),
 ]
+
+# Hard-split / window text inserts (step 6)
+HARD_SPLIT_OUTCOME = (
+    "At Report 2's decoding d the pre-registered conjunction passes in 1 of 10 "
+    "sessions: count noise adds about one uncertain unit per dimension while the "
+    "reproducible structure sits in the leading ones. In the targets' own space "
+    "(d = 3, labeled post hoc) 2 of 10 pass; the stable-dimension count is the "
+    "headline of this test."
+)
+
+WINDOW_EXPECTATION = (
+    "Window length. The pilot bins are 250 ms. If the tiles capture a real state, "
+    "median r/sigma at W = 1 s should be about twice the 250 ms value (more spikes "
+    "per bin, same geometry); if they are mostly count noise it stays near 1. The "
+    "purge g scales with the new tau_ac and is recorded per session."
+)
+
+TILE_LOW_D_NOTE = (
+    "k-means at the elbow M in the primary-d space is unstable even between "
+    "interleaved halves in some sessions (S0 ARI 0.39 for one real session at "
+    "d = 40): tiles belong in low d or in the stable subspace in the next round. "
+    "At 250 ms a single bin places the state only to within about one tile."
+)
+
+PAGE1_READING_GUIDE = (
+    PAGE1_READING_GUIDE + " " + HARD_SPLIT_OUTCOME + " "
+    + WINDOW_EXPECTATION + " " + TILE_LOW_D_NOTE
+)
+

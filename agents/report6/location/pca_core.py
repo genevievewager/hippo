@@ -29,6 +29,44 @@ def project_u(Z: np.ndarray) -> np.ndarray:
     return Z - np.outer(Z @ u, u)
 
 
+def rebin_window_counts(
+    X: np.ndarray,
+    *,
+    w_src_s: float,
+    w_dst_s: float,
+    dt_s: float,
+) -> np.ndarray:
+    """Exact longer causal window from shorter overlapping count bins.
+
+    If X[t] = spikes in [t - w_src, t) and w_dst = k * w_src for integer k,
+    then X_dst[t] = sum_{j=0..k-1} X[t - j*w_src] = spikes in [t - w_dst, t).
+    """
+    X = np.asarray(X, dtype=float)
+    if abs(w_dst_s - w_src_s) < 1e-12:
+        return X.copy()
+    if w_dst_s < w_src_s - 1e-12:
+        raise ValueError("rebin_window_counts only lengthens the window")
+    step = int(round(w_src_s / dt_s))
+    k = int(round(w_dst_s / w_src_s))
+    if abs(k * w_src_s - w_dst_s) > 1e-9 or abs(step * dt_s - w_src_s) > 1e-9:
+        raise ValueError(
+            f"w_dst={w_dst_s} must be an integer multiple of w_src={w_src_s} "
+            f"on the dt={dt_s} grid"
+        )
+    out = np.zeros_like(X)
+    for j in range(k):
+        lag = j * step
+        if lag == 0:
+            out += X
+        else:
+            out[lag:] += X[:-lag]
+    # bins that do not yet span a full destination window
+    need = (k - 1) * step
+    if need > 0:
+        out[:need] = np.nan
+    return out
+
+
 def fit_pca_half(
     X: np.ndarray,
     mask: np.ndarray,
@@ -74,10 +112,16 @@ def n_stable(angles_deg: np.ndarray, thr: float = ANGLE_STABLE_DEG) -> int:
 
 
 def rigid_R(V_a: np.ndarray, V_b: np.ndarray) -> np.ndarray:
-    """Orthogonal Procrustes R from SVD of V_b.T @ V_a (loadings only)."""
+    """Orthogonal Procrustes R aligning B loadings toward A.
+
+    Amendment: SVD of V_B^T V_A = U S W^T; R = U W^T (numpy: u @ vt).
+    Reflections allowed (det may be -1; no sign correction on the smallest
+    singular value). Row-form application: c~_B(x)^T = c_B(x)^T R, i.e.
+    C_b_al = C_b @ R, which equals R^T c_B(x) in column form.
+    """
     M = V_b.T @ V_a
     u, _, vt = np.linalg.svd(M)
-    return u @ vt  # d x d
+    return u @ vt  # d x d; == U @ W.T
 
 
 def cloud_rho(C: np.ndarray, mask: np.ndarray) -> float:
@@ -93,10 +137,13 @@ def coord_errors(
     mask_a: np.ndarray,
     mask_b: np.ndarray,
     retained: np.ndarray,
-) -> dict[str, float]:
-    """Rigid and affine coordinate errors / rho_A."""
-    C_b_al = C_b @ R  # c~_B = R^T c_B if R maps B->A: amendment c~_B = R^T c_B
-    # R from SVD(V_b.T V_a); aligned B: c~_B(x) = R.T @ c_B(x)  => C_b @ R
+) -> dict[str, Any]:
+    """Rigid and affine coordinate errors / rho_A.
+
+    C_b must be the *unaligned* B coordinates. R is applied once here:
+    C_b_al = C_b @ R  (= rows of R^T c_B).
+    """
+    C_b_al = C_b @ R
     rho = cloud_rho(C_a, mask_a)
     rho = max(rho, 1e-12)
     kept = np.asarray(retained, dtype=bool)
@@ -112,10 +159,23 @@ def coord_errors(
             "p90": float(np.percentile(vals, 90)),
         }
 
-    # affine: map C_b -> C_a on A-bins, residual on B-bins
+    # Per aligned axis: median |c_A,k - c~_B,k| / scale_k on kept bins,
+    # scale_k = RMS of axis k on A (fraction of that axis's scale).
+    d = C_a.shape[1]
+    scale = np.sqrt(np.mean(C_a[mask_a] ** 2, axis=0))
+    scale = np.where(scale < 1e-12, 1e-12, scale)
+    mm_all = kept
+    abs_diff = np.abs(C_a - C_b_al)
+    e_axis_frac = []
+    for k in range(d):
+        if not np.any(mm_all):
+            e_axis_frac.append(float("nan"))
+        else:
+            e_axis_frac.append(float(np.median(abs_diff[mm_all, k] / scale[k])))
+
+    # affine: map unaligned C_b -> C_a on A-bins, residual on B-bins
     A = C_b[mask_a]
     B = C_a[mask_a]
-    # least squares: A W ≈ B
     W, _, _, _ = np.linalg.lstsq(A, B, rcond=None)
     C_aff = C_b @ W
     e_aff = np.linalg.norm(C_a - C_aff, axis=1) / rho
@@ -128,6 +188,8 @@ def coord_errors(
         "e_rigid_B": _summ(mask_b),
         "e_rigid_all": _summ(kept),
         "e_affine_B_median": affine_b,
+        "e_rigid_per_axis_frac": e_axis_frac,
+        "axis_scale_rms_A": scale.tolist(),
     }
 
 
@@ -321,8 +383,10 @@ def evaluate_split(
     Ca, Cb = fa["C"][:, :d_use], fb["C"][:, :d_use]
     angles = principal_angles_deg(Va, Vb)
     R = rigid_R(Va, Vb)
+    # Align once: c~_B = R^T c_B  =>  C_b_al = C_b @ R. Do not pass aligned
+    # coords into coord_errors (that would apply R a second time).
     Cb_al = Cb @ R
-    errs = None if light else coord_errors(Ca, Cb_al, R, mask_a, mask_b, retained)
+    errs = None if light else coord_errors(Ca, Cb, R, mask_a, mask_b, retained)
     if light:
         sig_n = 1.0
         sig_s = None

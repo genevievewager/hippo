@@ -24,7 +24,11 @@ sys.path.insert(0, str(ROOT))
 
 from agents.report6.build_summary_pdf import summarize  # noqa: E402
 from agents.report6.captions import CAPTIONS  # noqa: E402
-from agents.report6.figures import build_all_available, FIG_DIR  # noqa: E402
+from agents.report6.figures import (  # noqa: E402
+    build_all_available,
+    collect_session_table,
+    FIG_DIR,
+)
 from agents.report6.paths import OUT_ROOT  # noqa: E402
 from agents.report6 import prose as P  # noqa: E402
 
@@ -83,7 +87,8 @@ def _draw_wrapped(ax, x, y, text, *, fontsize=9, fontweight="normal",
 
 def write_summary_page(pdf: PdfPages, summary: dict) -> None:
     """Page 1: revision B1 prose + B5 board columns (US spelling)."""
-    rows = summary["rows"]
+    # Prefer the figure board table (PCA primary + hard-split flags).
+    rows = collect_session_table() or summary["rows"]
 
     fig = plt.figure(figsize=(A4_W, A4_H), dpi=PAGE_DPI, facecolor="white")
     ax = fig.add_axes([0, 0, 1, 1])
@@ -166,20 +171,22 @@ def write_summary_page(pdf: PdfPages, summary: dict) -> None:
             r["alias"],
             yn(r.get("qualifies")),
             yn(r.get("distinguishable")),
-            yn(r.get("null_b")),
+            yn(r.get("null_b_pca", r.get("null_b"))),
+            yn(r.get("null_b_lds")),
             yn(r.get("split")),
             yn(r.get("same_subspace")),
             yn(r.get("same_tiles")),
+            yn(r.get("resolvable")),
         ])
 
-    tab_h = min(0.28, max(0.18, y - 0.05))
-    tab_bottom = max(0.045, y - tab_h - 0.01)
+    tab_h = min(0.32, max(0.20, y - 0.04))
+    tab_bottom = max(0.040, y - tab_h - 0.01)
     tax = fig.add_axes([MARGIN / A4_W, tab_bottom, PRINT_W / A4_W, tab_h])
     tax.set_axis_off()
     table = tax.table(cellText=cell, loc="upper center", cellLoc="center")
     table.auto_set_font_size(False)
-    table.set_fontsize(6.5)
-    table.scale(1.0, 1.25)
+    table.set_fontsize(5.5)
+    table.scale(1.0, 1.15)
     for j in range(len(col_labels)):
         table[0, j].set_facecolor("#e8e8e8")
         table[0, j].set_text_props(fontweight="bold")

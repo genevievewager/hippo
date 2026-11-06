@@ -23,7 +23,9 @@ if str(ROOT) not in sys.path:
 from agents.report6.io_cohort import build_alias_map, iter_sessions  # noqa: E402
 from agents.report6.location.pca_core import (  # noqa: E402
     evaluate_split,
+    fit_pca_half,
     n1_shift_X,
+    rebin_window_counts,
 )
 from agents.report6.location.split_summary import (  # noqa: E402
     load_cfg,
@@ -103,6 +105,7 @@ def _row_from_eval(ev: dict[str, Any], *, n1: dict[str, Any] | None) -> dict[str
         "e_rigid_median_B": e_b.get("median"),
         "e_rigid_p90_B": e_b.get("p90"),
         "e_affine_B_median": coord.get("e_affine_B_median"),
+        "e_rigid_per_axis_frac": coord.get("e_rigid_per_axis_frac"),
         "sigma_noise": ev.get("sigma_noise"),
         "sigma_split": ev.get("sigma_split"),
         "ari": ari,
@@ -125,15 +128,17 @@ def _n1_one_repeat(
     dt_s: float,
     seed: int,
     M_by_d: dict[int, int],
+    n1_splits: tuple[str, ...] = ("S1", "S2", "S0"),
+    n1_drop_u: tuple[bool, ...] = (False, True),
 ) -> dict[str, list[float]]:
     """One N1 shift: collect n_stable and ARI for each split × d × drop_u."""
     rng = np.random.default_rng(seed)
     Xs = n1_shift_X(X, rng)
     out: dict[str, list[float]] = {}
-    for split_name in ("S1", "S2", "S0"):
+    for split_name in n1_splits:
         ma = splits[split_name]["mask_A"]
         mb = splits[split_name]["mask_B"]
-        for drop_u in (False, True):
+        for drop_u in n1_drop_u:
             for d in d_list:
                 key = f"{split_name}|d{d}|u{'out' if drop_u else 'in'}"
                 try:
@@ -163,6 +168,8 @@ def estimate_n1_seconds(
     dt_s: float,
     M_by_d: dict[int, int],
     n_probe: int = 1,
+    n1_splits: tuple[str, ...] = ("S1", "S2", "S0"),
+    n1_drop_u: tuple[bool, ...] = (False, True),
 ) -> float:
     """Wall seconds for one N1 repeat on this session (probe)."""
     t0 = time.time()
@@ -171,8 +178,30 @@ def estimate_n1_seconds(
             X, splits, retained,
             d_list=d_list, times_s=times_s, dt_s=dt_s,
             seed=9000 + i, M_by_d=M_by_d,
+            n1_splits=n1_splits, n1_drop_u=n1_drop_u,
         )
     return (time.time() - t0) / max(1, n_probe)
+
+
+def _d_list_for_session(s, cfg: dict[str, Any], X: np.ndarray) -> list[int]:
+    primary_d = int(min(s.primary_d_pca, X.shape[1] // 2, X.shape[1]))
+    grid = [int(d) for d in (cfg.get("d_grid") or [2, 3, 5, 10, 20])]
+    return sorted({d for d in grid + [primary_d] if 1 <= d <= X.shape[1]})
+
+
+def _prepare_X(s, cfg: dict[str, Any]) -> tuple[np.ndarray, np.ndarray]:
+    """Return (X, retained) at cfg window_s; NaN-leading bins cleared from retained."""
+    X = np.asarray(s.X_counts, dtype=float)
+    retained = np.asarray(s.retained, dtype=bool).copy()
+    dt_s = float(cfg.get("dt_s", DT_S))
+    w_src = 0.25  # count caches are Report 2 W = 250 ms
+    w_dst = float(cfg.get("window_s", w_src))
+    if abs(w_dst - w_src) > 1e-12:
+        X = rebin_window_counts(X, w_src_s=w_src, w_dst_s=w_dst, dt_s=dt_s)
+        bad = ~np.isfinite(X).all(axis=1)
+        retained = retained & ~bad
+        X = np.nan_to_num(X, nan=0.0)
+    return X, retained
 
 
 def run_session(
@@ -180,25 +209,23 @@ def run_session(
     cfg: dict[str, Any],
     *,
     n1_repeats: int,
+    n1_splits: tuple[str, ...] = ("S1", "S2", "S0"),
+    n1_drop_u: tuple[bool, ...] = (False, True),
 ) -> dict[str, Any]:
     if s.X_counts is None:
         return {"alias": s.alias, "arm": s.arm, "error": "no_X_counts"}
-    X = np.asarray(s.X_counts, dtype=float)
-    retained = np.asarray(s.retained, dtype=bool)
+    X, retained = _prepare_X(s, cfg)
     times_s = np.asarray(s.decode_times, dtype=float)
     dt_s = float(cfg.get("dt_s", DT_S))
     primary_d = int(min(s.primary_d_pca, X.shape[1] // 2, X.shape[1]))
-    d_list = sorted({3, primary_d})
-    d_list = [d for d in d_list if d >= 1]
+    d_list = _d_list_for_session(s, cfg, X)
 
     splits_meta = _split_masks(X, retained, cfg)
     splits = {k: splits_meta[k] for k in ("S1", "S2", "S0")}
 
-    # Elbow M on S1 A half at d=3 (pilot target space) and at primary d
+    # Elbow M on S1 A half at each d
     M_by_d: dict[int, int] = {}
     for d in d_list:
-        fa_probe = None
-        from agents.report6.location.pca_core import fit_pca_half
         fa_probe = fit_pca_half(X, splits["S1"]["mask_A"], d=d, drop_u=True)
         M, _ = choose_k(fa_probe["C"][splits["S1"]["mask_A"]], seed=int(cfg.get("seed", 0)))
         M_by_d[d] = int(M)
@@ -231,6 +258,7 @@ def run_session(
             d_list=d_list, times_s=times_s, dt_s=dt_s,
             seed=int(cfg.get("seed", 0)) + 1000 + i,
             M_by_d=M_by_d,
+            n1_splits=n1_splits, n1_drop_u=n1_drop_u,
         )
         for k, vals in part.items():
             n1_acc.setdefault(k, []).extend(vals)
@@ -268,8 +296,10 @@ def run_session(
                     "primary_d": primary_d,
                     "is_primary_d": d == primary_d,
                     "n1_repeats": n1_repeats,
+                    "window_s": float(cfg.get("window_s", 0.25)),
+                    "angles_deg": ev.get("angles_deg"),
                 })
-                # session pass: S1, u_out, primary d
+                # session pass: S1, u_out, primary d (pre-registered conjunction)
                 if (
                     split_name == "S1"
                     and drop_u
@@ -288,6 +318,8 @@ def run_session(
         "M_by_d": M_by_d,
         "tau_ac_s": splits_meta["tau_ac_s"],
         "g_s": splits_meta["g_s"],
+        "window_s": float(cfg.get("window_s", 0.25)),
+        "d_list": d_list,
         "n1_repeats": n1_repeats,
         "session_pass_S1_u_out_primary": session_pass,
         "rows": table_rows,
@@ -300,11 +332,42 @@ def main() -> None:
     ap.add_argument("--estimate-only", action="store_true")
     ap.add_argument("--arms", default="real,sim")
     ap.add_argument("--alias", default="", help="optional single alias")
+    ap.add_argument(
+        "--window-s", type=float, default=None,
+        help="override cfg window_s (0.25 source; 0.5 or 1.0 via rebin)",
+    )
+    ap.add_argument(
+        "--d-grid", default="",
+        help="comma d list; empty = cfg d_grid + primary",
+    )
+    ap.add_argument(
+        "--n1-scope", default="full",
+        choices=("full", "passrule"),
+        help="full: all splits×u; passrule: S1×u_out only (faster floors)",
+    )
+    ap.add_argument(
+        "--out-tag", default="",
+        help="suffix for outputs (e.g. w1s, n1_50); empty = pca_level_table.json",
+    )
+    ap.add_argument("--observed-only", action="store_true", help="skip N1 loop")
     args = ap.parse_args()
 
     build_alias_map(force=False)
     cfg = load_cfg()
+    if args.window_s is not None:
+        cfg = dict(cfg)
+        cfg["window_s"] = float(args.window_s)
+    if args.d_grid.strip():
+        cfg = dict(cfg)
+        cfg["d_grid"] = [int(x) for x in args.d_grid.split(",") if x.strip()]
     LOC_OUT.mkdir(parents=True, exist_ok=True)
+
+    if args.n1_scope == "passrule":
+        n1_splits: tuple[str, ...] = ("S1",)
+        n1_drop_u: tuple[bool, ...] = (True,)
+    else:
+        n1_splits = ("S1", "S2", "S0")
+        n1_drop_u = (False, True)
 
     arms = tuple(a.strip() for a in args.arms.split(",") if a.strip())
     sessions = []
@@ -315,53 +378,63 @@ def main() -> None:
         if not sessions:
             raise SystemExit(f"alias not found: {args.alias}")
 
-    # Time estimate on first real session (or first available)
     probe = next((s for s in sessions if s.arm == "real"), sessions[0])
-    print(f"[estimate] probe {probe.alias} n_units={probe.n_units}", flush=True)
-    X = np.asarray(probe.X_counts, dtype=float)
-    retained = np.asarray(probe.retained, dtype=bool)
+    print(
+        f"[estimate] probe {probe.alias} n_units={probe.n_units} "
+        f"window_s={cfg.get('window_s', 0.25)} n1_scope={args.n1_scope}",
+        flush=True,
+    )
+    X, retained = _prepare_X(probe, cfg)
     splits_meta = _split_masks(X, retained, cfg)
     splits = {k: splits_meta[k] for k in ("S1", "S2", "S0")}
-    primary_d = int(min(probe.primary_d_pca, X.shape[1] // 2))
-    d_list = sorted({3, primary_d})
-    from agents.report6.location.pca_core import fit_pca_half
+    d_list = _d_list_for_session(probe, cfg, X)
     M_by_d = {}
     for d in d_list:
         fa = fit_pca_half(X, splits["S1"]["mask_A"], d=d, drop_u=True)
         M, _ = choose_k(fa["C"][splits["S1"]["mask_A"]], seed=0)
         M_by_d[d] = int(M)
 
-    sec_per_n1 = estimate_n1_seconds(
+    sec_per_n1 = 0.0 if args.observed_only else estimate_n1_seconds(
         X, splits, retained,
         d_list=d_list,
         times_s=np.asarray(probe.decode_times, dtype=float),
         dt_s=float(cfg.get("dt_s", DT_S)),
         M_by_d=M_by_d,
         n_probe=1,
+        n1_splits=n1_splits, n1_drop_u=n1_drop_u,
     )
     n_sess = len(sessions)
-    # observed evals ~ small vs N1; ignore
     est_20 = sec_per_n1 * 20 * n_sess
     est_50 = sec_per_n1 * 50 * n_sess
     print(
-        f"[estimate] sec/N1_repeat~{sec_per_n1:.1f}  "
+        f"[estimate] d_list={d_list} sec/N1_repeat~{sec_per_n1:.1f}  "
         f"N1=20 cohort~{est_20/60:.1f} min  N1=50 cohort~{est_50/60:.1f} min  "
-        f"n_sessions={n_sess}",
+        f"n_sessions={n_sess} tau_ac={splits_meta['tau_ac_s']:.3f} "
+        f"g_s={splits_meta['g_s']:.3f}",
         flush=True,
     )
     estimate = {
         "probe_alias": probe.alias,
         "sec_per_n1_repeat": sec_per_n1,
         "n_sessions": n_sess,
+        "d_list_probe": d_list,
+        "window_s": float(cfg.get("window_s", 0.25)),
+        "tau_ac_s": splits_meta["tau_ac_s"],
+        "g_s": splits_meta["g_s"],
         "est_minutes_n1_20": est_20 / 60.0,
         "est_minutes_n1_50": est_50 / 60.0,
     }
-    save_json(estimate, LOC_OUT / "n1_time_estimate.json")
+    tag = args.out_tag.strip()
+    est_name = "n1_time_estimate.json" if not tag else f"n1_time_estimate_{tag}.json"
+    save_json(estimate, LOC_OUT / est_name)
     if args.estimate_only:
         print(json.dumps(estimate, indent=2))
         return
 
-    if args.n1 > 0:
+    if args.observed_only:
+        n1 = 0
+        reason = "observed-only"
+    elif args.n1 > 0:
         n1 = args.n1
         reason = "cli"
     elif est_50 > 2 * 3600:
@@ -372,25 +445,33 @@ def main() -> None:
         reason = "N1=50 within 2h"
     print(f"[N1] using n1_repeats={n1} ({reason})", flush=True)
 
+    sess_dir = LOC_OUT / ("pca_level" if not tag else f"pca_level_{tag}")
+    sess_dir.mkdir(parents=True, exist_ok=True)
+    table_name = "pca_level_table.json" if not tag else f"pca_level_table_{tag}.json"
+
     results = []
     for s in sessions:
         print(
-            f"[pca_level] {s.alias} {s.arm} primary_d={s.primary_d_pca} n1={n1}",
+            f"[pca_level] {s.alias} {s.arm} primary_d={s.primary_d_pca} "
+            f"n1={n1} W={cfg.get('window_s', 0.25)}",
             flush=True,
         )
         t0 = time.time()
-        r = run_session(s, cfg, n1_repeats=n1)
+        r = run_session(
+            s, cfg, n1_repeats=n1,
+            n1_splits=n1_splits, n1_drop_u=n1_drop_u,
+        )
         r["wall_s"] = time.time() - t0
         r["n1_reason"] = reason
-        save_json(r, LOC_OUT / "pca_level" / f"{s.alias}.json")
+        save_json(r, sess_dir / f"{s.alias}.json")
         results.append(r)
         print(
             f"  done wall_s={r['wall_s']:.0f} "
-            f"pass={r.get('session_pass_S1_u_out_primary')}",
+            f"pass={r.get('session_pass_S1_u_out_primary')} "
+            f"tau_ac={r.get('tau_ac_s')} g_s={r.get('g_s')}",
             flush=True,
         )
 
-    # flat table
     flat = []
     for r in results:
         flat.extend(r.get("rows") or [])
@@ -398,6 +479,8 @@ def main() -> None:
         {
             "n1_repeats": n1,
             "n1_reason": reason,
+            "n1_scope": args.n1_scope,
+            "window_s": float(cfg.get("window_s", 0.25)),
             "estimate": estimate,
             "n_sessions": len(results),
             "n_pass_S1_u_out_primary": sum(
@@ -410,15 +493,17 @@ def main() -> None:
                     "arm": r["arm"],
                     "primary_d": r.get("primary_d"),
                     "pass": r.get("session_pass_S1_u_out_primary"),
+                    "tau_ac_s": r.get("tau_ac_s"),
+                    "g_s": r.get("g_s"),
                 }
                 for r in results
             ],
             "rows": flat,
         },
-        LOC_OUT / "pca_level_table.json",
+        LOC_OUT / table_name,
     )
     print(
-        f"[done] n1={n1} sessions={len(results)} "
+        f"[done] n1={n1} sessions={len(results)} table={table_name} "
         f"PASS S1/u_out/primary="
         f"{sum(1 for r in results if r.get('session_pass_S1_u_out_primary'))}/"
         f"{len(results)}",
