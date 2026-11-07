@@ -4,8 +4,8 @@ Rule (PLAN): if selected d hits the grid max on most sessions, double the grid
 until the mode selection is below the max or d reaches n_units/2.
 Sim grid unchanged.
 
-LDS timing probe (1120_10062024): d=80 one-fold ~162 s; marginal d=80 per
-session ~0.28 h (< 3 h) → use full grid {2,3,5,10,20,40,80}.
+LDS timing probe (one anonymized real session): d=80 one-fold ~162 s; marginal
+d=80 per session ~0.28 h (< 3 h) → use full grid {2,3,5,10,20,40,80}.
 """
 
 from __future__ import annotations
