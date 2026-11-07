@@ -60,7 +60,7 @@ PAGE1_TESTS = [
 # Four one-line statements for the deck.
 PAGE1_SAY_ALOUD = [
     "1. 10 of 10 real sessions have at least one recurring neural target that is separable on held-out time.",
-    "2. 9 of 10 keep that target under the PCA surrogate; split-population passes in 9 of 13 session-by-method runs; LDS surrogate 4 of 10.",
+    "2. 9 of 10 keep that target under the PCA surrogate; split-population: 8 of 10 PCA runs (S06, S07 fail); LDS 1 of 3; LDS surrogate 4 of 10.",
     "3. Plant-and-recover: every planted visit found, no false alarms.",
     "4. Hard-split at Report 2's d: 1 of 10; at d = 3 (post hoc): 2 of 10; stable-dimension count is the headline.",
 ]
@@ -70,12 +70,15 @@ PAGE1_FINDINGS = (
     "(Fig 6.0, 6.2, 6.3). PCA defines targets (9 of 10 survive the surrogate; "
     "S03 is a boundary pass at 4 of 20 and occupies most of the cloud; S09 fails "
     "the population tests); LDS is the weaker density rule (4 of 10; Fig 6.3d). "
-    "Split-population: 9 of 13 runs (Fig 6.4a). Pre-registered hard-split "
-    "conjunction at Report 2's decoding d: 1 of 10; post hoc at d = 3: 2 of 10; "
-    "n_stable < 2 in 4 of 10 at d = 3 (Fig 6.4b-c). S2 tile agreement is a little "
-    "below S1 but above the N1 floor in 9 of 10 (Fig 6.0b, 6.4e). Window length: "
-    "median r/sigma at 1 s is 1.56 times the 250 ms value, with 6 of 10 at or "
-    "above 1.5 (Fig 6.4g)."
+    "Split-population: 8 of 10 PCA runs (S06, S07 fail); LDS 1 of 3 on the three "
+    "sessions it was run on (Fig 6.4a). Pre-registered hard-split conjunction at "
+    "Report 2's decoding d: 1 of 10; post hoc at d = 3: 2 of 10; n_stable < 2 in "
+    "4 of 10 at d = 3 (Fig 6.4b-c). The d-grid table shows 7 to 11 stable "
+    "dimensions at d = 20 (one session at 5), so the instability at d = 3 is in "
+    "which three directions come out on top, not in the structure. S2 tile "
+    "agreement is a little below S1 but above the N1 floor in 9 of 10 "
+    "(Fig 6.0b, 6.4e). Window length: median r/sigma at 1 s is 1.56 times the "
+    "250 ms value, with 6 of 10 at or above 1.5 (Fig 6.4g)."
 )
 
 PAGE1_IMPLICATIONS = (
@@ -101,8 +104,9 @@ PAGE1_HOW_TO_READ = (
 
 # Board footnote lives only under Fig 6.0a (not on page 1).
 PAGE1_BOARD_NOTE = (
-    "Counts are per run (session by method). Surrogate, split-population and "
-    "reproducibility cells use PCA; LDS appears only in its own surrogate row."
+    "Split-population and reproducibility cells are PCA-only (8 of 10 PCA PASS; "
+    "S06, S07 fail). LDS appears only in its own surrogate row (and 1 of 3 LDS "
+    "split-pop on the three sessions run; appendix)."
 )
 
 PAGE1_TABLE_COLS: list[str] = []  # unused; page-1 board removed
@@ -188,10 +192,10 @@ FIG61_CAPTION = (
     "Left: the analysis steps. We start from the causal latents fitted for "
     "Report 2 (a linear dynamical system, LDS, with PCA beside it). On training "
     "time only we find dense regions, the candidate targets, train a detector on "
-    "each, and evaluate it only on held-out time. Right: one-line pass rules; the "
-    "full question/how/fail table is on the appendix page. PCA defines targets; "
-    "the LDS density rule is the weaker definition. Behavior is never used to "
-    "define a target. Two tests from the pilot were retired (supplement)."
+    "each, and evaluate it only on held-out time. Right: pass rules (question "
+    "answered by each test). PCA defines targets; the LDS density rule is the "
+    "weaker definition. Behavior is never used to define a target. Two tests from "
+    "the pilot were retired (supplement)."
 )
 
 SUPPLEMENT_NULL_A = (
@@ -202,8 +206,8 @@ SUPPLEMENT_NULL_A = (
     "visits and dwell times are unchanged, so the shifted copies pass by "
     "construction. The pilot's 1 of 10 therefore says nothing about the data. The "
     "one passing session is the one whose target occupancy differs most between "
-    "the first and second half of the session (numbers in the appendix), which is "
-    "within-session drift, now measured by the first-half versus second-half split."
+    "the first and second half of the session, which is within-session drift, now "
+    "measured by the first-half versus second-half hard-split (S2)."
 )
 
 SUPPLEMENT_BOOT = (

@@ -15,7 +15,6 @@ from matplotlib.patches import FancyBboxPatch, Patch
 from agents.report6.paths import OUT_ROOT
 from agents.report6.prose import (
     BOARD_CRITERIA,
-    FIG61B_ROWS,
     FIG61_ONE_LINE_RULES,
     PAGE1_BOARD_NOTE,
 )
@@ -192,12 +191,9 @@ def collect_session_table() -> list[dict[str, Any]]:
             "null_b": None if nb_pca is None else bool(nb_pca.get("null_b_pass")),
             "null_b_method": "pca",
             "null_b_npass": None if nb_pca is None else nb_pca.get("n_pass"),
-            "split": None if (sp_pca or sp_lds) is None else bool(
-                (sp_pca or sp_lds).get("pass")
-            ),
-            "split_kappa": None if (sp_pca or sp_lds) is None else (
-                sp_pca or sp_lds
-            ).get("kappa"),
+            # Board / Fig 6.0b: PCA-only split-population (LDS shown in appendix).
+            "split": None if sp_pca is None else bool(sp_pca.get("pass")),
+            "split_kappa": None if sp_pca is None else sp_pca.get("kappa"),
             "boot": None if (bt_pca or bt_lds) is None else bool(
                 (bt_pca or bt_lds).get("pass")
             ),
@@ -378,26 +374,26 @@ def fig61_schematic_and_table() -> Path:
     ax2 = fig.add_subplot(gs[1, 0])
     ax2.set_axis_off()
     ax2.set_title(
-        "b  Pass rules (one line each; full question/how/fail table in appendix)",
+        "b  Pass rules (wrapped; nothing leaves the table)",
         loc="left", fontsize=9, fontweight="bold", pad=4,
     )
     headers = ["test", "pass if"]
     cell = [headers]
     for name, pass_if in FIG61_ONE_LINE_RULES:
-        cell.append([name, pass_if])
+        cell.append([name, textwrap.fill(pass_if, width=78)])
     table = ax2.table(
         cellText=cell, loc="upper center", cellLoc="left",
-        colWidths=[0.28, 0.72],
+        colWidths=[0.26, 0.74],
     )
     table.auto_set_font_size(False)
-    table.set_fontsize(7.2)
-    table.scale(1.0, 1.85)
+    table.set_fontsize(7.0)
+    table.scale(1.0, 2.15)
     for j in range(2):
         table[0, j].set_facecolor("#e8e8e8")
         table[0, j].set_text_props(fontweight="bold")
     for i in range(len(cell)):
         for j in range(2):
-            table[i, j].PAD = 0.03
+            table[i, j].PAD = 0.04
             table[i, j].set_text_props(va="center")
 
     fig.suptitle(
@@ -659,23 +655,26 @@ def fig64_split_boot() -> Path | None:
         height_ratios=[0.9, 1.0, 1.0, 0.9],
     )
 
-    # (a) split-population
+    # (a) split-population — PCA-only (LDS on three sessions is in the appendix)
     ax = fig.add_subplot(gs[0, 0])
-    rows = [r for r in sp if r.get("kappa") is not None]
-    rows = sorted(rows, key=lambda r: (r["alias"], r.get("method", "")))
+    rows = [
+        r for r in sp
+        if isinstance(r, dict) and r.get("kappa") is not None and r.get("method") == "pca"
+    ]
+    rows = sorted(rows, key=lambda r: r["alias"])
     if rows:
-        xs = [f"{r['alias']}:{r.get('method','')}" for r in rows]
+        xs = [r["alias"] for r in rows]
         ys = [r["kappa"] for r in rows]
         cols = [PASS_C if r.get("pass") else FAIL_C for r in rows]
         ax.barh(range(len(xs)), ys, color=cols)
         ax.set_yticks(range(len(xs)))
-        ax.set_yticklabels(xs, fontsize=6)
+        ax.set_yticklabels(xs, fontsize=7)
         ax.axvline(0.2, color="black", ls="--", lw=0.9)
         ax.set_xlim(0, 1)
         ax.set_xlabel("Cohen kappa", fontsize=7)
         n_ok = sum(1 for r in rows if r.get("pass"))
         ax.set_title(
-            f"a  Split-population ({n_ok}/{len(rows)} PASS)",
+            f"a  Split-population PCA ({n_ok}/{len(rows)}; S06, S07 fail)",
             loc="left", fontsize=8, fontweight="bold", pad=3,
         )
         ax.invert_yaxis()
@@ -842,21 +841,22 @@ def fig64_split_boot() -> Path | None:
         )
         return n_ok, len(rows_)
 
-    labels = ["real@Rd", "real@d3", "sim@Rd"]
+    labels = ["real@Rd", "real@d3", "sim@Rd", "sim@d3"]
     vals = [
         _conj_pass(loc, "real", primary=True),
         _conj_pass(loc, "real", d=3),
         _conj_pass(loc, "sim", primary=True),
+        _conj_pass(loc, "sim", d=3),
     ]
     ys = [n / m if m else 0 for n, m in vals]
-    bars = ax.bar(labels, ys, color=[ACCENT, ACCENT, "#999"])
+    bars = ax.bar(labels, ys, color=[ACCENT, ACCENT, "#999", "#999"])
     for b, (n, m) in zip(bars, vals):
         ax.text(b.get_x() + b.get_width() / 2, b.get_height() + 0.02,
                 f"{n}/{m}", ha="center", fontsize=7)
     ax.set_ylim(0, 1.15)
     ax.set_ylabel("fraction PASS", fontsize=7)
     ax.set_title(
-        "f  Hard-split conjunction (real vs sim)",
+        "f  Hard-split conjunction (real vs sim at Rd and d=3)",
         loc="left", fontsize=8, fontweight="bold", pad=3,
     )
 
@@ -1052,7 +1052,16 @@ def fig66_metric_cards() -> Path:
         "S", "occ%", "vis", "ΔP",
         "surrP", "surrL", "κ",
         "ns d3", "ns Rd", "e_d3",
-        "r/σ.25", "r/σ1s", "ARI1", "ARI2",
+        "r/σ.25", "r/σ1s",
+        "ARI1", "N1", "ARI2",
+    ]
+    # Column widths: give ARI / N1 / ARI2 room so value and floor never overprint.
+    col_w = [
+        0.045, 0.055, 0.045, 0.055,
+        0.065, 0.065, 0.055,
+        0.08, 0.08, 0.06,
+        0.065, 0.065,
+        0.055, 0.055, 0.055,
     ]
     cell = [cols]
     for r in rows:
@@ -1070,25 +1079,28 @@ def fig66_metric_cards() -> Path:
             "—" if r.get("null_b_npass_pca") is None else f"{r['null_b_npass_pca']}/{r.get('null_b_nsurr_pca') or 20}",
             "—" if r.get("null_b_npass_lds") is None else f"{r['null_b_npass_lds']}/{r.get('null_b_nsurr_lds') or 5}",
             fmt(r.get("split_kappa")),
-            "—" if ns_d3 is None else f"{ns_d3} ({fmt(ns_d3_p, 1)})",
-            "—" if ns_p is None else f"{ns_p} ({fmt(ns_pp, 1)})",
+            "—" if ns_d3 is None else f"{ns_d3}/{fmt(ns_d3_p, 0)}",
+            "—" if ns_p is None else f"{ns_p}/{fmt(ns_pp, 0)}",
             fmt(r.get("e_rigid_d3")),
             fmt(r.get("r_sigma_250")),
             fmt(r.get("r_sigma_1s")),
-            "—" if ari1 is None else f"{fmt(ari1)} ({fmt(ari1p)})",
-            fmt(r.get("ari_s2_d3")),
+            "—" if ari1 is None else f"{float(ari1):.2f}",
+            "—" if ari1p is None else f"{float(ari1p):.2f}",
+            "—" if r.get("ari_s2_d3") is None else f"{float(r['ari_s2_d3']):.2f}",
         ])
-    table = ax.table(cellText=cell, loc="center", cellLoc="center")
+    table = ax.table(
+        cellText=cell, loc="center", cellLoc="center", colWidths=col_w,
+    )
     table.auto_set_font_size(False)
-    table.set_fontsize(6.5)
+    table.set_fontsize(7.0)
     table.scale(1.0, 1.85)
     for j in range(len(cols)):
         table[0, j].set_facecolor("#e8e8e8")
         table[0, j].set_text_props(fontweight="bold")
     fig.suptitle(
-        "Fig 6.0b  Session numbers (PCA targets; ns = n_stable with N1 p95; "
-        "Rd = Report 2 d; ARI at d = 3)",
-        fontsize=8, fontweight="bold", y=0.97,
+        "Fig 6.0b  Session numbers (PCA; ns = n_stable/N1; Rd = Report 2 d; "
+        "ARI1/N1/ARI2 at d = 3, two digits; κ = PCA split-pop)",
+        fontsize=7.5, fontweight="bold", y=0.97,
     )
     return _save(fig, "F6_numbers")
 
@@ -1150,73 +1162,26 @@ def fig_s_retired() -> Path:
     return _save(fig, "F6_S_retired")
 
 
-def _s04_half_occupancy() -> tuple[float, float] | None:
-    """First vs second half train occupancy of the top LDS target (null-a outlier)."""
-    try:
-        from agents.report6.io_cohort import build_alias_map, iter_sessions
-        from agents.report6.pipeline import latent_for_method
-        from agents.report6.target_rule import choose_k, qualify_targets
-        from sklearn.cluster import KMeans
-    except Exception:
-        return None
-    build_alias_map(force=False)
-    sess = next((s for s in iter_sessions(arm="real") if s.alias == "S04"), None)
-    if sess is None:
-        return None
-    Z, d = latent_for_method(sess, "lds")
-    Z3 = Z[:, :3]
-    train = np.asarray(sess.train_ok, bool)
-    idx = np.where(train)[0]
-    if idx.size < 100:
-        return None
-    mid = idx[idx.size // 2]
-    first = train & (np.arange(train.size) < mid)
-    second = train & (np.arange(train.size) >= mid)
-    M, _ = choose_k(Z3[train], seed=0)
-    km = KMeans(n_clusters=int(M), n_init=20, random_state=0).fit(Z3[train])
-    labs = km.predict(Z3)
-    # top qualifying by occupancy on full train
-    from collections import Counter
-    counts = Counter(labs[train])
-    top = max(counts, key=counts.get)
-    occ1 = float((labs[first] == top).mean()) if first.any() else float("nan")
-    occ2 = float((labs[second] == top).mean()) if second.any() else float("nan")
-    return occ1, occ2
-
-
 def fig_appendix() -> Path:
-    """Appendix: drift check, d-grid hard-split numbers, LDS split-pop, full test table."""
+    """Appendix: d-grid hard-split numbers and LDS split-pop (no drift panel;
+    in-target series not stored; no full pass-rule table — Fig 6.1b carries it).
+    """
     loc = _pca_level_table()
     sp = _load(DATA_DIR / "split" / "summary.json") or []
-    fig = plt.figure(figsize=(W_FULL, 240 * MM), facecolor="white")
+    fig = plt.figure(figsize=(W_FULL, 160 * MM), facecolor="white")
     gs = fig.add_gridspec(
-        4, 1, height_ratios=[0.55, 1.1, 0.55, 1.6], hspace=0.45,
-        left=0.06, right=0.98, top=0.94, bottom=0.03,
+        2, 1, height_ratios=[1.4, 0.7], hspace=0.35,
+        left=0.06, right=0.98, top=0.90, bottom=0.06,
     )
 
-    # a drift
+    # a d-grid table (was b)
     ax = fig.add_subplot(gs[0, 0])
     ax.set_axis_off()
-    halves = _s04_half_occupancy()
-    lines = [
-        "a  Drift check for the null-(a) outlier (S04, LDS top target)",
-        "    First-half vs second-half training occupancy (fractions).",
-    ]
-    if halves:
-        lines.append(f"    first half = {halves[0]:.3f}; second half = {halves[1]:.3f}")
-    else:
-        lines.append("    (could not recompute; see caption)")
-    ax.text(0.0, 0.95, "\n".join(lines), transform=ax.transAxes, va="top",
-            fontsize=8, family="monospace")
-
-    # b d-grid table
-    ax = fig.add_subplot(gs[1, 0])
-    ax.set_axis_off()
-    ax.set_title("b  Hard-split numbers across the d grid (S1, u out, real)",
+    ax.set_title("a  Hard-split numbers across the d grid (S1, u out, real)",
                  loc="left", fontsize=8, fontweight="bold", pad=2)
     if loc:
         ds = [2, 3, 5, 10, 20]
-        headers = ["S"] + [f"ns@{d}" for d in ds] + [f"ARI@{d}" for d in (3,)] + ["ns@Rd"]
+        headers = ["S"] + [f"ns@{d}" for d in ds] + ["ARI@3"] + ["ns@Rd"]
         cell = [headers]
         for i in range(1, 11):
             a = f"S{i:02d}"
@@ -1231,11 +1196,11 @@ def fig_appendix() -> Path:
             cell.append(row)
         table = ax.table(cellText=cell, loc="upper center", cellLoc="center")
         table.auto_set_font_size(False)
-        table.set_fontsize(6.5)
-        table.scale(1.0, 1.15)
+        table.set_fontsize(7.0)
+        table.scale(1.0, 1.35)
 
-    # c LDS split-pop
-    ax = fig.add_subplot(gs[2, 0])
+    # b LDS split-pop (was c)
+    ax = fig.add_subplot(gs[1, 0])
     lds_sp = [r for r in sp if isinstance(r, dict) and r.get("method") == "lds"]
     lds_sp = sorted(lds_sp, key=lambda r: r.get("alias", ""))
     if lds_sp:
@@ -1246,37 +1211,20 @@ def fig_appendix() -> Path:
         ax.axhline(0.2, color="black", ls="--", lw=0.9)
         ax.set_ylim(0, 1)
         ax.set_ylabel("Cohen kappa", fontsize=8)
-    ax.set_title(
-        f"c  LDS split-population ({len(lds_sp)} sessions)",
-        loc="left", fontsize=8, fontweight="bold", pad=3,
-    )
+        n_ok = sum(1 for r in lds_sp if r.get("pass"))
+        ax.set_title(
+            f"b  LDS split-population ({n_ok}/{len(lds_sp)} PASS on three sessions)",
+            loc="left", fontsize=8, fontweight="bold", pad=3,
+        )
+    else:
+        ax.set_axis_off()
+        ax.set_title("b  LDS split-population (none)", loc="left",
+                     fontsize=8, fontweight="bold", pad=3)
 
-    # d full test table at >=7pt
-    ax = fig.add_subplot(gs[3, 0])
-    ax.set_axis_off()
-    ax.set_title("d  Full pass-rule table (question / how / pass if / fail)",
-                 loc="left", fontsize=8, fontweight="bold", pad=2)
-    headers = ["test", "question", "pass if", "a fail means"]
-    cell = [headers]
-    for name, q, _how, pif, fail in FIG61B_ROWS:
-        cell.append([
-            name,
-            textwrap.fill(q, width=36),
-            textwrap.fill(pif, width=32),
-            textwrap.fill(fail, width=32),
-        ])
-    table = ax.table(
-        cellText=cell, loc="upper center", cellLoc="left",
-        colWidths=[0.18, 0.28, 0.27, 0.27],
+    fig.suptitle(
+        "Appendix (pass rules in Fig 6.1b; null-(a) drift series not stored)",
+        fontsize=10, fontweight="bold", y=0.98,
     )
-    table.auto_set_font_size(False)
-    table.set_fontsize(7.0)
-    table.scale(1.0, 1.55)
-    for j in range(len(headers)):
-        table[0, j].set_facecolor("#e8e8e8")
-        table[0, j].set_text_props(fontweight="bold")
-
-    fig.suptitle("Appendix", fontsize=11, fontweight="bold", y=0.985)
     return _save(fig, "F6_appendix")
 
 

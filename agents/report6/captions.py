@@ -24,26 +24,26 @@ CAPTIONS: dict[str, dict[str, str]] = {
             "Survives the surrogate (PCA): after independently time-shifting each unit "
             "and refitting, success should be rare (at most 20 %). LDS has its own "
             "surrogate row (4 of 10); PCA defines targets. "
-            "Split-population: two random halves of the units agree on when the state "
-            "is in the target. "
+            "Split-population (PCA-only): 8 of 10 PCA runs PASS (S06, S07 fail); "
+            "LDS was 1 of 3 on the three sessions it was run on (appendix). "
             "Same subspace / same tiles / resolvable: the pre-registered hard-split "
             "conjunction (n_stable, ARI, r/sigma and frac<r). "
-            "Counts are per run (session by method). "
             "Bottom boxes: headline rates for the lab meeting, plus plant-and-recover."
         ),
     },
     "F6_numbers": {
         "title": "Figure 6.0b  Session-by-session numbers",
         "takeaway": (
-            "Hard-split columns are numbers at d = 3 and at Report 2's d, not "
-            "PASS/FAIL cells."
+            "Hard-split columns are numbers at d = 3 and at Report 2's d; "
+            "split-population kappa is PCA-only (8 of 10; S06, S07 fail)."
         ),
         "caption": (
             "Per real session: occupancy %, visits, delta P; surrogate pass counts "
-            "(PCA / LDS); split-population kappa; n_stable at d = 3 and at Report 2's "
-            "d (N1 p95 in parentheses); median rigid coordinate error at d = 3; "
-            "r/sigma at 250 ms and 1 s; ARI S1 and S2 at d = 3 (N1 p95 in parentheses "
-            "for S1). Occupancy above 50 % is most of the cloud. "
+            "(PCA / LDS); PCA split-population kappa (8 of 10 PASS; S06, S07 fail; "
+            "LDS 1 of 3 in the appendix); n_stable at d = 3 and at Report 2's d "
+            "(shown as n_stable/N1); median rigid coordinate error at d = 3; "
+            "r/sigma at 250 ms and 1 s; ARI1, N1 p95, and ARI2 at d = 3 (two digits "
+            "each). Occupancy above 50 % is most of the cloud. "
             "Null (a) and bootstrap are retired (supplement)."
         ),
     },
@@ -67,8 +67,8 @@ CAPTIONS: dict[str, dict[str, str]] = {
             "visit requires at least 1 s outside first). "
             "Dashed line: 5 % occupancy minimum; dotted line: 10-visit minimum. "
             "Gray markers: 1/M (uniform share if M equal tiles). Surrogate targets "
-            "match the real targets' occupancy, so the recurrence rule filters "
-            "candidates and is not evidence on its own; compare occupancy to 1/M. "
+            "match the real targets' occupancy: the recurrence rule is a filter on "
+            "candidates, not evidence on its own; compare occupancy to 1/M. "
             "Panels a-b are real hippocampal-formation recordings (LDS and PCA). "
             "Panels c-d are matched simulations with the same unit count (subsample "
             "k = 0). Shared y-limits across panels. Any top target above 50 % "
@@ -102,13 +102,14 @@ CAPTIONS: dict[str, dict[str, str]] = {
             "stable-dimension count is the headline; r/sigma vs W tests structure."
         ),
         "caption": (
-            "(a) Split-population (per run). (b) n_stable against d with the N1 p95 "
-            "floor (dotted) and the pre-registered n_stable ≥ 2 line (dashed). "
+            "(a) Split-population, PCA-only (8 of 10; S06, S07 fail). (b) n_stable "
+            "against d with the N1 p95 floor (dotted) and the pre-registered "
+            "n_stable ≥ 2 line (dashed). "
             "(c) Fraction of sessions passing each criterion against d; Report 2 "
             "primary d marked. (d) Per-axis rigid error for one example with the S0 "
             "ceiling. (e) ARI by session for S1, S2, S0 at d = 3 with N1 p95. "
-            "(f) Hard-split conjunction pass counts: real 1/10 at Report 2 d and "
-            "2/10 at d = 3; sim 0/10 at Report 2 d. "
+            "(f) Hard-split conjunction: real 1/10 at Report 2 d and 2/10 at d = 3; "
+            "sim 0/10 at Report 2 d and 2/10 at d = 3. "
             "(g) median r/sigma against W at d = 3: median 1 s / 250 ms = 1.56, "
             "with 6 of 10 at or above 1.5 (structure direction, not pure noise). "
             "(h) Example session: first two aligned axes, A-tiles colored, aligned "
@@ -117,17 +118,17 @@ CAPTIONS: dict[str, dict[str, str]] = {
         ),
     },
     "F6_appendix": {
-        "title": "Appendix  Drift, d-grid numbers, LDS split-pop, full test table",
+        "title": "Appendix  d-grid numbers and LDS split-population",
         "takeaway": (
-            "Numbers that do not fit the main figures: null-(a) drift check, "
-            "hard-split across d, LDS split-population, and the full pass-rule table."
+            "Hard-split n_stable across d, and LDS split-population on its three "
+            "sessions (1 of 3 PASS). Pass rules stay in Fig 6.1b."
         ),
         "caption": (
-            "(a) First vs second half training occupancy of the top LDS target for "
-            "the null-(a) outlier session. (b) n_stable across the d grid and ARI at "
-            "d = 3 for each real session (S1, u out). (c) LDS split-population kappa "
-            "on its three sessions. (d) Full question / pass-if / fail table at "
-            "readable type (≥ 7 pt)."
+            "(a) n_stable across the d grid and ARI at d = 3 for each real session "
+            "(S1, u out); at d = 20, n_stable is 7–11 in 9 of 10 (one session at 5). "
+            "(b) LDS split-population kappa on its three sessions (1 of 3 PASS). "
+            "The null-(a) first/second-half occupancy check is omitted: the in-target "
+            "series was not stored. Pass rules are in Fig 6.1b."
         ),
     },
     "F6_5": {

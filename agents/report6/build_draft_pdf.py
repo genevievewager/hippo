@@ -299,6 +299,14 @@ def main() -> None:
     pages_dir = OUT_ROOT / "pages"
     try:
         import importlib.util
+        import sys as _sys
+
+        # Newer PyMuPDF exposes `pymupdf`; older audit code imports `fitz`.
+        try:
+            import fitz  # noqa: F401
+        except ImportError:
+            import pymupdf as fitz  # type: ignore
+            _sys.modules["fitz"] = fitz
 
         def _load_hippo_mod(name: str, rel: str):
             path = Path("/home/gmwager/projects/hippo") / rel
